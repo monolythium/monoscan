@@ -1,0 +1,110 @@
+/* =====================================================
+   Monarch Desktop v2 — Design tokens (GLASS restored)
+===================================================== */
+:root {
+  /* Typography */
+  --f-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --f-sansc: "IBM Plex Sans Condensed", "IBM Plex Sans", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* canvas */
+  --ink: #06060c;
+  --ink-000: #06060c;
+  --ink-050: #0a0a14;
+  --ink-100: #0f0e1a;
+  --ink-200: #151324;
+  --ink-300: #1c1930;
+  --ink-400: #26223f;
+  --ink-500: #332c52;
+
+  /* foreground */
+  --fg-000: #ffffff;
+  --fg-100: rgba(255,255,255,0.96);
+  --fg-200: rgba(255,255,255,0.78);
+  --fg-300: rgba(255,255,255,0.55);
+  --fg-400: rgba(255,255,255,0.38);
+  --fg-500: rgba(255,255,255,0.22);
+  --fg-600: rgba(255,255,255,0.12);
+  --fg-700: rgba(255,255,255,0.06);
+  --fg-800: rgba(255,255,255,0.03);
+
+  /* glass */
+  --glass: rgba(22, 20, 38, 0.42);
+  --glass-fill: rgba(22, 20, 38, 0.42);
+  --glass-fill-strong: rgba(22, 20, 38, 0.62);
+  --glass-fill-hover: rgba(28, 25, 48, 0.55);
+  --glass-hi: rgba(28, 25, 48, 0.55);
+  --glass-stroke: rgba(255,255,255,0.08);
+  --glass-stroke-hi: rgba(255,255,255,0.14);
+  --glass-border: rgba(255,255,255,0.08);
+  --glass-inner: rgba(255,255,255,0.06);
+  --glass-blur: 28px;
+
+  /* brand */
+  --gold: #F2B441;
+  --gold-hi: #f8cd6b;
+  --gold-lo: #d29a33;
+  --gold-soft: #f2b441cc;
+  --gold-glow: 242, 180, 65;
+  --gold-bg: rgba(242,180,65,0.10);
+
+  /* status */
+  --ok:    oklch(0.78 0.16 155);
+  --warn:  oklch(0.82 0.17 78);
+  --alert: oklch(0.70 0.22 22);
+  --err:   oklch(0.70 0.22 22);
+  --info:  oklch(0.78 0.13 255);
+  --accent: oklch(0.75 0.18 300);
+
+  /* State-machine palette */
+  --state-nominal:     oklch(0.78 0.14 155);
+  --state-maintenance: oklch(0.82 0.16 78);
+  --state-jail:        oklch(0.70 0.22 30);
+  --state-collapsed:   oklch(0.48 0.18 20);
+
+  /* Two-denomination */
+  --denom-public-fg: var(--gold);
+  --denom-public-bg: rgba(242,180,65,0.08);
+  --denom-private-fg: oklch(0.86 0.02 260);
+  --denom-private-bg: oklch(0.18 0.02 260 / 0.6);
+  --denom-private-ring: oklch(0.62 0.04 260);
+
+  /* Crypto algos */
+  --algo-slhdsa: oklch(0.78 0.13 255);
+  --algo-mldsa:  oklch(0.74 0.12 220);
+  --algo-bls:    oklch(0.80 0.14 40);
+  --algo-ed25519:oklch(0.70 0.10 320);
+  --algo-passkey:oklch(0.75 0.16 150);
+
+  /* Ambient bleed */
+  --hue-a: 312;
+  --hue-b: 268;
+  --bleed: 0.55;
+  --grad-alpha: 0.18;
+
+  /* radii */
+  --r-2: 2px; --r-4: 4px; --r-6: 6px; --r-8: 8px; --r-10: 10px;
+  --r-sm: 10px; --r-md: 14px; --r-14: 14px; --r-lg: 20px; --r-20: 20px; --r-xl: 28px;
+  --r-pill: 999px;
+
+  /* type scale */
+  --fs-10: 10px; --fs-11: 11px; --fs-12: 12px; --fs-13: 13px; --fs-14: 14px;
+  --fs-16: 16px; --fs-18: 18px; --fs-20: 20px; --fs-24: 24px; --fs-32: 32px;
+  --fs-44: 44px; --fs-64: 64px; --fs-96: 96px;
+
+  /* shadows */
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
+  --shadow-2: 0 8px 24px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.3);
+  --shadow-3: 0 30px 60px -20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.08);
+
+  /* motion */
+  --e-out: cubic-bezier(.22,.61,.36,1);
+  --e-in-out: cubic-bezier(.65,0,.35,1);
+  --e-std: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* layout */
+  --sidebar-w: 220px;
+  --attest-h: 32px;
+  --topbar-h: 56px;
+  --ask-w: 360px;
+}
