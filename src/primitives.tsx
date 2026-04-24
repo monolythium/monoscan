@@ -1,9 +1,10 @@
+// @ts-nocheck
 /* =====================================================
    Monarch Desktop v2 — Primitives
-   Shared atomic components. Import via window.
+   Shared atomic components. Imported as ES modules.
 ===================================================== */
 
-const { useState, useEffect, useRef, useMemo, useCallback } = React;
+// React hook imports kept available for future primitives — currently unused.
 
 /* ---------- Icon set ----------
    Plain-stroke monoline icons at 16px default.
@@ -559,11 +560,11 @@ const SectionHead = ({ title, sub, right }) => (
   </div>
 );
 
-/* Export to window */
-Object.assign(window, {
+/* Named exports — replaces the legacy window-attach pattern. */
+export {
   Icon, StatusDot, Pill, Kbd, Halo, Avatar, Sparkline, RollingDigit, RoundTicker,
   QuorumBar, StateMachinePill, STATE_META, STATE_ORDER,
   AttestationBadge, BondMeter, SigningStrip, ClusterRing,
   MemoSignalChip, PrivateBadge, AlgoBadge, StandbyTray,
   Divider, SectionHead,
-});
+};

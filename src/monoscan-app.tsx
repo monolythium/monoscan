@@ -1,10 +1,17 @@
+// @ts-nocheck
 /* =====================================================
    Monoscan — public chain explorer for Monolythium v2
    Three views: Landing · Cluster detail · Operator profile.
-   Hash-routed; data is faked but shape-true to data.jsx.
+   Hash-routed; data is faked but shape-true to data.tsx.
 ===================================================== */
 
-const { useState, useEffect, useMemo } = React;
+import { useState, useEffect, useMemo } from "react";
+import {
+  Icon, Sparkline, ClusterRing, StateMachinePill,
+} from "./primitives";
+import { MONOSCAN_DATA, MARKETS } from "./monoscan-data";
+import { StatsPage, WalletsPage, WalletPage, TxPage } from "./monoscan-extras";
+import { MarketsPage, MarketPage } from "./monoscan-markets";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -12,7 +19,7 @@ const fmt = (n) => n.toLocaleString();
 const pct = (x, d=2) => `${(x*100).toFixed(d)}%`;
 const ago = (s) => s; // already strings
 
-const SCAN = window.MONOSCAN_DATA;
+const SCAN = MONOSCAN_DATA;
 
 /* ============== TOP STRIP ============== */
 const ChainStrip = ({ round, latencyMs, ratePerSec, signers }) => (
@@ -94,7 +101,7 @@ const fmtUsd = (n) => n>=1e9 ? `$${(n/1e9).toFixed(2)}B` : n>=1e6 ? `$${(n/1e6).
 
 const Landing = ({ go }) => {
   const c = SCAN.consensus;
-  const markets = window.MARKETS || [];
+  const markets = MARKETS || [];
   const [round, setRound] = useState(c.round);
   const [latencySeries, setLatencySeries] = useState(()=>Array.from({length:60},(_,i)=>340+Math.sin(i*0.4)*16+Math.random()*14));
   const [rateSeries, setRateSeries]       = useState(()=>Array.from({length:60},(_,i)=>2.8+Math.sin(i*0.3)*0.15+Math.random()*0.08));
@@ -1245,4 +1252,4 @@ const App = () => {
   );
 };
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+export { App };

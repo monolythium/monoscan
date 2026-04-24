@@ -10,7 +10,7 @@ monoscan.xyz — public blockchain explorer for Monolythium v2.
 
 Monoscan is the public web explorer for **Monolythium v2** — a Rust-native L1 running **LythiumDAG-BFT (Starfish-C)** consensus on `chain_id 6940`. It surfaces blocks, transactions, validator clusters, the native CLOB and perpetuals markets, gap records, and an "ask the blockchain" natural-language search.
 
-Currently a static React + CDN mockup served by Caddy. A Vite + React 19 + TypeScript promotion is planned — see the `plans/monoscan.md` notes in the orchestration workspace (local only).
+Built as a Vite + React 19 + TypeScript SPA, served as a static `dist/` bundle behind Caddy. Live data wiring against any Monolythium v2 node's JSON-RPC + indexer ships in a follow-up stage; the current build renders shape-true mock data for design review.
 
 ## Who this is for
 
@@ -30,7 +30,7 @@ Or visit the hosted instance at https://monoscan.xyz.
 
 ## Getting started
 
-Once `docker compose up` is running, open http://localhost:8080 in your browser. The current build is a static SPA — point your gateway/RPC URL at any Monolythium v2 node.
+Once `docker compose up` is running, open http://localhost:8080 in your browser. The current build is a static SPA — point it at any Monolythium v2 node's JSON-RPC + indexer endpoint (live wiring lands in the next stage).
 
 ## Documentation
 
@@ -40,16 +40,20 @@ Once `docker compose up` is running, open http://localhost:8080 in your browser.
 ## Building from source
 
 ```bash
-# Current (static mockup served by Caddy)
-docker compose up
-
-# After Stage 1 promotes to a real Vite build:
-# pnpm install
-# pnpm dev     # local dev server
-# pnpm build   # produces dist/ for static hosting
+pnpm install      # install dependencies
+pnpm dev          # local dev server (http://localhost:5174)
+pnpm typecheck    # tsc --noEmit
+pnpm build        # produces dist/ for static hosting
+pnpm preview      # serve the production build locally
 ```
 
-Requirements (current scaffold): Docker. Requirements (post-Vite promotion): Node 22+, pnpm 9+.
+Or build a self-contained container (Caddy serving `dist/`):
+
+```bash
+docker compose up
+```
+
+Requirements: Node 22+, pnpm 9+, or Docker.
 
 ## Contributing
 
