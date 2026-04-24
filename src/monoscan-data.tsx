@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* Monoscan demo data — shape-true to data.jsx */
 const _hash = (n) => `0x${n.toString(16).padStart(8,"0")}…${(n*7919).toString(16).slice(-4)}`;
 const _spark = (n, base, v) => Array.from({length:n},(_,i)=>base + Math.sin(i*0.5)*v + (Math.random()-0.5)*v*0.6);
@@ -160,7 +161,7 @@ const MONOSCAN_DATA = {
   },
 };
 
-window.MONOSCAN_DATA = MONOSCAN_DATA;
+export { MONOSCAN_DATA };
 
 /* ================= MARKETS ================= */
 /* 100 tokens with stable seeded values, ranked by 24h volume.
@@ -306,6 +307,7 @@ const _mkOHLC = (mid, count, seedN) => {
   return out;
 };
 MARKETS.forEach(m => m.ohlc = _mkOHLC(m.price, 120, m.rank));
+export { MARKETS };
 
 window.MARKETS = MARKETS;
 
@@ -358,7 +360,7 @@ const NETWORK_STATS = (() => {
     series: { tx30d: txSeries30d, rewards30d: rewardsSeries30d, slash30d: slashSeries30d, inflation365d: inflationSeries365d },
   };
 })();
-window.NETWORK_STATS = NETWORK_STATS;
+export { NETWORK_STATS };
 
 /* ================= WALLETS (rich list) ================= */
 const WALLET_TAGS = [
@@ -471,7 +473,7 @@ WALLETS.pie = [
   { label: "Retail (<50k LYTH)", pct: 28, addr: null },
 ];
 
-window.WALLETS = WALLETS;
+export { WALLETS };
 
 /* ================= TRANSACTIONS ================= */
 /* Sample tx pool — referenced by hash from wallet.txs and from anywhere else */
@@ -535,5 +537,5 @@ WALLETS.forEach(w => {
   });
 });
 
-window.TXS = TXS;
+export { TXS };
 

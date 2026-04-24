@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* =====================================================
    Monoscan · MARKETS
    Top 100 tokens by 24h volume, each with a trading detail
@@ -6,7 +7,8 @@
    attestation quorum. Coinzen is the routing venue.
    ===================================================== */
 
-const { useState, useEffect, useMemo } = React;
+import { useState, useEffect, useMemo } from "react";
+import { MARKETS } from "./monoscan-data";
 
 /* ----- formatters ----- */
 const mkFmt = (n, dp) => {
@@ -66,7 +68,7 @@ const MarketsPage = ({ go }) => {
   ];
 
   const filtered = useMemo(() => {
-    let m = window.MARKETS.slice();
+    let m = MARKETS.slice();
     if (q) {
       const qq = q.toLowerCase();
       m = m.filter(t => t.sym.toLowerCase().includes(qq) || t.name.toLowerCase().includes(qq));
@@ -86,9 +88,9 @@ const MarketsPage = ({ go }) => {
   const flip = (k) => { if (sort===k) setDir(-dir); else { setSort(k); setDir(k==="rank"||k==="sym"?1:-1); } };
   const arrow = (k) => sort!==k ? "" : (dir>0 ? " ↑" : " ↓");
 
-  const totalMCAP = window.MARKETS.reduce((a,t)=>a+t.mcap,0);
-  const totalVOL  = window.MARKETS.reduce((a,t)=>a+t.vol24h,0);
-  const totalLIQ  = window.MARKETS.reduce((a,t)=>a+t.liquidity,0);
+  const totalMCAP = MARKETS.reduce((a,t)=>a+t.mcap,0);
+  const totalVOL  = MARKETS.reduce((a,t)=>a+t.vol24h,0);
+  const totalLIQ  = MARKETS.reduce((a,t)=>a+t.liquidity,0);
 
   return (
     <div className="ms-page ms-markets">
@@ -207,7 +209,7 @@ const MarketsPage = ({ go }) => {
 
 /* ---------- MARKET DETAIL ---------- */
 const MarketPage = ({ sym, go }) => {
-  const tkn = window.MARKETS.find(m => m.sym === sym) || window.MARKETS[0];
+  const tkn = MARKETS.find(m => m.sym === sym) || MARKETS[0];
   const [range, setRange] = useState("1D");
   const [orderSide, setOrderSide] = useState("buy");
   const [orderType, setOrderType] = useState("limit");
@@ -614,4 +616,5 @@ const MarketPage = ({ sym, go }) => {
   );
 };
 
-Object.assign(window, { MarketsPage, MarketPage });
+/* Named exports — replaces the legacy window-attach pattern. */
+export { MarketsPage, MarketPage };

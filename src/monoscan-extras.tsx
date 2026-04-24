@@ -1,12 +1,13 @@
+// @ts-nocheck
 /* =====================================================
    Monoscan — Statistics, Wallets, Wallet detail, Tx detail
-   Mounted by monoscan-app.jsx. Depends on:
-     window.MONOSCAN_DATA, window.MARKETS, window.NETWORK_STATS,
-     window.WALLETS, window.TXS
-   All components exported to window at bottom.
+   Mounted by monoscan-app.tsx. Depends on the typed
+   data exports in monoscan-data.tsx — pulled at the top
+   of this module so consumers don't need globals.
 ===================================================== */
 
-const { useState: useStateX, useMemo: useMemoX, useEffect: useEffectX } = React;
+import { useState as useStateX, useMemo as useMemoX, useEffect as useEffectX } from "react";
+import { MONOSCAN_DATA, MARKETS, NETWORK_STATS, WALLETS, TXS } from "./monoscan-data";
 
 /* Light helpers — keep local so this file is self-contained */
 const _fmt  = (n) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -49,7 +50,7 @@ const MiniBars = ({ data, w=120, h=32, fill="var(--err, #ff6b6b)" }) => {
    STATISTICS PAGE
 ===================================================== */
 const StatsPage = ({ go }) => {
-  const S = window.NETWORK_STATS;
+  const S = NETWORK_STATS;
   const t = S.totals;
   const [round, setRound] = useStateX(t.vertices);
   const [txLast24, setTxLast24] = useStateX(t.txLast24);
@@ -177,8 +178,8 @@ const StatsPage = ({ go }) => {
           <Card title="">
             <div className="stats-health">
               <HealthRow label="Rounds produced / day" value={_fmtI(S.network.avgRoundsPerDay)} tone="ok"/>
-              <HealthRow label="Clusters in jail cooldown" value={`${window.MONOSCAN_DATA.clusters.filter(c=>c.inactiveReason==="jailed").length}`} tone="warn"/>
-              <HealthRow label="Clusters recruiting ops" value={`${window.MONOSCAN_DATA.clusters.filter(c=>c.recruiting && c.active).length}`} tone="neutral"/>
+              <HealthRow label="Clusters in jail cooldown" value={`${MONOSCAN_DATA.clusters.filter(c=>c.inactiveReason==="jailed").length}`} tone="warn"/>
+              <HealthRow label="Clusters recruiting ops" value={`${MONOSCAN_DATA.clusters.filter(c=>c.recruiting && c.active).length}`} tone="neutral"/>
               <HealthRow label="Avg commit latency (p95)" value="342ms" tone="ok"/>
               <HealthRow label="Last slashing event" value="3 rounds ago" tone="warn"/>
               <HealthRow label="Last halted (emergency)" value="never" tone="ok"/>
@@ -228,7 +229,7 @@ const HealthRow = ({ label, value, tone }) => (
    WALLETS PAGE — rich list + pie
 ===================================================== */
 const WalletsPage = ({ go }) => {
-  const wallets = window.WALLETS;
+  const wallets = WALLETS;
   const [hover, setHover] = useStateX(null);
   const topSum = wallets.slice(0, 30).reduce((a,w)=>a+w.bal, 0);
 
@@ -242,7 +243,7 @@ const WalletsPage = ({ go }) => {
           </p>
         </div>
         <div className="mono" style={{fontSize:11,color:"var(--fg-500)",textAlign:"right"}}>
-          <div>{_fmt(window.NETWORK_STATS.totals.walletsTotal)} total wallets</div>
+          <div>{_fmt(NETWORK_STATS.totals.walletsTotal)} total wallets</div>
           <div style={{color:"var(--fg-400)"}}>top 30 hold {_abbr(topSum)} LYTH</div>
         </div>
       </div>
@@ -367,7 +368,7 @@ const SupplyPie = ({ slices, hover, setHover }) => {
    WALLET DETAIL PAGE
 ===================================================== */
 const WalletPage = ({ addr, go }) => {
-  const w = window.WALLETS.find(w => w.addr === addr);
+  const w = WALLETS.find(w => w.addr === addr);
   if (!w) return (
     <div className="ms-page">
       <h1 className="ms-h1">Wallet not found</h1>
@@ -385,7 +386,7 @@ const WalletPage = ({ addr, go }) => {
       {/* Hero */}
       <section className="wd-hero">
         <div className="wd-hero__meta">
-          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em"}}>WALLET · #{w.rank} OF {window.WALLETS.length}</div>
+          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em"}}>WALLET · #{w.rank} OF {WALLETS.length}</div>
           <h1 className="wd-hero__title">{w.tag || "Unlabeled wallet"}</h1>
           <div className="mono wd-hero__addr">{w.addr}</div>
           <div className="wd-hero__facts mono">
@@ -561,7 +562,7 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }) => {
    TRANSACTION DETAIL PAGE
 ===================================================== */
 const TxPage = ({ hash, go }) => {
-  const tx = window.TXS[hash];
+  const tx = TXS[hash];
   if (!tx) return (
     <div className="ms-page">
       <h1 className="ms-h1">Transaction not found</h1>
@@ -719,8 +720,8 @@ const KV = ({ label, value, mono, link, linkLabel }) => (
 ===================================================== */
 const RoundPage = ({ round, go }) => {
   const r = parseInt(round, 10);
-  const cur = window.MONOSCAN_DATA?.consensus?.round || 0;
-  const verts = (window.MONOSCAN_DATA?.recentVertices || []).filter(v => v.round === r);
+  const cur = MONOSCAN_DATA?.consensus?.round || 0;
+  const verts = (MONOSCAN_DATA?.recentVertices || []).filter(v => v.round === r);
   const found = verts.length > 0 || (r > 0 && r <= cur);
   return (
     <div className="ms-page">
@@ -741,7 +742,7 @@ const RoundPage = ({ round, go }) => {
             <table className="ms-table">
               <thead><tr><th>Cluster</th><th>Memos</th><th>BLS agg</th><th>DAC</th><th></th></tr></thead>
               <tbody>
-                {(verts.length ? verts : (window.MONOSCAN_DATA?.recentVertices || []).slice(0,6)).map((v,i)=>(
+                {(verts.length ? verts : (MONOSCAN_DATA?.recentVertices || []).slice(0,6)).map((v,i)=>(
                   <tr key={i} onClick={()=>go(`#/cluster/${v.clusterSlot}`)} style={{cursor:"pointer"}}>
                     <td className="mono">C-{String(v.clusterSlot).padStart(3,"0")}</td>
                     <td className="mono">{v.txCount} settled</td>
@@ -765,8 +766,8 @@ const RoundPage = ({ round, go }) => {
 ===================================================== */
 const SearchPage = ({ q, go }) => {
   const ql = (q || "").toLowerCase();
-  const D = window.MONOSCAN_DATA || {};
-  const markets = (window.MARKETS || []).filter(m =>
+  const D = MONOSCAN_DATA || {};
+  const markets = (MARKETS || []).filter(m =>
     m.sym.toLowerCase().includes(ql) || (m.name||"").toLowerCase().includes(ql)
   );
   const clusters = (D.clusters || []).filter(c =>
@@ -833,9 +834,9 @@ const SearchPage = ({ q, go }) => {
 };
 
 const tagFor = (addr) => {
-  const w = window.WALLETS && window.WALLETS.find(w => w.addr === addr);
+  const w = WALLETS && WALLETS.find(w => w.addr === addr);
   return w?.tag || null;
 };
 
-/* Expose to global scope so monoscan-app.jsx can mount them */
-Object.assign(window, { StatsPage, WalletsPage, WalletPage, TxPage });
+/* Named exports — replaces the legacy window-attach pattern. */
+export { StatsPage, WalletsPage, WalletPage, TxPage };

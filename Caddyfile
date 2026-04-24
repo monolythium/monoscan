@@ -16,8 +16,5 @@
 		Cache-Control "public, max-age=300"
 	}
 
-	@jsx path *.jsx
-	header @jsx Content-Type "text/babel; charset=utf-8"
-
 	try_files {path} /index.html
 }
