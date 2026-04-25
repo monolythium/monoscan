@@ -13,6 +13,7 @@ import { MONOSCAN_DATA, MARKETS } from "./data/mock";
 import { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
 import { useChainHead, useChainStrip, useLatestBlocks, useValidatorSet } from "./data/hooks";
+import { AskPage } from "./nl/AskPage";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -102,6 +103,17 @@ const Header = ({ go, route }: any) => {
         />
         <span className="ms-search__hint">enter ↵</span>
       </form>
+      <button
+        type="button"
+        className={`ms-ask-btn ${route.startsWith("#/ask") ? "is-active" : ""}`}
+        onClick={()=>go("#/ask")}
+        aria-label="Ask Monoscan a natural-language question"
+        title="Ask Monoscan in plain English"
+      >
+        <span className="ms-ask-btn__spark"/>
+        <span>Ask</span>
+        <span className="ms-ask-btn__hint mono">NL</span>
+      </button>
       <nav className="ms-nav">
         {[
           ["#/",            "Overview"],
@@ -1294,6 +1306,7 @@ const App = () => {
   else if (parts[0]==="tx")         page = <TxPage hash={decodeURIComponent(parts[1]||"")} go={go}/>;
   else if (parts[0]==="round")      page = <RoundPage round={parts[1]} go={go}/>;
   else if (parts[0]==="search")     page = <SearchPage q={decodeURIComponent(parts[1]||"")} go={go}/>;
+  else if (parts[0]==="ask")        page = <AskPage initialQuery={parts[1] ? decodeURIComponent(parts[1]) : undefined} go={go}/>;
   else page = <Landing go={go}/>;
 
   return (
