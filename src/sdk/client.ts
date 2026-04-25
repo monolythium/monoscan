@@ -42,11 +42,11 @@ export function resetRpcClient(): void {
  *
  * Stage 3 of `plans/monoscan.md` wires per-node indexer streams
  * (block + tx WebSocket subscriptions, address-activity feed, gap records,
- * private-asset policy lookups). Until `protocore_subscribe` over WS lands
- * (mono-core OI-0069), the indexer surface is HTTP-only — same `RpcClient`,
- * different family of methods.
+ * private-asset policy lookups). `protocore_subscribe` is the WebSocket
+ * entry point but currently returns `not-implemented` over HTTP transport
+ * (mono-core OI-0069 — until that lands monoscan long-polls instead).
  *
- * For Stage 2 we expose the RPC as the indexer too so call sites can already
+ * For now we expose the RPC as the indexer too so call sites can already
  * import the right symbol; the moment a real `IndexerClient` lands the swap
  * is one-line.
  */
@@ -71,16 +71,22 @@ export function getIndexerClient(): IndexerClient {
 /** React-Query keys, kept in one place so cache invalidation is grep-able. */
 export const QK = {
   head: () => ["mono", "head"] as const,
+  headStrip: () => ["mono", "head", "strip"] as const,
   blockByNumber: (n: number | "latest") => ["mono", "block", "byNumber", n] as const,
   blockByHash: (h: string) => ["mono", "block", "byHash", h] as const,
+  blocksLatest: (n: number) => ["mono", "blocks", "latest", n] as const,
   txReceipt: (h: string) => ["mono", "tx", h] as const,
+  txLive: (h: string) => ["mono", "tx", h, "live"] as const,
+  mempool: () => ["mono", "mempool"] as const,
   validatorSet: () => ["mono", "validators"] as const,
   validatorById: (id: string | number) => ["mono", "validator", id] as const,
+  networkStatus: () => ["mono", "stats", "network"] as const,
   addressActivity: (addr: string) => ["mono", "address", addr] as const,
   accountBalance: (addr: string) => ["mono", "address", addr, "balance"] as const,
   accountPolicy: (addr: string) => ["mono", "address", addr, "policy"] as const,
   // TODO(monolythium-vision): no SDK exposure yet for markets / DAG vertices /
-  // gap records — see Stage 3 wiring in plans/monoscan.md.
+  // operators (cluster aggregate beyond `protocore_validatorSet`). Stays mock
+  // until mono-core OI-0070 indexer + a `protocore_clob_*` namespace land.
   markets: () => ["mono", "markets"] as const,
   marketBySym: (sym: string) => ["mono", "markets", sym] as const,
   dagRecent: () => ["mono", "dag", "recent"] as const,
