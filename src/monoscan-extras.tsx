@@ -1,22 +1,23 @@
-// @ts-nocheck
 /* =====================================================
    Monoscan — Statistics, Wallets, Wallet detail, Tx detail
-   Mounted by monoscan-app.tsx. Depends on the typed
-   data exports in monoscan-data.tsx — pulled at the top
-   of this module so consumers don't need globals.
+   Mounted by monoscan-app.tsx. Reads its demo data through
+   `./data/mock` until the indexer surfaces (Stage 3, mono-core
+   OI-0070) replace each block via `./data/hooks`.
 ===================================================== */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState as useStateX, useMemo as useMemoX, useEffect as useEffectX } from "react";
-import { MONOSCAN_DATA, MARKETS, NETWORK_STATS, WALLETS, TXS } from "./monoscan-data";
+import { Card } from "./primitives";
+import { MONOSCAN_DATA, MARKETS, NETWORK_STATS, WALLETS, TXS } from "./data/mock";
 
 /* Light helpers — keep local so this file is self-contained */
-const _fmt  = (n) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-const _fmtI = (n) => Math.round(n).toLocaleString();
-const _abbr = (n) => n >= 1e9 ? `${(n/1e9).toFixed(2)}B` : n >= 1e6 ? `${(n/1e6).toFixed(2)}M` : n >= 1e3 ? `${(n/1e3).toFixed(1)}K` : _fmt(n);
-const _short = (a, n=10) => a && a.length > n*2+3 ? `${a.slice(0, n)}…${a.slice(-4)}` : a;
+const _fmt  = (n: any) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+const _fmtI = (n: any) => Math.round(n).toLocaleString();
+const _abbr = (n: any) => n >= 1e9 ? `${(n/1e9).toFixed(2)}B` : n >= 1e6 ? `${(n/1e6).toFixed(2)}M` : n >= 1e3 ? `${(n/1e3).toFixed(1)}K` : _fmt(n);
+const _short = (a: any, n=10) => a && a.length > n*2+3 ? `${a.slice(0, n)}…${a.slice(-4)}` : a;
 
 /* Tiny sparkline for stat cards */
-const MiniSpark = ({ data, w=120, h=32, stroke="var(--gold)", fill="rgba(242,180,65,0.12)" }) => {
+const MiniSpark = ({ data, w=120, h=32, stroke="var(--gold)", fill="rgba(242,180,65,0.12)" }: any) => {
   if (!data || !data.length) return null;
   const min = Math.min(...data), max = Math.max(...data);
   const rng = max - min || 1;
@@ -33,7 +34,7 @@ const MiniSpark = ({ data, w=120, h=32, stroke="var(--gold)", fill="rgba(242,180
 };
 
 /* Bar sparkline — used for slashing history (mostly zeros with occasional spikes) */
-const MiniBars = ({ data, w=120, h=32, fill="var(--err, #ff6b6b)" }) => {
+const MiniBars = ({ data, w=120, h=32, fill="var(--err, #ff6b6b)" }: any) => {
   if (!data || !data.length) return null;
   const max = Math.max(...data, 1);
   const step = w / data.length;
@@ -49,7 +50,7 @@ const MiniBars = ({ data, w=120, h=32, fill="var(--err, #ff6b6b)" }) => {
 /* =====================================================
    STATISTICS PAGE
 ===================================================== */
-const StatsPage = ({ go }) => {
+const StatsPage = ({ go }: any) => {
   const S = NETWORK_STATS;
   const t = S.totals;
   const [round, setRound] = useStateX(t.vertices);
@@ -194,7 +195,7 @@ const StatsPage = ({ go }) => {
   );
 };
 
-const StatCounter = ({ label, value, sub, trend, tone, onClick, clickable }) => (
+const StatCounter = ({ label, value, sub, trend, tone, onClick, clickable }: any) => (
   <div className={`stats-counter ${clickable?"is-clickable":""} stats-counter--${tone||"neutral"}`} onClick={onClick}>
     <div className="mono stats-counter__label">{label}</div>
     <div className="mono num stats-counter__value">{value}</div>
@@ -203,7 +204,7 @@ const StatCounter = ({ label, value, sub, trend, tone, onClick, clickable }) => 
   </div>
 );
 
-const StatBig = ({ label, value, unit, tone, annotation, chart, footer }) => (
+const StatBig = ({ label, value, unit, tone, annotation, chart, footer }: any) => (
   <div className={`stats-big stats-big--${tone||"neutral"}`}>
     <div className="mono stats-big__label">{label}</div>
     <div className="stats-big__row">
@@ -217,7 +218,7 @@ const StatBig = ({ label, value, unit, tone, annotation, chart, footer }) => (
   </div>
 );
 
-const HealthRow = ({ label, value, tone }) => (
+const HealthRow = ({ label, value, tone }: any) => (
   <div className="stats-health__row">
     <span className={`stats-health__dot stats-health__dot--${tone}`}/>
     <span className="stats-health__label">{label}</span>
@@ -228,7 +229,7 @@ const HealthRow = ({ label, value, tone }) => (
 /* =====================================================
    WALLETS PAGE — rich list + pie
 ===================================================== */
-const WalletsPage = ({ go }) => {
+const WalletsPage = ({ go }: any) => {
   const wallets = WALLETS;
   const [hover, setHover] = useStateX(null);
   const topSum = wallets.slice(0, 30).reduce((a,w)=>a+w.bal, 0);
@@ -305,7 +306,7 @@ const PIE_COLORS = [
   "#2a2a3a", "#1a1a24",
 ];
 
-const SupplyPie = ({ slices, hover, setHover }) => {
+const SupplyPie = ({ slices, hover, setHover }: any) => {
   const total = slices.reduce((a,s)=>a+s.pct, 0);
   const size = 240;
   const cx = size/2, cy = size/2;
@@ -367,7 +368,7 @@ const SupplyPie = ({ slices, hover, setHover }) => {
 /* =====================================================
    WALLET DETAIL PAGE
 ===================================================== */
-const WalletPage = ({ addr, go }) => {
+const WalletPage = ({ addr, go }: any) => {
   const w = WALLETS.find(w => w.addr === addr);
   if (!w) return (
     <div className="ms-page">
@@ -468,7 +469,7 @@ const WalletPage = ({ addr, go }) => {
   );
 };
 
-const FlowCard = ({ label, value, unit, tone, series }) => (
+const FlowCard = ({ label, value, unit, tone, series }: any) => (
   <div className={`wd-flow-card wd-flow-card--${tone}`}>
     <div className="mono wd-flow-card__label">{label}</div>
     <div className="mono num wd-flow-card__value">{_fmt(value)} <span>{unit}</span></div>
@@ -482,17 +483,17 @@ const FlowCard = ({ label, value, unit, tone, series }) => (
 );
 
 /* A simple Sankey-ish diagram: inflows → wallet → outflows + stake/reward */
-const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }) => {
+const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
   // Aggregate top 4 counterparties by volume per direction
-  const inParties = {};
-  const outParties = {};
-  wallet.txs.forEach(t => {
+  const inParties: Record<string, number> = {};
+  const outParties: Record<string, number> = {};
+  wallet.txs.forEach((t: any) => {
     const bucket = t.direction === "out" ? outParties : inParties;
     bucket[t.counterparty] = (bucket[t.counterparty] || 0) + t.amount;
   });
   const topIn  = Object.entries(inParties).sort((a,b)=>b[1]-a[1]).slice(0,4);
   const topOut = Object.entries(outParties).sort((a,b)=>b[1]-a[1]).slice(0,4);
-  const stake = wallet.flow30d.reduce((a,d)=>a+d.stake,0);
+  const stake = wallet.flow30d.reduce((a: number, d: any) => a + d.stake, 0);
   const maxIn  = Math.max(...topIn.map(r=>r[1]), 1);
   const maxOut = Math.max(...topOut.map(r=>r[1]), 1);
 
@@ -561,7 +562,7 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }) => {
 /* =====================================================
    TRANSACTION DETAIL PAGE
 ===================================================== */
-const TxPage = ({ hash, go }) => {
+const TxPage = ({ hash, go }: any) => {
   const tx = TXS[hash];
   if (!tx) return (
     <div className="ms-page">
@@ -704,7 +705,7 @@ const TxPage = ({ hash, go }) => {
   );
 };
 
-const KV = ({ label, value, mono, link, linkLabel }) => (
+const KV = ({ label, value, mono, link, linkLabel }: any) => (
   <div className="tx-kv__row">
     <span className="mono tx-kv__k">{label}</span>
     <span className={`${mono?"mono":""} tx-kv__v`}>
@@ -718,7 +719,7 @@ const KV = ({ label, value, mono, link, linkLabel }) => (
    ROUND DETAIL — search-entered round number lands here.
    Looks up the vertex list for that round across all clusters.
 ===================================================== */
-const RoundPage = ({ round, go }) => {
+const RoundPage = ({ round, go }: any) => {
   const r = parseInt(round, 10);
   const cur = MONOSCAN_DATA?.consensus?.round || 0;
   const verts = (MONOSCAN_DATA?.recentVertices || []).filter(v => v.round === r);
@@ -764,9 +765,9 @@ const RoundPage = ({ round, go }) => {
    SEARCH RESULTS — freeform query, groups matching clusters,
    operators, wallets, and markets.
 ===================================================== */
-const SearchPage = ({ q, go }) => {
+const SearchPage = ({ q, go }: any) => {
   const ql = (q || "").toLowerCase();
-  const D = MONOSCAN_DATA || {};
+  const D: any = MONOSCAN_DATA || {};
   const markets = (MARKETS || []).filter(m =>
     m.sym.toLowerCase().includes(ql) || (m.name||"").toLowerCase().includes(ql)
   );
@@ -782,7 +783,7 @@ const SearchPage = ({ q, go }) => {
   );
   const total = markets.length + clusters.length + operators.length + wallets.length;
 
-  const Section = ({ title, items, render }) =>
+  const Section = ({ title, items, render }: any) =>
     items.length === 0 ? null : (
       <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
         <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>{title} · {items.length}</div>
@@ -839,4 +840,4 @@ const tagFor = (addr) => {
 };
 
 /* Named exports — replaces the legacy window-attach pattern. */
-export { StatsPage, WalletsPage, WalletPage, TxPage };
+export { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage };

@@ -1,16 +1,16 @@
-// @ts-nocheck
 /* =====================================================
    Monarch Desktop v2 — Primitives
    Shared atomic components. Imported as ES modules.
 ===================================================== */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
-// React hook imports kept available for future primitives — currently unused.
+import { Fragment } from "react";
 
 /* ---------- Icon set ----------
    Plain-stroke monoline icons at 16px default.
    `name` drives the glyph. Feel free to add more. */
-const Icon = ({ name, size = 16, color = "currentColor", style = {} }) => {
-  const base = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round", style: { display: "block", ...style } };
+const Icon = ({ name, size = 16, color = "currentColor", style = {} }: any) => {
+  const base: any = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 1.5, strokeLinecap: "round", strokeLinejoin: "round", style: { display: "block", ...style } };
   switch (name) {
     case "home":         return <svg {...base}><path d="M3 10.5 12 3l9 7.5V21H3z"/><path d="M9 21v-7h6v7"/></svg>;
     case "operator":     return <svg {...base}><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>;
@@ -61,7 +61,7 @@ const Icon = ({ name, size = 16, color = "currentColor", style = {} }) => {
 };
 
 /* ---------- StatusDot ---------- */
-const StatusDot = ({ kind = "ok", pulse = false, size = 8 }) => {
+const StatusDot = ({ kind = "ok", pulse = false, size = 8 }: any) => {
   const c =
     kind === "ok"   ? "var(--ok)"   :
     kind === "warn" ? "var(--warn)" :
@@ -79,7 +79,7 @@ const StatusDot = ({ kind = "ok", pulse = false, size = 8 }) => {
 };
 
 /* ---------- Pill ---------- */
-const Pill = ({ tone = "default", children, mono = false, style = {}, onClick }) => (
+const Pill = ({ tone = "default", children, mono = false, style = {}, onClick }: any) => (
   <span
     onClick={onClick}
     className={`pill ${tone === "default" ? "" : tone}${mono ? " mono" : ""}`}
@@ -88,7 +88,7 @@ const Pill = ({ tone = "default", children, mono = false, style = {}, onClick })
 );
 
 /* ---------- Kbd ---------- */
-const Kbd = ({ children, style = {} }) => (
+const Kbd = ({ children, style = {} }: any) => (
   <span style={{
     display: "inline-block",
     padding: "1px 6px",
@@ -104,7 +104,7 @@ const Kbd = ({ children, style = {} }) => (
 );
 
 /* ---------- Halo (heading-size metric) ---------- */
-const Halo = ({ kind = "gold", children, size = 32, mono = true }) => {
+const Halo = ({ kind = "gold", children, size = 32, mono = true }: any) => {
   const color = kind === "gold" ? "var(--gold)" : kind === "err" ? "var(--err)" : "var(--fg-100)";
   return (
     <span style={{
@@ -118,7 +118,7 @@ const Halo = ({ kind = "gold", children, size = 32, mono = true }) => {
 };
 
 /* ---------- Avatar ---------- */
-const Avatar = ({ hue = 200, size = 24, letter, style = {} }) => (
+const Avatar = ({ hue = 200, size = 24, letter, style = {} }: any) => (
   <span style={{
     width: size, height: size, borderRadius: "50%",
     background: `linear-gradient(135deg, oklch(0.62 0.18 ${hue}), oklch(0.48 0.14 ${(hue + 60) % 360}))`,
@@ -130,7 +130,7 @@ const Avatar = ({ hue = 200, size = 24, letter, style = {} }) => (
 );
 
 /* ---------- Sparkline ---------- */
-const Sparkline = ({ data = [], width = 120, height = 28, color = "var(--gold)", fill = true }) => {
+const Sparkline = ({ data = [], width = 120, height = 28, color = "var(--gold)", fill = true }: any) => {
   if (!data.length) return null;
   const min = Math.min(...data), max = Math.max(...data) || 1;
   const range = max - min || 1;
@@ -156,7 +156,7 @@ const Sparkline = ({ data = [], width = 120, height = 28, color = "var(--gold)",
 };
 
 /* ---------- Rolling digit (per-digit odometer) ---------- */
-const RollingDigit = ({ digit, size = 32 }) => {
+const RollingDigit = ({ digit, size = 32 }: any) => {
   const d = String(digit);
   if (!/\d/.test(d)) {
     return <span style={{ display: "inline-block", fontFamily: "var(--f-mono)", fontSize: size, fontWeight: 300, color: "var(--gold)" }}>{d}</span>;
@@ -185,7 +185,7 @@ const RollingDigit = ({ digit, size = 32 }) => {
 };
 
 /* ---------- RoundTicker (replaces BlockTicker) ---------- */
-const RoundTicker = ({ round, size = 44, label = "DAG round" }) => {
+const RoundTicker = ({ round, size = 44, label = "DAG round" }: any) => {
   const s = round.toLocaleString();
   return (
     <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
@@ -198,7 +198,7 @@ const RoundTicker = ({ round, size = 44, label = "DAG round" }) => {
 };
 
 /* ---------- QuorumBar (n-of-m fill) ---------- */
-const QuorumBar = ({ have, total, threshold, size = 22, gap = 4, showLabel = true }) => {
+const QuorumBar = ({ have, total, threshold, size = 22, gap = 4, showLabel = true }: any) => {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", gap }}>
@@ -244,7 +244,7 @@ const STATE_META = {
   jail:        { label: "Jail",        color: "var(--state-jail)",        rule: "5/7" },
   collapsed:   { label: "Collapsed",   color: "var(--state-collapsed)",   rule: "≤4/7" },
 };
-const StateMachinePill = ({ state = "nominal", compact = false }) => {
+const StateMachinePill = ({ state = "nominal", compact = false }: any) => {
   const m = STATE_META[state];
   if (compact) {
     return (
@@ -266,7 +266,7 @@ const StateMachinePill = ({ state = "nominal", compact = false }) => {
         const sm = STATE_META[s];
         const isCur = s === state;
         return (
-          <React.Fragment key={s}>
+          <Fragment key={s}>
             <span style={{
               display: "inline-flex", alignItems: "center", gap: 5,
               padding: "3px 8px",
@@ -281,7 +281,7 @@ const StateMachinePill = ({ state = "nominal", compact = false }) => {
               {sm.rule} {sm.label}
             </span>
             {i < STATE_ORDER.length - 1 && <span style={{ color: "var(--fg-600)", fontSize: 11 }}>›</span>}
-          </React.Fragment>
+          </Fragment>
         );
       })}
     </div>
@@ -289,7 +289,7 @@ const StateMachinePill = ({ state = "nominal", compact = false }) => {
 };
 
 /* ---------- AttestationBadge ---------- */
-const AttestationBadge = ({ ok = true, pcrShort = "pcr:—", stale = false }) => {
+const AttestationBadge = ({ ok = true, pcrShort = "pcr:—", stale = false }: any) => {
   const tone = !ok ? "err" : stale ? "warn" : "ok";
   const label = !ok ? "FAILED" : stale ? "STALE" : "ATTESTED";
   const color = tone === "ok" ? "var(--state-nominal)" : tone === "warn" ? "var(--state-maintenance)" : "var(--state-jail)";
@@ -311,7 +311,7 @@ const AttestationBadge = ({ ok = true, pcrShort = "pcr:—", stale = false }) =>
 };
 
 /* ---------- BondMeter ---------- */
-const BondMeter = ({ posted, atRisk, liquidation = 0.75, unit = "LYTH" }) => {
+const BondMeter = ({ posted, atRisk, liquidation = 0.75, unit = "LYTH" }: any) => {
   const pct = atRisk / posted;
   const warn = pct > 0.5;
   return (
@@ -352,7 +352,7 @@ const BondMeter = ({ posted, atRisk, liquidation = 0.75, unit = "LYTH" }) => {
 };
 
 /* ---------- SigningStrip — 3-state (included / missed / dac-fault) ---------- */
-const SigningStrip = ({ data = [], label = "Last 23 rounds" }) => {
+const SigningStrip = ({ data = [], label = "Last 23 rounds" }: any) => {
   // data: array of strings: "ok" | "miss" | "fault" — or numbers (7 = all live, treat 7 as ok, <7 maintenance, <5 err)
   const normalized = data.map(v => {
     if (typeof v === "string") return v;
@@ -377,7 +377,7 @@ const SigningStrip = ({ data = [], label = "Last 23 rounds" }) => {
 };
 
 /* ---------- ClusterRing (7 avatars in a circle, 5-of-7 quorum arc) ---------- */
-const ClusterRing = ({ members = [], threshold = 5, size = 260 }) => {
+const ClusterRing = ({ members = [], threshold = 5, size = 260 }: any) => {
   const cx = size / 2, cy = size / 2;
   const r = size * 0.38;
   const have = members.filter(m => m.state === "live").length;
@@ -470,7 +470,7 @@ const ClusterRing = ({ members = [], threshold = 5, size = 260 }) => {
 };
 
 /* ---------- MemoSignalChip ---------- */
-const MemoSignalChip = ({ proposalId, vote, expires }) => {
+const MemoSignalChip = ({ proposalId, vote, expires }: any) => {
   const c = vote === "YES" ? "var(--ok)" : vote === "NO" ? "var(--err)" : "var(--fg-300)";
   return (
     <span className="mono" style={{
@@ -490,7 +490,7 @@ const MemoSignalChip = ({ proposalId, vote, expires }) => {
 };
 
 /* ---------- PrivateBadge ---------- */
-const PrivateBadge = ({ style = {} }) => (
+const PrivateBadge = ({ style = {} }: any) => (
   <span className="mono denom-private-badge" style={style}>
     <Icon name="private-lock" size={12}/>
     PRIVATE · irreversible
@@ -498,7 +498,7 @@ const PrivateBadge = ({ style = {} }) => (
 );
 
 /* ---------- AlgoBadge ---------- */
-const AlgoBadge = ({ algo, short }) => {
+const AlgoBadge = ({ algo, short }: any) => {
   const v =
     algo === "slhdsa"  ? "var(--algo-slhdsa)"  :
     algo === "mldsa"   ? "var(--algo-mldsa)"   :
@@ -521,7 +521,7 @@ const AlgoBadge = ({ algo, short }) => {
 };
 
 /* ---------- StandbyTray ---------- */
-const StandbyTray = ({ active, standbys = [] }) => (
+const StandbyTray = ({ active, standbys = [] }: any) => (
   <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
     <div className="card" style={{ flex: 1, minWidth: 160, padding: 14, background: "var(--gold-bg)", border: "1px solid oklch(0.82 0.14 78 / 0.3)" }}>
       <div className="cap" style={{ color: "var(--gold)" }}>Active · Cluster {active}</div>
@@ -541,7 +541,7 @@ const StandbyTray = ({ active, standbys = [] }) => (
 );
 
 /* ---------- Divider ---------- */
-const Divider = ({ vertical = false, style = {} }) => (
+const Divider = ({ vertical = false, style = {} }: any) => (
   <span style={{
     background: "var(--fg-700)",
     ...(vertical ? { width: 1, alignSelf: "stretch" } : { height: 1, width: "100%" }),
@@ -550,7 +550,7 @@ const Divider = ({ vertical = false, style = {} }) => (
 );
 
 /* ---------- SectionHead ---------- */
-const SectionHead = ({ title, sub, right }) => (
+const SectionHead = ({ title, sub, right }: any) => (
   <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 14 }}>
     <div>
       <div style={{ fontSize: 18, fontWeight: 500, letterSpacing: "-0.01em" }}>{title}</div>
@@ -560,11 +560,25 @@ const SectionHead = ({ title, sub, right }) => (
   </div>
 );
 
+/* ---------- Card ----------
+   Generic glass-frame card with title + optional right slot. Lifted out of
+   monoscan-app.tsx so monoscan-extras.tsx can use it without a circular
+   import. */
+const Card = ({ title, right, children }: any) => (
+  <div className="ms-card">
+    <div className="ms-card__head">
+      <h3>{title}</h3>
+      {right}
+    </div>
+    <div className="ms-card__body">{children}</div>
+  </div>
+);
+
 /* Named exports — replaces the legacy window-attach pattern. */
 export {
   Icon, StatusDot, Pill, Kbd, Halo, Avatar, Sparkline, RollingDigit, RoundTicker,
   QuorumBar, StateMachinePill, STATE_META, STATE_ORDER,
   AttestationBadge, BondMeter, SigningStrip, ClusterRing,
   MemoSignalChip, PrivateBadge, AlgoBadge, StandbyTray,
-  Divider, SectionHead,
+  Divider, SectionHead, Card,
 };

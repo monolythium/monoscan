@@ -1,6 +1,9 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./monoscan-app";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { RouterProvider } from "@tanstack/react-router";
+import { router } from "./router";
+import { queryClient } from "./data/hooks";
 
 // Tokens + monoscan CSS — preserved verbatim from the static mockup.
 import "../styles/tokens.css";
@@ -13,6 +16,8 @@ if (!container) {
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
   </StrictMode>,
 );
