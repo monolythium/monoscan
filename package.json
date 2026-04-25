@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "description": "Monoscan - public web blockchain explorer for Monolythium v2 / LythiumDAG-BFT",
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
