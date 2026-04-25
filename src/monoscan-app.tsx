@@ -1,17 +1,18 @@
-// @ts-nocheck
 /* =====================================================
    Monoscan — public chain explorer for Monolythium v2
    Three views: Landing · Cluster detail · Operator profile.
    Hash-routed; data is faked but shape-true to data.tsx.
 ===================================================== */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState, useEffect, useMemo } from "react";
 import {
-  Icon, Sparkline, ClusterRing, StateMachinePill,
+  Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
-import { MONOSCAN_DATA, MARKETS } from "./monoscan-data";
-import { StatsPage, WalletsPage, WalletPage, TxPage } from "./monoscan-extras";
+import { MONOSCAN_DATA, MARKETS } from "./data/mock";
+import { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
+import { useChainHead } from "./data/hooks";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -22,7 +23,7 @@ const ago = (s) => s; // already strings
 const SCAN = MONOSCAN_DATA;
 
 /* ============== TOP STRIP ============== */
-const ChainStrip = ({ round, latencyMs, ratePerSec, signers }) => (
+const ChainStrip = ({ round, latencyMs, ratePerSec, signers }: any) => (
   <div className="ms-strip">
     <span className="ms-strip__dot"/>
     <span className="ms-strip__label">CHAIN LIVE</span>
@@ -41,7 +42,7 @@ const ChainStrip = ({ round, latencyMs, ratePerSec, signers }) => (
   </div>
 );
 const Sep = () => <span className="ms-strip__sep"/>;
-const Field = ({label, value, accent}) => (
+const Field = ({label, value, accent}: any) => (
   <span className="ms-strip__field">
     <span>{label}</span>
     <b style={accent ? {color:"var(--gold)"} : {}}>{value}</b>
@@ -49,7 +50,7 @@ const Field = ({label, value, accent}) => (
 );
 
 /* ============== HEADER NAV ============== */
-const Header = ({ go, route }) => {
+const Header = ({ go, route }: any) => {
   const [q, setQ] = useState("");
   const submit = (e) => {
     e.preventDefault();
@@ -99,7 +100,7 @@ const Header = ({ go, route }) => {
 /* ============== LANDING (rebuilt — calm, human-first) ============== */
 const fmtUsd = (n) => n>=1e9 ? `$${(n/1e9).toFixed(2)}B` : n>=1e6 ? `$${(n/1e6).toFixed(1)}M` : n>=1e3 ? `$${(n/1e3).toFixed(1)}K` : `$${n.toFixed(0)}`;
 
-const Landing = ({ go }) => {
+const Landing = ({ go }: any) => {
   const c = SCAN.consensus;
   const markets = MARKETS || [];
   const [round, setRound] = useState(c.round);
@@ -153,7 +154,7 @@ const Landing = ({ go }) => {
           <div className="ov-hero__ctas">
             <button onClick={()=>go("#/markets")} className="ov-cta ov-cta--primary">Browse markets</button>
             <button onClick={()=>go("#/clusters")} className="ov-cta">Stake with a cluster</button>
-            <button onClick={()=>document.getElementById("ov-feed").scrollIntoView({block:"center",behavior:"smooth"})} className="ov-cta ov-cta--ghost">See it live ↓</button>
+            <button onClick={()=>document.getElementById("ov-feed")?.scrollIntoView({block:"center",behavior:"smooth"})} className="ov-cta ov-cta--ghost">See it live ↓</button>
           </div>
         </div>
 
@@ -341,7 +342,7 @@ const Landing = ({ go }) => {
 };
 
 /* ---- Landing helpers ---- */
-const HeadlineStat = ({ label, value, sub, delta, tone, spark, accent, onClick }) => {
+const HeadlineStat = ({ label, value, sub, delta, tone, spark, accent, onClick }: any) => {
   const toneColor = tone==="ok" ? "var(--ok)" : tone==="err" ? "var(--err)" : tone==="gold" ? "var(--gold)" : "var(--fg-400)";
   return (
     <div className={`ov-hstat ${accent?"ov-hstat--accent":""} ${onClick?"ov-hstat--click":""}`} onClick={onClick}>
@@ -366,7 +367,7 @@ const HeadlineStat = ({ label, value, sub, delta, tone, spark, accent, onClick }
 /* Supply split — takes the 4th headline slot. Shows public vs shielded as
    a split bar so the irreversible private denomination is a headline fact,
    not a footnote. */
-const SupplySplitStat = ({ publicM, privateM, totalM, pubPct, privTxs30d }) => {
+const SupplySplitStat = ({ publicM, privateM, totalM, pubPct, privTxs30d }: any) => {
   const privPct = 100 - pubPct;
   return (
     <div className="ov-hstat ov-hstat--supply">
@@ -401,7 +402,7 @@ const SupplySplitStat = ({ publicM, privateM, totalM, pubPct, privTxs30d }) => {
   );
 };
 
-const MiniSeries = ({ data, color, height=24 }) => {
+const MiniSeries = ({ data, color, height=24 }: any) => {
   const min = Math.min(...data), max = Math.max(...data);
   const W = 100;
   const pts = data.map((v,i)=>{
@@ -417,7 +418,7 @@ const MiniSeries = ({ data, color, height=24 }) => {
   );
 };
 
-const MoveCard = ({ title, rows, kind, go }) => (
+const MoveCard = ({ title, rows, kind, go }: any) => (
   <div className="ms-card ov-movecard">
     <div className="ms-card__head">
       <h3>{title}</h3>
@@ -446,7 +447,7 @@ const MoveCard = ({ title, rows, kind, go }) => (
   </div>
 );
 
-const Vital = ({label, value, delta, tone, big}) => (
+const Vital = ({label, value, delta, tone, big}: any) => (
   <div className={`ms-vital ${big?"ms-vital--big":""}`}>
     <div className="cap">{label}</div>
     <div className="mono ms-vital__num">{value}</div>
@@ -456,7 +457,7 @@ const Vital = ({label, value, delta, tone, big}) => (
   </div>
 );
 
-const SignersHist = ({data}) => (
+const SignersHist = ({data}: any) => (
   <div style={{display:"flex",gap:2,alignItems:"flex-end",height:42,marginTop:8}}>
     {data.map((v,i)=>{
       const c = v>=7 ? "var(--ok)" : v>=5 ? "var(--warn)" : "var(--err)";
@@ -466,7 +467,7 @@ const SignersHist = ({data}) => (
   </div>
 );
 
-const Tally = ({tally}) => {
+const Tally = ({tally}: any) => {
   const total = tally.yes+tally.no+tally.abstain;
   return (
     <div style={{marginTop:8}}>
@@ -484,18 +485,8 @@ const Tally = ({tally}) => {
   );
 };
 
-const Card = ({title, right, children}) => (
-  <div className="ms-card">
-    <div className="ms-card__head">
-      <h3>{title}</h3>
-      {right}
-    </div>
-    <div className="ms-card__body">{children}</div>
-  </div>
-);
-
 /* ============== CLUSTER DETAIL (rebuilt — ring hero + plain-language health) ============== */
-const ClusterPage = ({ slot, go }) => {
+const ClusterPage = ({ slot, go }: any) => {
   const cl = SCAN.clusters.find(c => String(c.slot)===String(slot)) || SCAN.clusters[0];
   const apy = clusterApy(cl);
   const ringMembers = cl.opMembers.map((m,i)=>({ ...m, id: m.handle+i }));
@@ -695,7 +686,7 @@ const ClusterPage = ({ slot, go }) => {
   );
 };
 
-const Stat = ({label, value, custom, tone}) => {
+const Stat = ({label, value, custom, tone}: any) => {
   const color = tone==="ok"?"var(--ok)":tone==="warn"?"var(--warn)":tone==="gold"?"var(--gold)":"var(--fg-100)";
   return (
     <div className="ms-stat">
@@ -707,7 +698,7 @@ const Stat = ({label, value, custom, tone}) => {
 };
 
 /* ============== OPERATOR PROFILE ============== */
-const OperatorPage = ({ addr, go }) => {
+const OperatorPage = ({ addr, go }: any) => {
   const op = SCAN.operators.find(o => o.addrShort===addr) || SCAN.operators[0];
   return (
     <div className="ms-page">
@@ -779,7 +770,7 @@ const clusterApy = (cl) => {
   return (cl.reward30d * 12 / tvsMono) * 100;
 };
 
-const ClustersPage = ({go}) => {
+const ClustersPage = ({go}: any) => {
   const [tab, setTab]       = useState("active"); // active|inactive
   const [filter, setFilter] = useState("all"); // all|nominal|maintenance|open (active tab) · all|jailed|queued (inactive tab)
   const [sort, setSort]     = useState("tvs"); // tvs|apy|members|diversity
@@ -1071,7 +1062,7 @@ const ClustersPage = ({go}) => {
 };
 
 /* Small signer ring — 7 dots around a circle with quorum arc, compact */
-const MiniRing = ({ members, size=110, threshold=5 }) => {
+const MiniRing = ({ members, size=110, threshold=5 }: any) => {
   const cx = size/2, cy = size/2;
   const r  = size*0.34;
   const live = members.filter(m=>m.state==="live").length;
@@ -1105,7 +1096,7 @@ const MiniRing = ({ members, size=110, threshold=5 }) => {
   );
 };
 
-const OperatorsPage = ({go}) => (
+const OperatorsPage = ({go}: any) => (
   <div className="ms-page">
     <h1 className="ms-h1">Operators · {SCAN.operators.length}</h1>
     <div className="mono" style={{color:"var(--fg-400)",marginBottom:18,fontSize:13}}>
@@ -1140,7 +1131,7 @@ const OperatorsPage = ({go}) => (
   </div>
 );
 
-const GovernancePage = ({go}) => (
+const GovernancePage = ({go}: any) => (
   <div className="ms-page">
     <h1 className="ms-h1">Governance · memo-field signal-only</h1>
     <div className="mono" style={{color:"var(--fg-400)",marginBottom:18,fontSize:13,maxWidth:680}}>
@@ -1192,16 +1183,20 @@ const App = () => {
   }, []);
   const go = (h) => { window.location.hash = h; setRoute(h); };
 
-  const [round, setRound] = useState(SCAN.consensus.round);
+  // Live chain head (4s poll) — falls back to a local timer-based mock when
+  // the RPC endpoint is unreachable, so the strip never freezes during dev.
+  const head = useChainHead();
+  const [mockRound, setMockRound] = useState(SCAN.consensus.round);
   useEffect(()=>{
-    const id = setInterval(()=>setRound(r=>r+1), 380);
+    const id = setInterval(()=>setMockRound(r=>r+1), 380);
     return ()=>clearInterval(id);
   },[]);
+  const round = head.data?.round ?? mockRound;
 
   // Lightweight toast channel (for clipboard copies, preview-only actions, etc.)
-  const [toast, setToast] = useState(null);
+  const [toast, setToast] = useState<string | null>(null);
   useEffect(()=>{
-    window.__msToast = (msg) => {
+    window.__msToast = (msg: string) => {
       setToast(msg);
       clearTimeout(window.__msToastT);
       window.__msToastT = setTimeout(()=>setToast(null), 2400);

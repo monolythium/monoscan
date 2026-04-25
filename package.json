@@ -11,6 +11,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@monolythium/core-sdk": "file:../mono-core-sdk/packages/ts",
+    "@tanstack/react-query": "^5.62.0",
+    "@tanstack/react-router": "^1.95.0",
     "react": "19.2.5",
     "react-dom": "19.2.5"
   },

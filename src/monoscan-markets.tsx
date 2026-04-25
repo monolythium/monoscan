@@ -1,4 +1,3 @@
-// @ts-nocheck
 /* =====================================================
    Monoscan · MARKETS
    Top 100 tokens by 24h volume, each with a trading detail
@@ -6,23 +5,24 @@
    Settlement is on Monarch — every trade has a round +
    attestation quorum. Coinzen is the routing venue.
    ===================================================== */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState, useEffect, useMemo } from "react";
-import { MARKETS } from "./monoscan-data";
+import { MARKETS } from "./data/mock";
 
 /* ----- formatters ----- */
-const mkFmt = (n, dp) => {
+const mkFmt = (n: any, dp?: any) => {
   if (n == null) return "—";
   const d = dp != null ? dp : n < 1 ? 6 : n < 100 ? 3 : 2;
   return n.toLocaleString(undefined, { minimumFractionDigits:d, maximumFractionDigits:d });
 };
-const mkMoney = (n) => n < 1 ? `$${n.toFixed(4)}` : n < 100 ? `$${n.toFixed(3)}` : `$${n.toLocaleString(undefined,{maximumFractionDigits:2})}`;
-const mkUsd   = (n) => n>=1e9 ? `$${(n/1e9).toFixed(2)}B` : n>=1e6 ? `$${(n/1e6).toFixed(2)}M` : n>=1e3 ? `$${(n/1e3).toFixed(2)}K` : `$${n.toFixed(0)}`;
-const mkNum   = (n) => n>=1e9 ? `${(n/1e9).toFixed(2)}B` : n>=1e6 ? `${(n/1e6).toFixed(2)}M` : n>=1e3 ? `${(n/1e3).toFixed(2)}K` : `${n.toFixed(0)}`;
-const mkAgo   = (ts) => { const s = (Date.now()-ts)/1000; if (s<60) return `${s|0}s ago`; if (s<3600) return `${(s/60)|0}m ago`; if (s<86400) return `${(s/3600)|0}h ago`; return `${(s/86400)|0}d ago`; };
+const mkMoney = (n: any) => n < 1 ? `$${n.toFixed(4)}` : n < 100 ? `$${n.toFixed(3)}` : `$${n.toLocaleString(undefined,{maximumFractionDigits:2})}`;
+const mkUsd   = (n: any) => n>=1e9 ? `$${(n/1e9).toFixed(2)}B` : n>=1e6 ? `$${(n/1e6).toFixed(2)}M` : n>=1e3 ? `$${(n/1e3).toFixed(2)}K` : `$${n.toFixed(0)}`;
+const mkNum   = (n: any) => n>=1e9 ? `${(n/1e9).toFixed(2)}B` : n>=1e6 ? `${(n/1e6).toFixed(2)}M` : n>=1e3 ? `${(n/1e3).toFixed(2)}K` : `${n.toFixed(0)}`;
+const mkAgo   = (ts: any) => { const s = (Date.now()-ts)/1000; if (s<60) return `${s|0}s ago`; if (s<3600) return `${(s/60)|0}m ago`; if (s<86400) return `${(s/3600)|0}h ago`; return `${(s/86400)|0}d ago`; };
 
 /* Token glyph — seeded, visually stable */
-const TokenMark = ({ sym, size=24 }) => {
+const TokenMark = ({ sym, size=24 }: any) => {
   const hue = Math.abs(sym.split("").reduce((a,c)=>a*17+c.charCodeAt(0),7))%360;
   const letter = sym.replace(/[^A-Za-z]/g,"").slice(0,2) || sym.slice(0,2);
   return (
@@ -39,7 +39,7 @@ const TokenMark = ({ sym, size=24 }) => {
 };
 
 /* Sparkline — positive/negative aware */
-const Spark = ({ data, up, w=100, h=28 }) => {
+const Spark = ({ data, up, w=100, h=28 }: any) => {
   const min = Math.min(...data), max = Math.max(...data);
   const sx = w/(data.length-1);
   const sy = (v) => max===min ? h/2 : h-((v-min)/(max-min))*h;
@@ -53,7 +53,7 @@ const Spark = ({ data, up, w=100, h=28 }) => {
 };
 
 /* ---------- MARKETS LIST ---------- */
-const MarketsPage = ({ go }) => {
+const MarketsPage = ({ go }: any) => {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState("rank");
   const [dir, setDir] = useState(1);
@@ -208,7 +208,7 @@ const MarketsPage = ({ go }) => {
 };
 
 /* ---------- MARKET DETAIL ---------- */
-const MarketPage = ({ sym, go }) => {
+const MarketPage = ({ sym, go }: any) => {
   const tkn = MARKETS.find(m => m.sym === sym) || MARKETS[0];
   const [range, setRange] = useState("1D");
   const [orderSide, setOrderSide] = useState("buy");
