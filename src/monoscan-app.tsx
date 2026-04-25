@@ -12,7 +12,7 @@ import {
 import { MONOSCAN_DATA, MARKETS } from "./data/mock";
 import { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
-import { useChainHead } from "./data/hooks";
+import { useChainHead, useChainStrip, useLatestBlocks, useValidatorSet } from "./data/hooks";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -23,24 +23,47 @@ const ago = (s) => s; // already strings
 const SCAN = MONOSCAN_DATA;
 
 /* ============== TOP STRIP ============== */
-const ChainStrip = ({ round, latencyMs, ratePerSec, signers }: any) => (
-  <div className="ms-strip">
-    <span className="ms-strip__dot"/>
-    <span className="ms-strip__label">CHAIN LIVE</span>
-    <Sep/>
-    <Field label="round" value={fmt(round)} accent/>
-    <Sep/>
-    <Field label="rate" value={`${ratePerSec.toFixed(1)}/s`}/>
-    <Sep/>
-    <Field label="commit p95" value={`${latencyMs}ms`}/>
-    <Sep/>
-    <Field label="signers" value={`${signers.live}/${signers.total} clusters live`}/>
-    <span style={{flex:1}}/>
-    <Field label="network" value="monolythium-v2"/>
-    <Sep/>
-    <Field label="proto" value="protocore-v2"/>
-  </div>
-);
+/**
+ * Renders the live top strip. `round` arrives already-resolved by the App
+ * (live RPC long-poll first, mock fallback second); the rest of the fields
+ * are best-effort live values from `useChainStrip` and degrade quietly to
+ * the mocked values when the node is unreachable.
+ */
+const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
+  const block = strip?.blockNumber;
+  const peers = strip?.peerCount;
+  const netVersion = strip?.netVersion;
+  return (
+    <div className="ms-strip">
+      <span className="ms-strip__dot"/>
+      <span className="ms-strip__label">CHAIN LIVE</span>
+      <Sep/>
+      <Field label="round" value={fmt(round)} accent/>
+      <Sep/>
+      {block !== null && block !== undefined ? (
+        <>
+          <Field label="block" value={fmt(block)}/>
+          <Sep/>
+        </>
+      ) : null}
+      <Field label="rate" value={`${ratePerSec.toFixed(1)}/s`}/>
+      <Sep/>
+      <Field label="commit p95" value={`${latencyMs}ms`}/>
+      <Sep/>
+      <Field label="signers" value={`${signers.live}/${signers.total} clusters live`}/>
+      {peers !== null && peers !== undefined ? (
+        <>
+          <Sep/>
+          <Field label="peers" value={fmt(peers)}/>
+        </>
+      ) : null}
+      <span style={{flex:1}}/>
+      <Field label="network" value={netVersion ? `chain-id ${netVersion}` : "monolythium-v2"}/>
+      <Sep/>
+      <Field label="proto" value="protocore-v2"/>
+    </div>
+  );
+};
 const Sep = () => <span className="ms-strip__sep"/>;
 const Field = ({label, value, accent}: any) => (
   <span className="ms-strip__field">
@@ -107,6 +130,14 @@ const Landing = ({ go }: any) => {
   const [latencySeries, setLatencySeries] = useState(()=>Array.from({length:60},(_,i)=>340+Math.sin(i*0.4)*16+Math.random()*14));
   const [rateSeries, setRateSeries]       = useState(()=>Array.from({length:60},(_,i)=>2.8+Math.sin(i*0.3)*0.15+Math.random()*0.08));
   const [showDeep, setShowDeep] = useState(false);
+
+  // Live latest blocks for the on-chain feed strip. Falls back to the mocked
+  // recent vertices when the node is offline so the page never goes blank.
+  // TODO(monolythium-vision): once mono-core OI-0070 lands the indexer's
+  // per-vertex breakdown (memo count, BLS-agg ms, DAC coverage, cluster
+  // attribution), swap these block headers for the richer vertex shape the
+  // designs demand.
+  const liveBlocks = useLatestBlocks(8);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -263,17 +294,38 @@ const Landing = ({ go }: any) => {
 
         <div className="ov-feed__grid">
           <div className="ov-feed__list">
-            {SCAN.recentVertices.slice(0,8).map((v,i)=>(
-              <div key={i} className="ov-feed__row" onClick={()=>go(`#/cluster/${v.clusterSlot}`)}>
-                <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·{fmt(v.round)}</span>
-                <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>C-{String(v.clusterSlot).padStart(3,"0")}</span>
-                <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{v.txCount} memos settled</span>
-                <span className="mono" style={{color:"var(--fg-500)",fontSize:10.5}}>{v.blsAggMs.toFixed(1)}ms</span>
-                <span className={`pill ${v.dac?"ok":"warn"}`} style={{padding:"2px 7px",fontSize:9.5}}>
-                  {v.dac ? "committed" : "pending"}
-                </span>
-              </div>
-            ))}
+            {liveBlocks.data && liveBlocks.data.length > 0
+              ? liveBlocks.data.slice(0, 8).map((b: any, i: number) => {
+                  const num = Number(b.number ?? 0);
+                  const gas = Number(b.gas_used ?? b.gasUsed ?? 0);
+                  const limit = Number(b.gas_limit ?? b.gasLimit ?? 1);
+                  const fillPct = limit > 0 ? (gas / limit) * 100 : 0;
+                  const slot = (num % 28) + 1;
+                  return (
+                    <div
+                      key={(b.hash as string) ?? i}
+                      className="ov-feed__row"
+                      onClick={() => go(`#/round/${num}`)}
+                    >
+                      <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·{fmt(num)}</span>
+                      <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>C-{String(slot).padStart(3,"0")}</span>
+                      <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{fmt(gas)} gas used</span>
+                      <span className="mono" style={{color:"var(--fg-500)",fontSize:10.5}}>{fillPct.toFixed(1)}%</span>
+                      <span className="pill ok" style={{padding:"2px 7px",fontSize:9.5}}>committed</span>
+                    </div>
+                  );
+                })
+              : SCAN.recentVertices.slice(0,8).map((v,i)=>(
+                  <div key={i} className="ov-feed__row" onClick={()=>go(`#/cluster/${v.clusterSlot}`)}>
+                    <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·{fmt(v.round)}</span>
+                    <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>C-{String(v.clusterSlot).padStart(3,"0")}</span>
+                    <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{v.txCount} memos settled</span>
+                    <span className="mono" style={{color:"var(--fg-500)",fontSize:10.5}}>{v.blsAggMs.toFixed(1)}ms</span>
+                    <span className={`pill ${v.dac?"ok":"warn"}`} style={{padding:"2px 7px",fontSize:9.5}}>
+                      {v.dac ? "committed" : "pending"}
+                    </span>
+                  </div>
+                ))}
           </div>
           <aside className="ov-feed__side">
             <div className="cap" style={{marginBottom:8}}>Top staking clusters</div>
@@ -1096,40 +1148,57 @@ const MiniRing = ({ members, size=110, threshold=5 }: any) => {
   );
 };
 
-const OperatorsPage = ({go}: any) => (
-  <div className="ms-page">
-    <h1 className="ms-h1">Operators · {SCAN.operators.length}</h1>
-    <div className="mono" style={{color:"var(--fg-400)",marginBottom:18,fontSize:13}}>
-      Operators carry stable identity across clusters · reputation follows the address, not the seat.
-    </div>
-    <Card title="">
-      <table className="ms-table">
-        <thead><tr><th>Operator</th><th>Region</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Uptime 90d</th><th style={{textAlign:"right"}}>Bonded</th><th style={{textAlign:"right"}}>Clusters</th><th style={{textAlign:"right"}}>Slash</th></tr></thead>
-        <tbody>
-          {SCAN.operators.map(op=>(
-            <tr key={op.addrShort} onClick={()=>go(`#/operator/${op.addrShort}`)}>
-              <td>
-                <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                  <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${op.handle.charCodeAt(0)*9%360})`}}/>
-                  <div>
-                    <div style={{fontWeight:500,fontSize:13}}>{op.handle}</div>
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>{op.addrShort}</div>
+const OperatorsPage = ({go}: any) => {
+  // Live validator set — `protocore_validatorSet` returns the descriptor list
+  // (id + pubkey + stake + active flag). It's a thin shape compared to the
+  // mocked operator profiles below; once the indexer surfaces operator
+  // reputation/region/uptime aggregates we can swap the mock list entirely.
+  // TODO(monolythium-vision): the SDK does not yet expose operator
+  // memberships, region, reputation, or 90d uptime — see plans/monoscan.md
+  // Stage 3 + mono-core OI-0070.
+  const validators = useValidatorSet();
+  const liveCount = validators.data?.length ?? null;
+  return (
+    <div className="ms-page">
+      <h1 className="ms-h1">Operators · {SCAN.operators.length}</h1>
+      <div className="mono" style={{color:"var(--fg-400)",marginBottom:18,fontSize:13}}>
+        Operators carry stable identity across clusters · reputation follows the address, not the seat.
+      </div>
+      {liveCount !== null && (
+        <div className="mono" style={{color:"var(--fg-500)",marginBottom:14,fontSize:11,letterSpacing:"0.06em"}}>
+          live validator set · {liveCount} descriptor{liveCount===1?"":"s"} reported by{" "}
+          <code style={{color:"var(--gold)"}}>protocore_validatorSet</code>
+        </div>
+      )}
+      <Card title="">
+        <table className="ms-table">
+          <thead><tr><th>Operator</th><th>Region</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Uptime 90d</th><th style={{textAlign:"right"}}>Bonded</th><th style={{textAlign:"right"}}>Clusters</th><th style={{textAlign:"right"}}>Slash</th></tr></thead>
+          <tbody>
+            {SCAN.operators.map(op=>(
+              <tr key={op.addrShort} onClick={()=>go(`#/operator/${op.addrShort}`)}>
+                <td>
+                  <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                    <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${op.handle.charCodeAt(0)*9%360})`}}/>
+                    <div>
+                      <div style={{fontWeight:500,fontSize:13}}>{op.handle}</div>
+                      <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>{op.addrShort}</div>
+                    </div>
                   </div>
-                </div>
-              </td>
-              <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{op.region}</td>
-              <td className="mono num" style={{textAlign:"right"}}>{op.reputation.toFixed(3)}</td>
-              <td className="mono num" style={{textAlign:"right"}}>{pct(op.uptime,2)}</td>
-              <td className="mono num" style={{textAlign:"right"}}>{fmt(op.bonded)}</td>
-              <td className="mono num" style={{textAlign:"right"}}>{op.memberships.length}</td>
-              <td className="mono num" style={{textAlign:"right",color:op.slashes===0?"var(--ok)":"var(--err)"}}>{op.slashes===0?"0":op.slashes}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Card>
-  </div>
-);
+                </td>
+                <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{op.region}</td>
+                <td className="mono num" style={{textAlign:"right"}}>{op.reputation.toFixed(3)}</td>
+                <td className="mono num" style={{textAlign:"right"}}>{pct(op.uptime,2)}</td>
+                <td className="mono num" style={{textAlign:"right"}}>{fmt(op.bonded)}</td>
+                <td className="mono num" style={{textAlign:"right"}}>{op.memberships.length}</td>
+                <td className="mono num" style={{textAlign:"right",color:op.slashes===0?"var(--ok)":"var(--err)"}}>{op.slashes===0?"0":op.slashes}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+};
 
 const GovernancePage = ({go}: any) => (
   <div className="ms-page">
@@ -1183,15 +1252,20 @@ const App = () => {
   }, []);
   const go = (h) => { window.location.hash = h; setRoute(h); };
 
-  // Live chain head (4s poll) — falls back to a local timer-based mock when
-  // the RPC endpoint is unreachable, so the strip never freezes during dev.
+  // Live chain head (2s poll per Stage 3) + chain-strip aggregate (round +
+  // block + peers + version + mempool + indexer). Both fall back to a local
+  // timer-based mock when the RPC endpoint is unreachable so the strip
+  // never freezes during dev.
+  // TODO(monolythium-vision): swap the 2s long-poll for `protocore_subscribe`
+  // over WebSocket once mono-core OI-0069 lands.
   const head = useChainHead();
+  const strip = useChainStrip();
   const [mockRound, setMockRound] = useState(SCAN.consensus.round);
   useEffect(()=>{
     const id = setInterval(()=>setMockRound(r=>r+1), 380);
     return ()=>clearInterval(id);
   },[]);
-  const round = head.data?.round ?? mockRound;
+  const round = strip.data?.round ?? head.data?.round ?? mockRound;
 
   // Lightweight toast channel (for clipboard copies, preview-only actions, etc.)
   const [toast, setToast] = useState<string | null>(null);
@@ -1229,6 +1303,7 @@ const App = () => {
         latencyMs={SCAN.consensus.commitLatencyP95Ms}
         ratePerSec={SCAN.consensus.ratePerSec}
         signers={SCAN.consensus.signers}
+        strip={strip.data ?? null}
       />
       <Header go={go} route={route}/>
       <main className="ms-main">{page}</main>

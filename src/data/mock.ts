@@ -170,10 +170,17 @@ const _makeClusters = () => {
 };
 
 /**
- * TODO(monolythium-vision): swap with live `protocore_currentRound`,
- * `protocore_validatorSet`, native CLOB queries, and the indexer's
- * cluster + governance views (`plans/monoscan.md` Stage 3, mono-core
- * OI-0070).
+ * TODO(monolythium-vision): partially superseded by Stage 3 wiring:
+ *   - `consensus.round` → live via `useChainHead`/`useChainStrip` (`hooks.ts`)
+ *   - `clusters` / `operators` → still mock; SDK has only `protocore_validatorSet`
+ *     (descriptor list); cluster TVS / operator reputation / vertex include
+ *     await mono-core OI-0070 indexer aggregate
+ *   - `recentVertices` → partially superseded by `useLatestBlocks` on the
+ *     landing live feed; per-cluster vertex breakdown still needs OI-0070.
+ *   - `proposals` / `proposalsHistory` → memo-field signal-only per ADR-0005;
+ *     needs an off-chain tally service before it can go live.
+ *   - `supply` → needs balance-aggregation indexer view (no SDK exposure yet).
+ *   - `treasury` → static foundation multi-sig surface (no SDK exposure yet).
  */
 export const MONOSCAN_DATA = {
   consensus: {
@@ -365,10 +372,10 @@ const _mkTrades = (mid: number, count: number, seedN: number) => {
 
 /**
  * TODO(monolythium-vision): markets surface needs a real CLOB feed —
- * tracked under `plans/monoscan.md` Stage 2 (markets stay structurally
- * preserved) and Stage 3 (live RPC). The native CLOB precompile lives
+ * Stage 3 keeps this as a mock fallback. The native CLOB precompile lives
  * under `mono-core/crates/precompile-clob` but does not yet expose a
- * `protocore_clob_*` JSON-RPC namespace.
+ * `protocore_clob_*` JSON-RPC namespace; once it does the MarketsPage +
+ * MarketPage swap to live order books and decoded trades.
  */
 export const MARKETS: any[] = MARKET_DEFS.map(([rank, sym, name, kind, tier]) => {
   const t = _mkToken(sym, name, rank, kind, tier);
@@ -404,8 +411,11 @@ MARKETS.forEach((m: any) => {
 /* ================= NETWORK STATS ================= */
 /**
  * TODO(monolythium-vision): aggregate counters need a real indexer
- * (mono-core OI-0070). Until then this is a seeded snapshot anchored on
- * the mock `MONOSCAN_DATA` head.
+ * (mono-core OI-0070). Stage 3 partially supersedes this: `useNetworkStatus`
+ * in `hooks.ts` now feeds StatsPage live values for round, validator
+ * count, peer count and mempool depth. Everything else here (txTotal,
+ * walletsTotal, contracts, supply split, slashing series) stays mock until
+ * the indexer aggregate ships.
  */
 export const NETWORK_STATS = (() => {
   const now = MONOSCAN_DATA.consensus.round;
@@ -609,8 +619,11 @@ const TX_KINDS: Record<string, { label: string; icon: string }> = {
 };
 
 /**
- * TODO(monolythium-vision): replace with `eth_getTransactionReceipt` +
- * indexer-side enrichment (logs, attestation, sigs). Stage 3 wire-up.
+ * TODO(monolythium-vision): partially superseded by Stage 3 — `TxPage` now
+ * reads `eth_getTransactionReceipt` live via `useTxByHashLive` and overrides
+ * status / block / gas with live values. The attestation panel (BLS sig
+ * timeline, DAC coverage, decoded calldata, log topics) still falls back to
+ * this fixture until mono-core OI-0070 ships indexer-side enrichment.
  */
 export const TXS: Record<string, any> = {};
 WALLETS.forEach((w: any) => {

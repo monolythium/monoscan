@@ -9,6 +9,7 @@
 import { useState as useStateX, useMemo as useMemoX, useEffect as useEffectX } from "react";
 import { Card } from "./primitives";
 import { MONOSCAN_DATA, MARKETS, NETWORK_STATS, WALLETS, TXS } from "./data/mock";
+import { useTxByHashLive, useBlockByNumber, useNetworkStatus } from "./data/hooks";
 
 /* Light helpers — keep local so this file is self-contained */
 const _fmt  = (n: any) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -53,6 +54,13 @@ const MiniBars = ({ data, w=120, h=32, fill="var(--err, #ff6b6b)" }: any) => {
 const StatsPage = ({ go }: any) => {
   const S = NETWORK_STATS;
   const t = S.totals;
+  // Live counters — best-effort. When the node is reachable, the head round
+  // and validator count come from the live RPC; the rest of the page is
+  // still mocked aggregate counters (txTotal, walletsTotal, contracts) until
+  // mono-core OI-0070 ships an indexer aggregate view.
+  // TODO(monolythium-vision): swap mocked aggregate counters for indexer
+  // aggregates the moment the indexer surface lands.
+  const live = useNetworkStatus();
   const [round, setRound] = useStateX(t.vertices);
   const [txLast24, setTxLast24] = useStateX(t.txLast24);
   useEffectX(() => {
@@ -62,6 +70,12 @@ const StatsPage = ({ go }: any) => {
     }, 400);
     return () => clearInterval(id);
   }, []);
+
+  const liveRound = live.data?.round ?? null;
+  const liveValidators = live.data?.validatorCount ?? null;
+  const livePeers = live.data?.peerCount ?? null;
+  const liveMempoolReady = live.data?.mempoolReady ?? null;
+  const headRound = liveRound ?? round;
 
   return (
     <div className="ms-page ms-stats">
@@ -82,8 +96,12 @@ const StatsPage = ({ go }: any) => {
         </div>
         <div className="stats-hero__counter">
           <div className="stats-hero__round-label mono">CURRENT ROUND</div>
-          <div className="stats-hero__round mono num">{round.toLocaleString()}</div>
-          <div className="stats-hero__sub mono">avg {_fmtI(S.network.avgRoundsPerDay)} rounds/day</div>
+          <div className="stats-hero__round mono num">{headRound.toLocaleString()}</div>
+          <div className="stats-hero__sub mono">
+            {liveRound !== null
+              ? `live · avg ${_fmtI(S.network.avgRoundsPerDay)} rounds/day`
+              : `avg ${_fmtI(S.network.avgRoundsPerDay)} rounds/day`}
+          </div>
         </div>
       </section>
 
@@ -91,7 +109,18 @@ const StatsPage = ({ go }: any) => {
       <section className="stats-counters">
         <StatCounter label="Transactions · all-time" value={_abbr(t.txTotal)} sub={`${_fmt(txLast24)} in the last 24h`} trend={S.series.tx30d} tone="gold" onClick={()=>{}}/>
         <StatCounter label="Active wallets" value={_fmt(t.walletsTotal)} sub={`${_fmt(t.walletsActive24h)} active in 24h`} tone="neutral" onClick={()=>go("#/wallets")} clickable/>
-        <StatCounter label="Clusters" value={`${t.clustersActive}/${t.clustersTotal}`} sub={`${t.operators} unique operators`} tone="neutral" onClick={()=>go("#/clusters")} clickable/>
+        <StatCounter
+          label="Validators"
+          value={liveValidators !== null ? `${liveValidators}` : `${t.clustersActive}/${t.clustersTotal}`}
+          sub={
+            livePeers !== null
+              ? `${livePeers} peers · ${liveMempoolReady ?? 0} ready in mempool`
+              : `${t.operators} unique operators`
+          }
+          tone="neutral"
+          onClick={()=>go("#/clusters")}
+          clickable
+        />
         <StatCounter label="Smart contracts deployed" value={_fmt(t.contracts)} sub={`${t.tokensListed} listed tokens`} tone="neutral"/>
         <StatCounter label="Private vs public txs" value={`${((t.privateTxs/t.txTotal)*100).toFixed(1)}%`} sub={`${_abbr(t.privateTxs)} private · ${_abbr(t.publicTxs)} public`} tone="neutral"/>
         <StatCounter label="Chain age" value={S.network.chainAge} sub={`genesis ${S.network.genesisDate}`} tone="neutral"/>
@@ -561,13 +590,79 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
 
 /* =====================================================
    TRANSACTION DETAIL PAGE
+   Tries `eth_getTransactionReceipt` for live status + block + gas first;
+   falls back to the mock fixture (full attestation panel) for everything
+   the live receipt does not yet expose. The rich indexer trace (logs,
+   decoded calldata, sig timeline) lands with mono-core OI-0070.
 ===================================================== */
 const TxPage = ({ hash, go }: any) => {
-  const tx = TXS[hash];
+  const live = useTxByHashLive(hash);
+  const liveReceipt = live.data ?? null;
+  const fixture = TXS[hash];
+
+  // Merge live receipt over the fixture so the UI always renders a complete
+  // shape. When the live node is reachable and returns a real receipt the
+  // status / block / gas fields are authoritative; the rest comes from the
+  // mocked fixture until OI-0070 ships indexer-side enrichment.
+  const tx = liveReceipt
+    ? {
+        ...(fixture ?? {
+          // Bare minimum so the page has something to render when there's
+          // no fixture for the hash but the chain has confirmed it.
+          hash,
+          round: 0,
+          roundLabel: "round —",
+          when: "live",
+          kind: "transfer",
+          kindLabel: "Transfer",
+          from: "—",
+          to: "—",
+          amount: 0,
+          denom: "LYTH",
+          fee: 0,
+          feeDenom: "LYTH",
+          cluster: "C-001",
+          clusterName: "—",
+          memo: "",
+          nonce: 0,
+          quorumSigners: 7,
+          quorumRequired: 5,
+          dacCoverage: 1,
+          signatures: [],
+          contractInput: null,
+          logs: [],
+          gasLimit: 0,
+        }),
+        // Live overrides — keep the receipt's fields as the source of truth.
+        status:
+          (typeof (liveReceipt as any).status === "number"
+            ? ((liveReceipt as any).status === 1 ? "ok" : "failed")
+            : (fixture?.status ?? "ok")),
+        gasUsed: Number(
+          (liveReceipt as any).gas_used ?? (liveReceipt as any).gasUsed ?? fixture?.gasUsed ?? 0,
+        ),
+        round: Number(
+          (liveReceipt as any).block_number ?? (liveReceipt as any).blockNumber ?? fixture?.round ?? 0,
+        ),
+        roundLabel:
+          (liveReceipt as any).block_number !== undefined ||
+          (liveReceipt as any).blockNumber !== undefined
+            ? `block ${Number(
+                (liveReceipt as any).block_number ?? (liveReceipt as any).blockNumber,
+              ).toLocaleString()}`
+            : (fixture?.roundLabel ?? "round —"),
+      }
+    : fixture;
+
   if (!tx) return (
     <div className="ms-page">
       <h1 className="ms-h1">Transaction not found</h1>
       <p className="mono" style={{color:"var(--fg-400)"}}>No tx with hash: <code>{hash}</code></p>
+      {live.isLoading && (
+        <p className="mono" style={{color:"var(--fg-500)",fontSize:11,marginTop:6}}>
+          checking live receipt…
+        </p>
+      )}
       <button className="ov-cta" onClick={()=>go("#/")}>← Back to overview</button>
     </div>
   );
@@ -721,24 +816,67 @@ const KV = ({ label, value, mono, link, linkLabel }: any) => (
 ===================================================== */
 const RoundPage = ({ round, go }: any) => {
   const r = parseInt(round, 10);
+  const liveBlock = useBlockByNumber(Number.isFinite(r) ? r : undefined);
   const cur = MONOSCAN_DATA?.consensus?.round || 0;
   const verts = (MONOSCAN_DATA?.recentVertices || []).filter(v => v.round === r);
-  const found = verts.length > 0 || (r > 0 && r <= cur);
+  const liveHeader: any = liveBlock.data ?? null;
+  const found = liveHeader || verts.length > 0 || (r > 0 && r <= cur);
   return (
     <div className="ms-page">
       <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/")} style={{marginBottom:16}}>← Overview</button>
       <h1 className="ms-h1" style={{marginBottom:6}}>Round <span style={{color:"var(--gold)"}}>#{isNaN(r)?round:r.toLocaleString()}</span></h1>
       {!found ? (
         <p className="mono" style={{color:"var(--fg-400)"}}>
-          Round not found. Current head is {cur.toLocaleString()}.
+          {liveBlock.isLoading
+            ? "Checking live block…"
+            : `Round not found. Current head is ${cur.toLocaleString()}.`}
         </p>
       ) : (
         <>
-          <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
-            {verts.length > 0
-              ? `${verts.length} cluster vertex${verts.length===1?"":"es"} committed at this round.`
-              : `Round committed ~${Math.max(0, (cur - r)).toLocaleString()} rounds ago.`}
-          </p>
+          {liveHeader ? (
+            <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
+              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>Live block · eth_getBlockByNumber</div>
+              <div className="tx-kv">
+                <div className="tx-kv__row">
+                  <span className="mono tx-kv__k">Hash</span>
+                  <span className="mono tx-kv__v">{liveHeader.hash}</span>
+                </div>
+                <div className="tx-kv__row">
+                  <span className="mono tx-kv__k">Parent</span>
+                  <span className="mono tx-kv__v">{liveHeader.parent_hash ?? liveHeader.parentHash ?? "—"}</span>
+                </div>
+                <div className="tx-kv__row">
+                  <span className="mono tx-kv__k">State root</span>
+                  <span className="mono tx-kv__v">{liveHeader.state_root ?? liveHeader.stateRoot ?? "—"}</span>
+                </div>
+                <div className="tx-kv__row">
+                  <span className="mono tx-kv__k">Gas used / limit</span>
+                  <span className="mono tx-kv__v">
+                    {Number(liveHeader.gas_used ?? liveHeader.gasUsed ?? 0).toLocaleString()}
+                    {" / "}
+                    {Number(liveHeader.gas_limit ?? liveHeader.gasLimit ?? 0).toLocaleString()}
+                  </span>
+                </div>
+                <div className="tx-kv__row">
+                  <span className="mono tx-kv__k">Timestamp</span>
+                  <span className="mono tx-kv__v">{liveHeader.timestamp}</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
+              {verts.length > 0
+                ? `${verts.length} cluster vertex${verts.length===1?"":"es"} committed at this round.`
+                : `Round committed ~${Math.max(0, (cur - r)).toLocaleString()} rounds ago.`}
+            </p>
+          )}
+          {/*
+            Per-vertex breakdown (memos, BLS agg, DAC) is still mock — the
+            indexer view that maps round → cluster vertices ships with
+            mono-core OI-0070.
+            TODO(monolythium-vision): replace this table with the indexer's
+            cluster-vertex feed for the requested round.
+          */}
           <div className="ms-card" style={{padding:0}}>
             <table className="ms-table">
               <thead><tr><th>Cluster</th><th>Memos</th><th>BLS agg</th><th>DAC</th><th></th></tr></thead>
