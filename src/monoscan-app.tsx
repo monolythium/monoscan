@@ -1161,7 +1161,7 @@ const MiniRing = ({ members, size=110, threshold=5 }: any) => {
 };
 
 const OperatorsPage = ({go}: any) => {
-  // Live validator set — `protocore_validatorSet` returns the descriptor list
+  // Live validator set — `lyth_validatorSet` returns the descriptor list
   // (id + pubkey + stake + active flag). It's a thin shape compared to the
   // mocked operator profiles below; once the indexer surfaces operator
   // reputation/region/uptime aggregates we can swap the mock list entirely.
@@ -1179,7 +1179,7 @@ const OperatorsPage = ({go}: any) => {
       {liveCount !== null && (
         <div className="mono" style={{color:"var(--fg-500)",marginBottom:14,fontSize:11,letterSpacing:"0.06em"}}>
           live validator set · {liveCount} descriptor{liveCount===1?"":"s"} reported by{" "}
-          <code style={{color:"var(--gold)"}}>protocore_validatorSet</code>
+          <code style={{color:"var(--gold)"}}>lyth_validatorSet</code>
         </div>
       )}
       <Card title="">
@@ -1268,8 +1268,10 @@ const App = () => {
   // block + peers + version + mempool + indexer). Both fall back to a local
   // timer-based mock when the RPC endpoint is unreachable so the strip
   // never freezes during dev.
-  // TODO(monolythium-vision): swap the 2s long-poll for `protocore_subscribe`
-  // over WebSocket once mono-core OI-0069 lands.
+  // TODO(monolythium-vision): swap the 2s long-poll for `lyth_subscribe`
+  // over WebSocket once mono-core OI-0069 lands. The seam lives in
+  // `data/hooks.ts::readLatestHeadFromWebSocket` and is feature-flagged
+  // behind `VITE_MONOSCAN_USE_WS` (see `sdk/client.ts::isWebSocketEnabled`).
   const head = useChainHead();
   const strip = useChainStrip();
   const [mockRound, setMockRound] = useState(SCAN.consensus.round);

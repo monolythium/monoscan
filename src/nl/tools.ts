@@ -164,7 +164,7 @@ export interface GetValidatorResult {
  * Look up a validator/operator by address.
  *
  * TODO(monolythium-vision): swap fixture for live SDK call
- * (`getRpcClient().protocoreValidatorSet()` filtered by address).
+ * (`getRpcClient().lythValidatorSet()` filtered by address).
  */
 export function get_validator(input: GetValidatorInput): GetValidatorResult {
   const D: any = MONOSCAN_DATA;
@@ -219,7 +219,7 @@ export interface GetClusterResult {
  * Fetch cluster summary + recent-round signing record.
  *
  * TODO(monolythium-vision): swap fixture for live SDK call (cluster
- * aggregate is OI-0070 — protocoreValidatorSet today only returns the
+ * aggregate is OI-0070 — lythValidatorSet today only returns the
  * raw active set).
  */
 export function get_cluster(input: GetClusterInput): GetClusterResult {
@@ -343,7 +343,7 @@ export interface SearchTokensResult {
  * Substring search over the listed market set.
  *
  * TODO(monolythium-vision): swap fixture for live indexer call once
- * mono-core ships a `protocore_searchTokens` namespace (currently mocked
+ * mono-core ships a `lyth_searchTokens` namespace (currently mocked
  * via `data/mock.ts::MARKETS`).
  */
 export function search_tokens(input: SearchTokensInput): SearchTokensResult {

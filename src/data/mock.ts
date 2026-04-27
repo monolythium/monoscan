@@ -172,7 +172,7 @@ const _makeClusters = () => {
 /**
  * TODO(monolythium-vision): partially superseded by Stage 3 wiring:
  *   - `consensus.round` → live via `useChainHead`/`useChainStrip` (`hooks.ts`)
- *   - `clusters` / `operators` → still mock; SDK has only `protocore_validatorSet`
+ *   - `clusters` / `operators` → still mock; SDK has only `lyth_validatorSet`
  *     (descriptor list); cluster TVS / operator reputation / vertex include
  *     await mono-core OI-0070 indexer aggregate
  *   - `recentVertices` → partially superseded by `useLatestBlocks` on the
@@ -374,7 +374,7 @@ const _mkTrades = (mid: number, count: number, seedN: number) => {
  * TODO(monolythium-vision): markets surface needs a real CLOB feed —
  * Stage 3 keeps this as a mock fallback. The native CLOB precompile lives
  * under `mono-core/crates/precompile-clob` but does not yet expose a
- * `protocore_clob_*` JSON-RPC namespace; once it does the MarketsPage +
+ * `lyth_clob_*` JSON-RPC namespace; once it does the MarketsPage +
  * MarketPage swap to live order books and decoded trades.
  */
 export const MARKETS: any[] = MARKET_DEFS.map(([rank, sym, name, kind, tier]) => {

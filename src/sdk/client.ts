@@ -10,14 +10,21 @@
 import { RpcClient, type RpcClientOptions } from "@monolythium/core-sdk";
 
 /**
- * Default RPC endpoint used by the production explorer.
+ * Default RPC endpoint resolution.
  *
- * Override at build time with `VITE_MONOSCAN_RPC_URL` (e.g. for self-hosters
- * pointing at their own mono-core node).
+ * Two env vars are supported, in priority order:
+ *   1. `VITE_MONOSCAN_RPC_URL` — explorer-specific override.
+ *   2. `VITE_MONO_RPC_URL`     — workspace-wide fallback shared with the
+ *                                wallets / Monarch builds (per
+ *                                `monolythium-vision/CLAUDE.md` §6).
+ *
+ * If neither is set, default to a local node at `http://localhost:8545`.
+ * Production deploys override via Railway env vars at build time.
  */
 const DEFAULT_RPC_URL: string =
   (import.meta.env.VITE_MONOSCAN_RPC_URL as string | undefined) ??
-  "https://rpc.monolythium.com";
+  (import.meta.env.VITE_MONO_RPC_URL as string | undefined) ??
+  "http://localhost:8545";
 
 /**
  * Singleton RPC client. Lazily constructed so tests can `vi.mock` the module
@@ -38,12 +45,29 @@ export function resetRpcClient(): void {
 }
 
 /**
+ * Build-time feature flag for the WebSocket head-subscription path.
+ *
+ * Today the SDK's `lyth_subscribe` rejects over the plain HTTP transport
+ * (mono-core OI-0069 still pending). The 2-second long-poll inside
+ * `useChainHead` is the temporary fallback. When OI-0069 lands, set
+ * `VITE_MONOSCAN_USE_WS=true` at build time and the WebSocket branch in
+ * `data/hooks.ts::readLatestHeadFromWebSocket` takes over.
+ *
+ * Returns `false` until the env var explicitly opts in. Any other value
+ * (`"0"`, `"false"`, undefined) keeps the flag off.
+ */
+export function isWebSocketEnabled(): boolean {
+  const v = import.meta.env.VITE_MONOSCAN_USE_WS as string | undefined;
+  return v === "true" || v === "1";
+}
+
+/**
  * Indexer client placeholder.
  *
  * Stage 3 of `plans/monoscan.md` wires per-node indexer streams
  * (block + tx WebSocket subscriptions, address-activity feed, gap records,
- * private-asset policy lookups). `protocore_subscribe` is the WebSocket
- * entry point but currently returns `not-implemented` over HTTP transport
+ * private-asset policy lookups). `lyth_subscribe` is the WebSocket entry
+ * point but currently returns `not-implemented` over HTTP transport
  * (mono-core OI-0069 — until that lands monoscan long-polls instead).
  *
  * For now we expose the RPC as the indexer too so call sites can already
@@ -85,8 +109,8 @@ export const QK = {
   accountBalance: (addr: string) => ["mono", "address", addr, "balance"] as const,
   accountPolicy: (addr: string) => ["mono", "address", addr, "policy"] as const,
   // TODO(monolythium-vision): no SDK exposure yet for markets / DAG vertices /
-  // operators (cluster aggregate beyond `protocore_validatorSet`). Stays mock
-  // until mono-core OI-0070 indexer + a `protocore_clob_*` namespace land.
+  // operators (cluster aggregate beyond `lyth_validatorSet`). Stays mock
+  // until mono-core OI-0070 indexer + a `lyth_clob_*` namespace land.
   markets: () => ["mono", "markets"] as const,
   marketBySym: (sym: string) => ["mono", "markets", sym] as const,
   dagRecent: () => ["mono", "dag", "recent"] as const,
