@@ -2,24 +2,38 @@
  * React-Query hooks for monoscan.
  *
  * Single seam through which every page reads chain data. Hooks return
- * already-typed values from the SDK; mock fallbacks live in `./mock` and are
- * tagged `TODO(monolythium-vision)` for swap-out as the indexer surface lands
- * (per `plans/monoscan.md` Stage 3).
+ * already-typed values from `@monolythium/core-sdk`; mock fallbacks live
+ * in `./mock` and stay tagged `TODO(monolythium-vision)` for the indexer
+ * surfaces (markets, wallets, vertex breakdowns, governance tally) that
+ * mono-core has not yet shipped (per `plans/monoscan.md` Stage 3).
  *
  * Cache strategy:
- *   - chain head polls every 2s (Stage 3 long-poll target; switches to a
- *     `protocore_subscribe` WebSocket the moment mono-core OI-0069 lands).
- *   - block / tx detail is on-demand with staleTime 30s; receipts are
+ *   - Chain head polls every 2s (Stage 3 long-poll target). The live SDK's
+ *     WebSocket entry point `lyth_subscribe` returns an RPC error over the
+ *     plain HTTP transport today; the WebSocket upgrade is mono-core
+ *     OI-0069 and is gated here behind `VITE_MONOSCAN_USE_WS` so the swap
+ *     is a single feature-flag flip when it lands.
+ *   - Block / tx detail is on-demand with staleTime 30s; receipts are
  *     immutable once finalized so retry-on-mount is cheap.
- *   - validator/cluster/account surfaces use staleTime 30s — slow-moving
+ *   - Validator / cluster / account surfaces use staleTime 30s — slow-moving
  *     bookkeeping rather than live ticker.
  *
  * Reset side: tests can call `queryClient.clear()` on the exported singleton.
  */
 
 import { QueryClient, useQuery } from "@tanstack/react-query";
-import type { BlockHeader, RpcClient, TransactionReceipt } from "@monolythium/core-sdk";
-import { getRpcClient, QK } from "../sdk/client";
+import {
+  parseQuantityBig,
+  type AccountPolicy,
+  type AccountProofResponse,
+  type BlockHeader,
+  type IndexerStatus,
+  type MempoolSnapshot,
+  type RpcClient,
+  type TransactionReceipt,
+  type ValidatorDescriptor,
+} from "@monolythium/core-sdk";
+import { getRpcClient, isWebSocketEnabled, QK } from "../sdk/client";
 
 /** Singleton React-Query client. */
 export const queryClient = new QueryClient({
@@ -33,7 +47,30 @@ export const queryClient = new QueryClient({
 });
 
 /** How often to long-poll the chain head until WS lands (mono-core OI-0069). */
-const HEAD_POLL_MS = 2_000;
+export const HEAD_POLL_MS = 2_000;
+
+/* -------------------------------------------------------------------------- */
+/* bigint → number helpers.                                                    */
+/*                                                                             */
+/* The SDK returns `bigint` for every quantity-shaped wire field (block        */
+/* height, peer count, gas, etc.). The page chrome consumes them as `number`   */
+/* for `.toLocaleString()` / `.toFixed()` formatting. Convert at the seam,     */
+/* not at every call site. Heights and counters cannot exceed                  */
+/* `Number.MAX_SAFE_INTEGER` for any realistic chain age; if they ever do      */
+/* the helper throws so the bug surfaces as a query error rather than silent   */
+/* truncation.                                                                 */
+/* -------------------------------------------------------------------------- */
+
+function bigToNum(x: bigint): number {
+  if (x > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`bigint value ${x} exceeds Number.MAX_SAFE_INTEGER`);
+  }
+  return Number(x);
+}
+
+function bigToNumOpt(x: bigint | null | undefined): number | null {
+  return x === null || x === undefined ? null : bigToNum(x);
+}
 
 /* -------------------------------------------------------------------------- */
 /* Live chain head — drives the top strip ticker.                              */
@@ -45,22 +82,33 @@ export interface ChainHead {
   blockNumber: number | null;
 }
 
+/**
+ * 2-second long-poll on `eth_blockNumber` + `lyth_currentRound`.
+ *
+ * Long-poll is a deliberate fallback until mono-core ships the WebSocket
+ * upgrade in OI-0069 (see `plans/monoscan.md` Stage 3). The WS path is
+ * gated behind `VITE_MONOSCAN_USE_WS=true`; today that flag throws inside
+ * `subscribeHeadOverWebSocket` because `lyth_subscribe` is HTTP-only on
+ * v0.0.1 of the chain. When OI-0069 lands, swap the WS impl in `subscribeHeadOverWebSocket`
+ * and flip the env var — the consumers stay identical.
+ */
 export function useChainHead() {
   return useQuery<ChainHead | null>({
     queryKey: QK.head(),
     queryFn: async () => {
+      if (isWebSocketEnabled()) {
+        // Future: this branch returns the latest cached value off a
+        // long-lived `lyth_subscribe("newHeads")` stream. Today the
+        // helper throws — flag stays default-false until OI-0069 lands.
+        return readLatestHeadFromWebSocket();
+      }
       const rpc: RpcClient = getRpcClient();
-      // protocore_currentRound returns the active DAG round info.
-      // Today the wire shape is `{ height }` only; richer fields (rate,
-      // latency, signers) come through the indexer surface in Stage 3.
-      // TODO(monolythium-vision): swap to a richer chain-head digest once
-      // the indexer ships the per-round metrics view (mono-core OI-0070).
       try {
-        const round = await rpc.protocoreCurrentRound();
+        const round = await rpc.lythCurrentRound();
         const block = await rpc.ethBlockNumber().catch(() => null);
         return {
-          round: Number(round.height ?? 0),
-          blockNumber: block,
+          round: bigToNum(round.height),
+          blockNumber: block === null ? null : bigToNum(block),
         };
       } catch {
         // Live node unreachable — return null so consumers fall back to mock.
@@ -78,9 +126,9 @@ export function useChainHead() {
  * indexer height + mempool depth) the top strip surfaces in one shot.
  *
  * Each sub-call is best-effort — if a method fails (e.g. node disabled
- * `protocore_indexerStatus`) the field is `null` rather than the whole
- * digest going dark. This is the closest we can get to the rich strip
- * the design asks for until OI-0070 ships an aggregate.
+ * `lyth_indexerStatus`) the field is `null` rather than the whole digest
+ * going dark. This is the closest we can get to the rich strip the design
+ * asks for until mono-core ships an aggregate counter view (OI-0070).
  */
 export interface ChainStrip {
   round: number | null;
@@ -94,7 +142,7 @@ export interface ChainStrip {
 
 export function useChainStrip() {
   return useQuery<ChainStrip | null>({
-    queryKey: ["mono", "head", "strip"] as const,
+    queryKey: QK.headStrip(),
     queryFn: async () => {
       const rpc = getRpcClient();
       const settle = async <T>(p: Promise<T>): Promise<T | null> => {
@@ -107,13 +155,13 @@ export function useChainStrip() {
       try {
         const [round, blockNumber, peerCount, netVersion, clientVersion, mempool, indexer] =
           await Promise.all([
-            settle(rpc.protocoreCurrentRound().then((r) => Number(r.height ?? 0))),
-            settle(rpc.ethBlockNumber()),
-            settle(rpc.netPeerCount()),
+            settle(rpc.lythCurrentRound().then((r) => bigToNum(r.height))),
+            settle(rpc.ethBlockNumber().then((b) => bigToNum(b))),
+            settle(rpc.netPeerCount().then((p) => bigToNum(p))),
             settle(rpc.netVersion()),
             settle(rpc.web3ClientVersion()),
-            settle(rpc.protocoreMempoolStatus()),
-            settle(rpc.protocoreIndexerStatus()),
+            settle(rpc.lythMempoolStatus()),
+            settle(rpc.lythIndexerStatus()),
           ]);
         return {
           round,
@@ -121,8 +169,10 @@ export function useChainStrip() {
           peerCount,
           netVersion,
           clientVersion,
-          mempoolReady: mempool ? mempool.count_ready : null,
-          indexerHeight: indexer ? indexer.currentHeight : null,
+          mempoolReady: mempool ? bigToNum((mempool as MempoolSnapshot).count_ready) : null,
+          indexerHeight: indexer
+            ? bigToNum((indexer as IndexerStatus).currentHeight)
+            : null,
         };
       } catch {
         return null;
@@ -150,7 +200,7 @@ export function useBlockByHash(hash: string | undefined) {
 
 /**
  * Fetch a single block header by height. `"latest"` always re-fetches with
- * the head poll to avoid stale chain tip.
+ * the head poll to avoid a stale chain tip.
  */
 export function useBlockByNumber(n: number | "latest" | undefined) {
   return useQuery<BlockHeader | null>({
@@ -173,22 +223,56 @@ export function useBlockByNumber(n: number | "latest" | undefined) {
  *
  * The first request fans out to N parallel `eth_getBlockByNumber` calls;
  * subsequent polls reuse the cached entries and only fetch the new tip
- * blocks. (React Query handles per-block caching; the wrapper just sequences
- * the height list.)
+ * blocks. (React Query handles per-block caching; the wrapper just
+ * sequences the height list.)
  */
 export function useLatestBlocks(count = 10) {
   return useQuery<BlockHeader[]>({
-    queryKey: ["mono", "blocks", "latest", count] as const,
+    queryKey: QK.blocksLatest(count),
     queryFn: async () => {
       const rpc = getRpcClient();
-      const tip = await rpc.ethBlockNumber();
+      const tipBig = await rpc.ethBlockNumber();
+      const tip = bigToNum(tipBig);
       const heights = Array.from({ length: count }, (_, i) => tip - i).filter((h) => h >= 0);
       const blocks = await Promise.all(
-        heights.map((h) =>
-          rpc.ethGetBlockByNumber(h).catch(() => null),
-        ),
+        heights.map((h) => rpc.ethGetBlockByNumber(h).catch(() => null)),
       );
       return blocks.filter((b): b is BlockHeader => b !== null);
+    },
+    refetchInterval: HEAD_POLL_MS,
+    staleTime: 0,
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Mempool snapshot — landing-page mempool ticker.                              */
+/* -------------------------------------------------------------------------- */
+
+/** Same shape as the SDK's `MempoolSnapshot` but with `bigint` collapsed to
+ * `number` for chrome that reaches in for `.toLocaleString()`. */
+export interface MempoolDigest {
+  countReady: number;
+  countPending: number;
+  mailboxDepth: number;
+}
+
+/** Hook around `lyth_mempoolStatus`. Returns null when the namespace is
+ *  disabled; consumers degrade to mock values. */
+export function useMempool() {
+  return useQuery<MempoolDigest | null>({
+    queryKey: QK.mempool(),
+    queryFn: async () => {
+      const rpc = getRpcClient();
+      try {
+        const snap = await rpc.lythMempoolStatus();
+        return {
+          countReady: bigToNum(snap.count_ready),
+          countPending: bigToNum(snap.count_pending),
+          mailboxDepth: bigToNum(snap.mailbox_depth),
+        };
+      } catch {
+        return null;
+      }
     },
     refetchInterval: HEAD_POLL_MS,
     staleTime: 0,
@@ -224,7 +308,7 @@ export function useTxReceipt(hash: string | undefined) {
  */
 export function useTxByHashLive(hash: string | undefined) {
   return useQuery<TransactionReceipt | null>({
-    queryKey: ["mono", "tx", hash ?? "", "live"] as const,
+    queryKey: QK.txLive(hash ?? ""),
     enabled: Boolean(hash),
     queryFn: async () => {
       const rpc = getRpcClient();
@@ -242,8 +326,9 @@ export function useTxByHashLive(hash: string | undefined) {
 /* Validator + address surfaces.                                               */
 /* -------------------------------------------------------------------------- */
 
+/** Hook around `lyth_validatorSet`. */
 export function useValidatorSet() {
-  return useQuery({
+  return useQuery<ValidatorDescriptor[] | null>({
     queryKey: QK.validatorSet(),
     queryFn: async () => {
       const rpc = getRpcClient();
@@ -251,32 +336,126 @@ export function useValidatorSet() {
       // operator + reward) once mono-core OI-0070 lands. Today's RPC only
       // returns the active validator set descriptor; the cluster shape
       // monoscan renders is richer than that.
-      return rpc.protocoreValidatorSet();
+      try {
+        return await rpc.lythValidatorSet();
+      } catch {
+        return null;
+      }
     },
+    staleTime: 30_000,
   });
 }
 
+/**
+ * Account balance as a `bigint` quantity, parsed out of the proof envelope
+ * `eth_getBalance` returns. Callers that need the full proof envelope
+ * (state root, inclusion proof) use `useAccountBalanceProof` below.
+ */
 export function useAccountBalance(addr: string | undefined) {
-  return useQuery({
+  return useQuery<bigint | null>({
     queryKey: QK.accountBalance(addr ?? ""),
     enabled: Boolean(addr),
     queryFn: async () => {
       const rpc = getRpcClient();
-      return rpc.ethGetBalance(addr as string, "latest");
+      try {
+        const env = await rpc.ethGetBalance(addr as string, "latest");
+        return parseQuantityBig(env.value);
+      } catch {
+        return null;
+      }
     },
+    staleTime: 30_000,
   });
 }
 
+/** Account balance proof envelope (state root + inclusion proof). */
+export function useAccountBalanceProof(addr: string | undefined) {
+  return useQuery<AccountProofResponse | null>({
+    queryKey: [...QK.accountBalance(addr ?? ""), "proof"] as const,
+    enabled: Boolean(addr),
+    queryFn: async () => {
+      const rpc = getRpcClient();
+      try {
+        return await rpc.ethGetBalance(addr as string, "latest");
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+/** Hook around `lyth_getAccountPolicy` — privacy-bifurcation policy. */
 export function useAccountPolicy(addr: string | undefined) {
-  return useQuery({
+  return useQuery<AccountPolicy | null>({
     queryKey: QK.accountPolicy(addr ?? ""),
     enabled: Boolean(addr),
     queryFn: async () => {
       const rpc = getRpcClient();
-      // protocoreGetAccountPolicy returns the privacy-bifurcation policy
-      // (private/public denom flag, receiver consent, etc.).
-      return rpc.protocoreGetAccountPolicy(addr as string);
+      try {
+        return await rpc.lythGetAccountPolicy(addr as string);
+      } catch {
+        return null;
+      }
     },
+    staleTime: 30_000,
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Account history — wallet detail page.                                       */
+/* -------------------------------------------------------------------------- */
+
+/** Per-account live snapshot the wallet page consumes. */
+export interface AccountHistoryDigest {
+  /** Live balance (bigint wei-class quantity). */
+  balance: bigint | null;
+  /** Live nonce — count of confirmed sends, not the mempool view. */
+  nonce: number | null;
+  /** Live policy — `null` when the address has no explicit policy bits set. */
+  policy: AccountPolicy | null;
+}
+
+/**
+ * Hook combining the three live address surfaces into one digest. Each
+ * sub-call is best-effort, so a partial node response degrades the digest
+ * field-by-field rather than failing the whole query.
+ *
+ * TODO(monolythium-vision): the actual transaction history (tx list +
+ * decoded transfer log) waits on the indexer's `get_address_activity`
+ * endpoint (per memory `protocore-v2-explorer-design.md`, mono-core
+ * OI-0070). Until then `WalletPage` consumes the mocked tx fixture from
+ * `./mock` and overlays this digest's live balance/nonce on top.
+ */
+export function useAccountHistory(addr: string | undefined) {
+  return useQuery<AccountHistoryDigest | null>({
+    queryKey: QK.addressActivity(addr ?? ""),
+    enabled: Boolean(addr),
+    queryFn: async () => {
+      const rpc = getRpcClient();
+      const settle = async <T>(p: Promise<T>): Promise<T | null> => {
+        try {
+          return await p;
+        } catch {
+          return null;
+        }
+      };
+      try {
+        const [balanceEnv, nonce, policy] = await Promise.all([
+          settle(rpc.ethGetBalance(addr as string, "latest")),
+          settle(rpc.ethGetTransactionCount(addr as string, "latest")),
+          settle(rpc.lythGetAccountPolicy(addr as string)),
+        ]);
+        return {
+          balance: balanceEnv ? parseQuantityBig(balanceEnv.value) : null,
+          nonce: bigToNumOpt(nonce),
+          policy,
+        };
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
   });
 }
 
@@ -304,7 +483,7 @@ export interface NetworkStatusLive {
 
 export function useNetworkStatus() {
   return useQuery<NetworkStatusLive | null>({
-    queryKey: ["mono", "stats", "network"] as const,
+    queryKey: QK.networkStatus(),
     queryFn: async () => {
       const rpc = getRpcClient();
       const settle = async <T>(p: Promise<T>): Promise<T | null> => {
@@ -317,12 +496,12 @@ export function useNetworkStatus() {
       try {
         const [blockNumber, round, peerCount, validators, mempool, indexer, netVersion] =
           await Promise.all([
-            settle(rpc.ethBlockNumber()),
-            settle(rpc.protocoreCurrentRound().then((r) => Number(r.height ?? 0))),
-            settle(rpc.netPeerCount()),
-            settle(rpc.protocoreValidatorSet().then((v) => v.length)),
-            settle(rpc.protocoreMempoolStatus()),
-            settle(rpc.protocoreIndexerStatus()),
+            settle(rpc.ethBlockNumber().then((b) => bigToNum(b))),
+            settle(rpc.lythCurrentRound().then((r) => bigToNum(r.height))),
+            settle(rpc.netPeerCount().then((p) => bigToNum(p))),
+            settle(rpc.lythValidatorSet().then((v) => v.length)),
+            settle(rpc.lythMempoolStatus()),
+            settle(rpc.lythIndexerStatus()),
             settle(rpc.netVersion()),
           ]);
         return {
@@ -330,10 +509,16 @@ export function useNetworkStatus() {
           round,
           peerCount,
           validatorCount: validators,
-          mempoolReady: mempool ? mempool.count_ready : null,
-          mempoolPending: mempool ? mempool.count_pending : null,
-          indexerHeight: indexer ? indexer.currentHeight : null,
-          indexerLatestKnown: indexer ? indexer.latestHeight : null,
+          mempoolReady: mempool ? bigToNum((mempool as MempoolSnapshot).count_ready) : null,
+          mempoolPending: mempool
+            ? bigToNum((mempool as MempoolSnapshot).count_pending)
+            : null,
+          indexerHeight: indexer
+            ? bigToNum((indexer as IndexerStatus).currentHeight)
+            : null,
+          indexerLatestKnown: indexer
+            ? bigToNumOpt((indexer as IndexerStatus).latestHeight ?? null)
+            : null,
           netVersion,
         };
       } catch {
@@ -344,4 +529,24 @@ export function useNetworkStatus() {
     refetchInterval: 60_000,
     staleTime: 30_000,
   });
+}
+
+/* -------------------------------------------------------------------------- */
+/* WebSocket head subscription — feature-flag stub.                             */
+/*                                                                             */
+/* Mono-core OI-0069 ships the WebSocket transport; today `lyth_subscribe`     */
+/* is HTTP-only and rejects with an RPC error. The flag is wired here so       */
+/* the swap is a one-line change inside this helper plus an env-var flip       */
+/* — the rest of the codebase already routes through `useChainHead`.           */
+/* -------------------------------------------------------------------------- */
+
+async function readLatestHeadFromWebSocket(): Promise<ChainHead | null> {
+  // Until OI-0069 lands the WS transport the RPC side rejects this method
+  // and there is no cached frame. Throw so React-Query surfaces the error
+  // and auto-retry policies kick in; consumers degrade through their
+  // existing mock fallbacks.
+  throw new Error(
+    "WebSocket head stream not implemented — OI-0069 still pending. " +
+      "Disable VITE_MONOSCAN_USE_WS or wait for the WS upgrade.",
+  );
 }
