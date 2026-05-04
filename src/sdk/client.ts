@@ -7,7 +7,7 @@
  * contract at ../../../CLAUDE.md section 6.
  */
 
-import { RpcClient, type RpcClientOptions } from "@monolythium/core-sdk";
+import { RpcClient, getRpcEndpoints, type RpcClientOptions } from "@monolythium/core-sdk";
 
 /**
  * Default RPC endpoint resolution.
@@ -18,13 +18,21 @@ import { RpcClient, type RpcClientOptions } from "@monolythium/core-sdk";
  *                                wallets / Monarch builds (per
  *                                `monolythium-vision/CLAUDE.md` §6).
  *
- * If neither is set, default to a local node at `http://localhost:8545`.
- * Production deploys override via Railway env vars at build time.
+ * If neither is set, use the SDK-bundled chain-registry snapshot for
+ * `testnet-69420`. This keeps browser sessions opened from another
+ * machine from accidentally dialing their own `localhost:8545`.
  */
-const DEFAULT_RPC_URL: string =
+const REGISTRY_RPC_URL = getRpcEndpoints("testnet-69420")[0]?.url;
+
+const RPC_URL: string =
   (import.meta.env.VITE_MONOSCAN_RPC_URL as string | undefined) ??
   (import.meta.env.VITE_MONO_RPC_URL as string | undefined) ??
-  "http://localhost:8545";
+  (import.meta.env.DEV ? "/rpc" : undefined) ??
+  REGISTRY_RPC_URL;
+
+export function isRpcConfigured(): boolean {
+  return RPC_URL.trim().length > 0;
+}
 
 /**
  * Singleton RPC client. Lazily constructed so tests can `vi.mock` the module
@@ -33,8 +41,11 @@ const DEFAULT_RPC_URL: string =
 let _rpc: RpcClient | null = null;
 
 export function getRpcClient(opts: RpcClientOptions = {}): RpcClient {
+  if (!isRpcConfigured()) {
+    throw new Error("Monoscan RPC URL is not configured");
+  }
   if (_rpc === null) {
-    _rpc = new RpcClient(DEFAULT_RPC_URL, opts);
+    _rpc = new RpcClient(RPC_URL, opts);
   }
   return _rpc;
 }
@@ -82,6 +93,9 @@ export interface IndexerClient {
 let _indexer: IndexerClient | null = null;
 
 export function getIndexerClient(): IndexerClient {
+  if (!isRpcConfigured()) {
+    throw new Error("Monoscan indexer URL is not configured");
+  }
   if (_indexer === null) {
     // TODO(monolythium-vision): swap in a typed IndexerClient once mono-core
     // ships the indexer API surface (see plans/monoscan.md Stage 3 +
@@ -102,14 +116,28 @@ export const QK = {
   txReceipt: (h: string) => ["mono", "tx", h] as const,
   txLive: (h: string) => ["mono", "tx", h, "live"] as const,
   mempool: () => ["mono", "mempool"] as const,
-  validatorSet: () => ["mono", "validators"] as const,
-  validatorById: (id: string | number) => ["mono", "validator", id] as const,
+  clusterSet: () => ["mono", "clusters"] as const,
+  activeClusters: () => ["mono", "clusters", "active"] as const,
+  healthyClusters: () => ["mono", "clusters", "healthy"] as const,
+  clusterEntity: (id: string | number) => ["mono", "cluster", id, "entity"] as const,
+  delegationCap: () => ["mono", "clusters", "delegation-cap"] as const,
+  entityRatchet: () => ["mono", "clusters", "entity-ratchet"] as const,
+  syncStatus: () => ["mono", "sync"] as const,
+  p2pPeers: () => ["mono", "peers"] as const,
+  precompiles: () => ["mono", "protocol", "precompiles"] as const,
+  feeStats: () => ["mono", "protocol", "fees"] as const,
+  clusterDelegators: (id: string | number) => ["mono", "cluster", id, "delegators"] as const,
+  walletDelegations: (addr: string) => ["mono", "address", addr, "delegations"] as const,
+  walletDelegationHistory: (addr: string) => ["mono", "address", addr, "delegation-history"] as const,
+  tokenBalances: (addr: string) => ["mono", "address", addr, "token-balances"] as const,
+  addressLabel: (addr: string) => ["mono", "address", addr, "label"] as const,
+  accountCode: (addr: string) => ["mono", "address", addr, "code"] as const,
   networkStatus: () => ["mono", "stats", "network"] as const,
   addressActivity: (addr: string) => ["mono", "address", addr] as const,
   accountBalance: (addr: string) => ["mono", "address", addr, "balance"] as const,
   accountPolicy: (addr: string) => ["mono", "address", addr, "policy"] as const,
   // TODO(monolythium-vision): no SDK exposure yet for markets / DAG vertices /
-  // operators (cluster aggregate beyond `lyth_validatorSet`). Stays mock
+  // rich operator aggregates. Stays mock
   // until mono-core OI-0070 indexer + a `lyth_clob_*` namespace land.
   markets: () => ["mono", "markets"] as const,
   marketBySym: (sym: string) => ["mono", "markets", sym] as const,

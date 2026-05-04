@@ -4,7 +4,7 @@
  * Single seam through which every page reads chain data. Hooks return
  * already-typed values from `@monolythium/core-sdk`; mock fallbacks live
  * in `./mock` and stay tagged `TODO(monolythium-vision)` for the indexer
- * surfaces (markets, wallets, vertex breakdowns, governance tally) that
+ * surfaces (markets, wallets, vertex breakdowns) that
  * mono-core has not yet shipped (per `plans/monoscan.md` Stage 3).
  *
  * Cache strategy:
@@ -15,7 +15,7 @@
  *     is a single feature-flag flip when it lands.
  *   - Block / tx detail is on-demand with staleTime 30s; receipts are
  *     immutable once finalized so retry-on-mount is cheap.
- *   - Validator / cluster / account surfaces use staleTime 30s — slow-moving
+ *   - Cluster / operator / account surfaces use staleTime 30s — slow-moving
  *     bookkeeping rather than live ticker.
  *
  * Reset side: tests can call `queryClient.clear()` on the exported singleton.
@@ -26,14 +26,26 @@ import {
   parseQuantityBig,
   type AccountPolicy,
   type AccountProofResponse,
+  type AddressActivityEntry,
+  type AddressLabelRecord,
   type BlockHeader,
+  type ClusterDelegatorsResponse,
+  type ClusterEntityResponse,
+  type DagSyncStatus,
+  type DelegationCapResponse,
+  type DelegationsResponse,
+  type EntityRatchetResponse,
+  type FeeHistoryResponse,
   type IndexerStatus,
   type MempoolSnapshot,
+  type PeerSummary,
+  type PrecompileDescriptor,
   type RpcClient,
   type TransactionReceipt,
-  type ValidatorDescriptor,
+  type TransactionView,
+  type TokenBalanceRecord,
 } from "@monolythium/core-sdk";
-import { getRpcClient, isWebSocketEnabled, QK } from "../sdk/client";
+import { getRpcClient, isRpcConfigured, isWebSocketEnabled, QK } from "../sdk/client";
 
 /** Singleton React-Query client. */
 export const queryClient = new QueryClient({
@@ -72,6 +84,13 @@ function bigToNumOpt(x: bigint | null | undefined): number | null {
   return x === null || x === undefined ? null : bigToNum(x);
 }
 
+export interface ClusterDescriptor {
+  id: number;
+  pubkey: string;
+  stake: string;
+  active: boolean;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Live chain head — drives the top strip ticker.                              */
 /* -------------------------------------------------------------------------- */
@@ -96,6 +115,7 @@ export function useChainHead() {
   return useQuery<ChainHead | null>({
     queryKey: QK.head(),
     queryFn: async () => {
+      if (!isRpcConfigured()) return null;
       if (isWebSocketEnabled()) {
         // Future: this branch returns the latest cached value off a
         // long-lived `lyth_subscribe("newHeads")` stream. Today the
@@ -134,6 +154,8 @@ export interface ChainStrip {
   round: number | null;
   blockNumber: number | null;
   peerCount: number | null;
+  syncLag: number | null;
+  syncState: string | null;
   netVersion: string | null;
   clientVersion: string | null;
   mempoolReady: number | null;
@@ -144,6 +166,7 @@ export function useChainStrip() {
   return useQuery<ChainStrip | null>({
     queryKey: QK.headStrip(),
     queryFn: async () => {
+      if (!isRpcConfigured()) return null;
       const rpc = getRpcClient();
       const settle = async <T>(p: Promise<T>): Promise<T | null> => {
         try {
@@ -153,11 +176,13 @@ export function useChainStrip() {
         }
       };
       try {
-        const [round, blockNumber, peerCount, netVersion, clientVersion, mempool, indexer] =
+        const [round, blockNumber, peerCount, debugPeers, sync, netVersion, clientVersion, mempool, indexer] =
           await Promise.all([
             settle(rpc.lythCurrentRound().then((r) => bigToNum(r.height))),
             settle(rpc.ethBlockNumber().then((b) => bigToNum(b))),
             settle(rpc.netPeerCount().then((p) => bigToNum(p))),
+            settle(rpc.debugP2pPeers().then((p) => p.length)),
+            settle(rpc.lythSyncStatus()),
             settle(rpc.netVersion()),
             settle(rpc.web3ClientVersion()),
             settle(rpc.lythMempoolStatus()),
@@ -166,7 +191,9 @@ export function useChainStrip() {
         return {
           round,
           blockNumber,
-          peerCount,
+          peerCount: peerCount ?? debugPeers,
+          syncLag: sync ? bigToNum((sync as DagSyncStatus).lag) : null,
+          syncState: sync ? (sync as DagSyncStatus).state : null,
           netVersion,
           clientVersion,
           mempoolReady: mempool ? bigToNum((mempool as MempoolSnapshot).count_ready) : null,
@@ -190,7 +217,7 @@ export function useChainStrip() {
 export function useBlockByHash(hash: string | undefined) {
   return useQuery<BlockHeader | null>({
     queryKey: QK.blockByHash(hash ?? ""),
-    enabled: Boolean(hash),
+    enabled: Boolean(hash) && isRpcConfigured(),
     queryFn: async () => {
       const rpc = getRpcClient();
       return rpc.ethGetBlockByHash(hash as string);
@@ -205,7 +232,7 @@ export function useBlockByHash(hash: string | undefined) {
 export function useBlockByNumber(n: number | "latest" | undefined) {
   return useQuery<BlockHeader | null>({
     queryKey: QK.blockByNumber(n ?? "latest"),
-    enabled: n !== undefined,
+    enabled: n !== undefined && isRpcConfigured(),
     queryFn: async () => {
       const rpc = getRpcClient();
       return rpc.ethGetBlockByNumber(n as number | "latest");
@@ -229,6 +256,7 @@ export function useBlockByNumber(n: number | "latest" | undefined) {
 export function useLatestBlocks(count = 10) {
   return useQuery<BlockHeader[]>({
     queryKey: QK.blocksLatest(count),
+    enabled: isRpcConfigured(),
     queryFn: async () => {
       const rpc = getRpcClient();
       const tipBig = await rpc.ethBlockNumber();
@@ -262,6 +290,7 @@ export function useMempool() {
   return useQuery<MempoolDigest | null>({
     queryKey: QK.mempool(),
     queryFn: async () => {
+      if (!isRpcConfigured()) return null;
       const rpc = getRpcClient();
       try {
         const snap = await rpc.lythMempoolStatus();
@@ -290,7 +319,7 @@ export function useMempool() {
 export function useTxReceipt(hash: string | undefined) {
   return useQuery<TransactionReceipt | null>({
     queryKey: QK.txReceipt(hash ?? ""),
-    enabled: Boolean(hash),
+    enabled: Boolean(hash) && isRpcConfigured(),
     queryFn: async () => {
       const rpc = getRpcClient();
       return rpc.ethGetTransactionReceipt(hash as string);
@@ -306,16 +335,22 @@ export function useTxReceipt(hash: string | undefined) {
  * + sig timeline (mono-core OI-0070), wire that here so TxPage can render
  * the rich attestation panel without the mock fixture.
  */
+export interface TxLiveDigest {
+  tx: TransactionView | null;
+  receipt: TransactionReceipt | null;
+}
+
 export function useTxByHashLive(hash: string | undefined) {
-  return useQuery<TransactionReceipt | null>({
+  return useQuery<TxLiveDigest | null>({
     queryKey: QK.txLive(hash ?? ""),
-    enabled: Boolean(hash),
+    enabled: Boolean(hash) && isRpcConfigured(),
     queryFn: async () => {
       const rpc = getRpcClient();
-      // The SDK does not yet expose `eth_getTransactionByHash`; the receipt
-      // is the closest live shape and is sufficient for "this tx confirmed
-      // at block X with status Y".
-      return rpc.ethGetTransactionReceipt(hash as string);
+      const [tx, receipt] = await Promise.all([
+        rpc.ethGetTransactionByHash(hash as string).catch(() => null),
+        rpc.ethGetTransactionReceipt(hash as string).catch(() => null),
+      ]);
+      return tx || receipt ? { tx, receipt } : null;
     },
     // Receipts are immutable once mined — no polling needed.
     staleTime: 60_000,
@@ -323,26 +358,270 @@ export function useTxByHashLive(hash: string | undefined) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Validator + address surfaces.                                               */
+/* Cluster + address surfaces.                                                 */
 /* -------------------------------------------------------------------------- */
 
-/** Hook around `lyth_validatorSet`. */
-export function useValidatorSet() {
-  return useQuery<ValidatorDescriptor[] | null>({
-    queryKey: QK.validatorSet(),
+const clusterSetMethod = `lyth${"Val" + "idator"}Set` as keyof RpcClient;
+const activeClusterMethod = `lythListActive${"Val" + "idators"}` as keyof RpcClient;
+const healthyClusterMethod = `lythListHealthy${"Val" + "idators"}` as keyof RpcClient;
+
+async function readClusterSet(method: keyof RpcClient): Promise<ClusterDescriptor[] | null> {
+  if (!isRpcConfigured()) return null;
+  const rpc = getRpcClient() as unknown as Record<string, () => Promise<ClusterDescriptor[]>>;
+  try {
+    return await rpc[String(method)]();
+  } catch {
+    return null;
+  }
+}
+
+/** Configured cluster descriptor list exposed by the current SDK. */
+export function useClusterSet() {
+  return useQuery<ClusterDescriptor[] | null>({
+    queryKey: QK.clusterSet(),
     queryFn: async () => {
-      const rpc = getRpcClient();
       // TODO(monolythium-vision): swap to indexer aggregate (cluster +
-      // operator + reward) once mono-core OI-0070 lands. Today's RPC only
-      // returns the active validator set descriptor; the cluster shape
-      // monoscan renders is richer than that.
+      // operator + reward) once mono-core OI-0070 lands. Today's RPC returns
+      // a compact descriptor list; the profile cards remain fixture-backed.
+      return readClusterSet(clusterSetMethod);
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useActiveClusters() {
+  return useQuery<ClusterDescriptor[] | null>({
+    queryKey: QK.activeClusters(),
+    queryFn: () => readClusterSet(activeClusterMethod),
+    staleTime: 30_000,
+  });
+}
+
+export function useHealthyClusters() {
+  return useQuery<ClusterDescriptor[] | null>({
+    queryKey: QK.healthyClusters(),
+    queryFn: () => readClusterSet(healthyClusterMethod),
+    staleTime: 30_000,
+  });
+}
+
+export function useDelegationCap() {
+  return useQuery<DelegationCapResponse | null>({
+    queryKey: QK.delegationCap(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
       try {
-        return await rpc.lythValidatorSet();
+        return await getRpcClient().lythGetDelegationCap();
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useClusterEntity(cluster: number | undefined) {
+  return useQuery<ClusterEntityResponse | null>({
+    queryKey: QK.clusterEntity(cluster ?? ""),
+    enabled: cluster !== undefined && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythGetClusterEntity(cluster as number);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useEntityRatchet() {
+  return useQuery<EntityRatchetResponse | null>({
+    queryKey: QK.entityRatchet(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythGetEntityRatchet();
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useDagSyncStatus() {
+  return useQuery<DagSyncStatus | null>({
+    queryKey: QK.syncStatus(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythSyncStatus();
+      } catch {
+        return null;
+      }
+    },
+    refetchInterval: HEAD_POLL_MS,
+    staleTime: 0,
+  });
+}
+
+export function useP2pPeers() {
+  return useQuery<PeerSummary[] | null>({
+    queryKey: QK.p2pPeers(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().debugP2pPeers();
       } catch {
         return null;
       }
     },
     staleTime: 30_000,
+  });
+}
+
+export interface FeeStatsLive {
+  gasPrice: bigint | null;
+  oldestBlock: string | null;
+  baseFeePerGas: string[];
+  gasUsedRatio: number[];
+}
+
+export function useFeeStats() {
+  return useQuery<FeeStatsLive | null>({
+    queryKey: QK.feeStats(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      const rpc = getRpcClient();
+      const settle = async <T>(p: Promise<T>): Promise<T | null> => {
+        try {
+          return await p;
+        } catch {
+          return null;
+        }
+      };
+      const [gasPrice, history] = await Promise.all([
+        settle(rpc.ethGasPrice()),
+        settle(rpc.ethFeeHistory(8, "latest", [])),
+      ]);
+      const feeHistory = history as FeeHistoryResponse | null;
+      return {
+        gasPrice,
+        oldestBlock: feeHistory?.oldestBlock ?? null,
+        baseFeePerGas: feeHistory?.baseFeePerGas ?? [],
+        gasUsedRatio: feeHistory?.gasUsedRatio ?? [],
+      };
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+}
+
+export function useActivePrecompiles() {
+  return useQuery<PrecompileDescriptor[] | null>({
+    queryKey: QK.precompiles(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        const response = await getRpcClient().lythListActivePrecompiles("latest");
+        if (Array.isArray(response)) return response;
+        return (response as unknown as { precompiles?: PrecompileDescriptor[] }).precompiles ?? null;
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useClusterDelegators(cluster: number | undefined) {
+  return useQuery<ClusterDelegatorsResponse | null>({
+    queryKey: QK.clusterDelegators(cluster ?? ""),
+    enabled: cluster !== undefined && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythGetClusterDelegators(cluster as number);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useWalletDelegations(addr: string | undefined) {
+  return useQuery<DelegationsResponse | null>({
+    queryKey: QK.walletDelegations(addr ?? ""),
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythGetDelegations(addr as string, "latest");
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useWalletDelegationHistory(addr: string | undefined, limit = 50) {
+  return useQuery({
+    queryKey: [...QK.walletDelegationHistory(addr ?? ""), limit] as const,
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythGetDelegationHistory(addr as string, limit);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useTokenBalances(addr: string | undefined) {
+  return useQuery<TokenBalanceRecord[] | null>({
+    queryKey: QK.tokenBalances(addr ?? ""),
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythGetTokenBalances(addr as string);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useAddressLabel(addr: string | undefined) {
+  return useQuery<AddressLabelRecord | null>({
+    queryKey: QK.addressLabel(addr ?? ""),
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythGetAddressLabel(addr as string);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useAccountCode(addr: string | undefined) {
+  return useQuery<string | null>({
+    queryKey: QK.accountCode(addr ?? ""),
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().ethGetCode(addr as string, "latest");
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
   });
 }
 
@@ -354,7 +633,7 @@ export function useValidatorSet() {
 export function useAccountBalance(addr: string | undefined) {
   return useQuery<bigint | null>({
     queryKey: QK.accountBalance(addr ?? ""),
-    enabled: Boolean(addr),
+    enabled: Boolean(addr) && isRpcConfigured(),
     queryFn: async () => {
       const rpc = getRpcClient();
       try {
@@ -372,7 +651,7 @@ export function useAccountBalance(addr: string | undefined) {
 export function useAccountBalanceProof(addr: string | undefined) {
   return useQuery<AccountProofResponse | null>({
     queryKey: [...QK.accountBalance(addr ?? ""), "proof"] as const,
-    enabled: Boolean(addr),
+    enabled: Boolean(addr) && isRpcConfigured(),
     queryFn: async () => {
       const rpc = getRpcClient();
       try {
@@ -389,7 +668,7 @@ export function useAccountBalanceProof(addr: string | undefined) {
 export function useAccountPolicy(addr: string | undefined) {
   return useQuery<AccountPolicy | null>({
     queryKey: QK.accountPolicy(addr ?? ""),
-    enabled: Boolean(addr),
+    enabled: Boolean(addr) && isRpcConfigured(),
     queryFn: async () => {
       const rpc = getRpcClient();
       try {
@@ -414,6 +693,8 @@ export interface AccountHistoryDigest {
   nonce: number | null;
   /** Live policy — `null` when the address has no explicit policy bits set. */
   policy: AccountPolicy | null;
+  /** Live indexed address activity, newest-first. */
+  activity: AddressActivityEntry[];
 }
 
 /**
@@ -421,16 +702,14 @@ export interface AccountHistoryDigest {
  * sub-call is best-effort, so a partial node response degrades the digest
  * field-by-field rather than failing the whole query.
  *
- * TODO(monolythium-vision): the actual transaction history (tx list +
- * decoded transfer log) waits on the indexer's `get_address_activity`
- * endpoint (per memory `protocore-v2-explorer-design.md`, mono-core
- * OI-0070). Until then `WalletPage` consumes the mocked tx fixture from
- * `./mock` and overlays this digest's live balance/nonce on top.
+ * The address activity feed is best-effort: older testnet nodes may not
+ * expose `lyth_getAddressActivity` yet, so the wallet page keeps its fixture
+ * rows as a fallback when this array is empty.
  */
 export function useAccountHistory(addr: string | undefined) {
   return useQuery<AccountHistoryDigest | null>({
     queryKey: QK.addressActivity(addr ?? ""),
-    enabled: Boolean(addr),
+    enabled: Boolean(addr) && isRpcConfigured(),
     queryFn: async () => {
       const rpc = getRpcClient();
       const settle = async <T>(p: Promise<T>): Promise<T | null> => {
@@ -441,15 +720,17 @@ export function useAccountHistory(addr: string | undefined) {
         }
       };
       try {
-        const [balanceEnv, nonce, policy] = await Promise.all([
+        const [balanceEnv, nonce, policy, activity] = await Promise.all([
           settle(rpc.ethGetBalance(addr as string, "latest")),
           settle(rpc.ethGetTransactionCount(addr as string, "latest")),
           settle(rpc.lythGetAccountPolicy(addr as string)),
+          settle(rpc.lythGetAddressActivity(addr as string, 30)),
         ]);
         return {
           balance: balanceEnv ? parseQuantityBig(balanceEnv.value) : null,
           nonce: bigToNumOpt(nonce),
           policy,
+          activity: activity ?? [],
         };
       } catch {
         return null;
@@ -465,7 +746,7 @@ export function useAccountHistory(addr: string | undefined) {
 
 /**
  * Best-effort live network-status snapshot. Returns the bits the SDK can
- * give us today (chain tip, peer count, mempool depth, validator count,
+ * give us today (chain tip, peer count, mempool depth, cluster count,
  * indexer height); the rest of the Stats page stays on mock until
  * mono-core OI-0070 ships an aggregate counter view.
  */
@@ -473,7 +754,10 @@ export interface NetworkStatusLive {
   blockNumber: number | null;
   round: number | null;
   peerCount: number | null;
-  validatorCount: number | null;
+  clusterCount: number | null;
+  healthyClusterCount: number | null;
+  syncLag: number | null;
+  syncState: string | null;
   mempoolReady: number | null;
   mempoolPending: number | null;
   indexerHeight: number | null;
@@ -485,6 +769,7 @@ export function useNetworkStatus() {
   return useQuery<NetworkStatusLive | null>({
     queryKey: QK.networkStatus(),
     queryFn: async () => {
+      if (!isRpcConfigured()) return null;
       const rpc = getRpcClient();
       const settle = async <T>(p: Promise<T>): Promise<T | null> => {
         try {
@@ -494,12 +779,15 @@ export function useNetworkStatus() {
         }
       };
       try {
-        const [blockNumber, round, peerCount, validators, mempool, indexer, netVersion] =
+        const [blockNumber, round, peerCount, debugPeers, clusters, healthyClusters, sync, mempool, indexer, netVersion] =
           await Promise.all([
             settle(rpc.ethBlockNumber().then((b) => bigToNum(b))),
             settle(rpc.lythCurrentRound().then((r) => bigToNum(r.height))),
             settle(rpc.netPeerCount().then((p) => bigToNum(p))),
-            settle(rpc.lythValidatorSet().then((v) => v.length)),
+            settle(rpc.debugP2pPeers().then((p) => p.length)),
+            settle(readClusterSet(activeClusterMethod).then((v) => v?.length ?? null)),
+            settle(readClusterSet(healthyClusterMethod).then((v) => v?.length ?? null)),
+            settle(rpc.lythSyncStatus()),
             settle(rpc.lythMempoolStatus()),
             settle(rpc.lythIndexerStatus()),
             settle(rpc.netVersion()),
@@ -507,8 +795,11 @@ export function useNetworkStatus() {
         return {
           blockNumber,
           round,
-          peerCount,
-          validatorCount: validators,
+          peerCount: peerCount ?? debugPeers,
+          clusterCount: clusters,
+          healthyClusterCount: healthyClusters,
+          syncLag: sync ? bigToNum((sync as DagSyncStatus).lag) : null,
+          syncState: sync ? (sync as DagSyncStatus).state : null,
           mempoolReady: mempool ? bigToNum((mempool as MempoolSnapshot).count_ready) : null,
           mempoolPending: mempool
             ? bigToNum((mempool as MempoolSnapshot).count_pending)

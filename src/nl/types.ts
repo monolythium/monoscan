@@ -17,7 +17,7 @@
 export type ToolName =
   | "get_block"
   | "get_tx"
-  | "get_validator"
+  | "get_operator"
   | "get_cluster"
   | "get_gap_records"
   | "search_tokens"

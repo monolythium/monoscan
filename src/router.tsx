@@ -10,7 +10,7 @@
  * its hash dispatcher for now and exposes a `go(hash)` callback. Stage 3
  * promotes each of the routes documented in `plans/monoscan.md` to a real
  * TanStack route definition (e.g. `/block/$hash`, `/tx/$hash`,
- * `/address/$addr`, `/validator/$id`). The seam is one router-tree edit
+ * `/address/$addr`, `/operator/$addr`). The seam is one router-tree edit
  * per surface.
  *
  * Hash-base note: we intentionally use `createMemoryHistory` here because

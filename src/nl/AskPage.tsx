@@ -97,7 +97,7 @@ export function AskPage({ go, initialQuery }: AskPageProps): ReactElement {
         </h1>
         <p className="mono ms-ask__lede">
           Natural-language search over typed node-service queries — block, transaction,
-          validator, cluster, gap-record, token, and address tools. Type a question, see
+          operator, cluster, gap-record, token, and address tools. Type a question, see
           which tools the answer pulled from.
         </p>
       </header>

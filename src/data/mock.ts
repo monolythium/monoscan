@@ -172,13 +172,11 @@ const _makeClusters = () => {
 /**
  * TODO(monolythium-vision): partially superseded by Stage 3 wiring:
  *   - `consensus.round` → live via `useChainHead`/`useChainStrip` (`hooks.ts`)
- *   - `clusters` / `operators` → still mock; SDK has only `lyth_validatorSet`
- *     (descriptor list); cluster TVS / operator reputation / vertex include
+ *   - `clusters` / `operators` → still partially mock; SDK has compact
+ *     descriptor lists, while cluster TVS / operator reputation / vertex include
  *     await mono-core OI-0070 indexer aggregate
  *   - `recentVertices` → partially superseded by `useLatestBlocks` on the
  *     landing live feed; per-cluster vertex breakdown still needs OI-0070.
- *   - `proposals` / `proposalsHistory` → memo-field signal-only per ADR-0005;
- *     needs an off-chain tally service before it can go live.
  *   - `supply` → needs balance-aggregation indexer view (no SDK exposure yet).
  *   - `treasury` → static foundation multi-sig surface (no SDK exposure yet).
  */
@@ -207,16 +205,6 @@ export const MONOSCAN_DATA = {
     blsAggMs: 7 + Math.random() * 3,
     hashShort: _hash(2938441 - j),
   })),
-  proposals: [
-    { id: "PROP-42", title: "Raise cluster diversity-bonus weight 0.15 → 0.25", deadline: "in 3d", abstract: "Increases reward bonus for operators under-represented across clusters.", tally: { yes: 61, no: 22, abstain: 17 } },
-    { id: "PROP-43", title: "Adopt ML-DSA-65 as non-optional dual signature post-2027", deadline: "in 11d", abstract: "Every operator must carry an ML-DSA alt key alongside SLH-DSA primary.", tally: { yes: 74, no: 9, abstain: 17 } },
-    { id: "PROP-44", title: "Reduce operator bond floor 50k → 35k LYTH", deadline: "in 18d", abstract: "Lowers entry barrier but raises slashing exposure.", tally: { yes: 34, no: 48, abstain: 18 } },
-  ],
-  proposalsHistory: [
-    { id: "PROP-41", title: "Bridge-relay fee cap at 18 bps", outcome: "PASSED" },
-    { id: "PROP-40", title: "Ban frontend-code fee stacking above 50bp", outcome: "PASSED" },
-    { id: "PROP-39", title: "Emergency halt timeout shortened to 72hr", outcome: "FAILED" },
-  ],
   supply: { public: "182.4", publicPct: 73, privateTxs30d: 41822 },
   treasury: {
     multisig: "fnd1:treasury:5-of-9",
@@ -304,7 +292,7 @@ const MARKET_DEFS: Array<[number, string, string, string, string]> = [
   [6, "LYTH-p", "Private LYTH", "mono", "big"],
   [7, "wSOL", "Wrapped Solana", "major", "big"],
   [8, "ATT", "Attest token", "major", "big"],
-  [9, "DAG", "DAG governance", "major", "big"],
+  [9, "DAG", "DAG execution", "major", "big"],
   [10, "stMONO", "Staked LYTH LST", "mono", "big"],
   [11, "wMATIC", "Wrapped Polygon", "major", "big"],
   [12, "CSTR", "Cluster-share", "major", "big"],
@@ -412,7 +400,7 @@ MARKETS.forEach((m: any) => {
 /**
  * TODO(monolythium-vision): aggregate counters need a real indexer
  * (mono-core OI-0070). Stage 3 partially supersedes this: `useNetworkStatus`
- * in `hooks.ts` now feeds StatsPage live values for round, validator
+ * in `hooks.ts` now feeds StatsPage live values for round, cluster
  * count, peer count and mempool depth. Everything else here (txTotal,
  * walletsTotal, contracts, supply split, slashing series) stays mock until
  * the indexer aggregate ships.

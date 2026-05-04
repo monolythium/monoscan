@@ -140,14 +140,14 @@ export function get_tx(input: GetTxInput): GetTxResult {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Tool: get_validator                                                        */
+/* Tool: get_operator                                                         */
 /* -------------------------------------------------------------------------- */
 
-export interface GetValidatorInput {
+export interface GetOperatorInput {
   address: string;
 }
 
-export interface GetValidatorResult {
+export interface GetOperatorResult {
   address: string;
   handle: string;
   region: string;
@@ -161,12 +161,11 @@ export interface GetValidatorResult {
 }
 
 /**
- * Look up a validator/operator by address.
+ * Look up an operator by address.
  *
- * TODO(monolythium-vision): swap fixture for live SDK call
- * (`getRpcClient().lythValidatorSet()` filtered by address).
+ * TODO(monolythium-vision): swap fixture for live SDK/indexer operator lookup.
  */
-export function get_validator(input: GetValidatorInput): GetValidatorResult {
+export function get_operator(input: GetOperatorInput): GetOperatorResult {
   const D: any = MONOSCAN_DATA;
   const ops: any[] = D.operators || [];
   const found = ops.find((o) =>
@@ -219,7 +218,7 @@ export interface GetClusterResult {
  * Fetch cluster summary + recent-round signing record.
  *
  * TODO(monolythium-vision): swap fixture for live SDK call (cluster
- * aggregate is OI-0070 — lythValidatorSet today only returns the
+ * aggregate is OI-0070 — today's SDK cluster descriptor list only returns the
  * raw active set).
  */
 export function get_cluster(input: GetClusterInput): GetClusterResult {
@@ -482,8 +481,8 @@ export const TOOL_CATALOG: ReadonlyArray<{
     },
   },
   {
-    name: "get_validator",
-    description: "Look up a validator/operator by address. Returns reputation, uptime, cluster memberships.",
+    name: "get_operator",
+    description: "Look up an operator by address. Returns reputation, uptime, cluster memberships.",
     input_schema: {
       type: "object",
       properties: { address: { type: "string" } },
@@ -540,7 +539,7 @@ export const TOOL_CATALOG: ReadonlyArray<{
 export const TOOLS = {
   get_block,
   get_tx,
-  get_validator,
+  get_operator,
   get_cluster,
   get_gap_records,
   search_tokens,
@@ -557,8 +556,8 @@ export function invokeTool(name: ToolName, input: Record<string, unknown>): unkn
       return get_block(input as unknown as GetBlockInput);
     case "get_tx":
       return get_tx(input as unknown as GetTxInput);
-    case "get_validator":
-      return get_validator(input as unknown as GetValidatorInput);
+    case "get_operator":
+      return get_operator(input as unknown as GetOperatorInput);
     case "get_cluster":
       return get_cluster(input as unknown as GetClusterInput);
     case "get_gap_records":

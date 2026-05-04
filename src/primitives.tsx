@@ -26,7 +26,7 @@ const Icon = ({ name, size = 16, color = "currentColor", style = {} }: any) => {
     case "services":     return <svg {...base}><rect x="3" y="4" width="18" height="6" rx="1"/><rect x="3" y="14" width="18" height="6" rx="1"/><circle cx="7" cy="7" r="0.7" fill={color}/><circle cx="7" cy="17" r="0.7" fill={color}/></svg>;
     case "bridges":      return <svg {...base}><path d="M2 17c2-4 4-4 6-4s3 4 8 4"/><path d="M2 13c2-4 4-4 6-4s4 4 8 4"/><path d="M6 17v-2M12 17v-2M18 17v-2"/></svg>;
     case "revenue":      return <svg {...base}><circle cx="12" cy="12" r="9"/><path d="M12 7v10M9 10.5h6M8.5 13.5h7"/></svg>;
-    case "governance":   return <svg {...base}><path d="M12 3v18M4 8h16M6 8v10M18 8v10M4 18h16"/></svg>;
+    case "protocol":     return <svg {...base}><path d="M12 3v18M4 8h16M6 8v10M18 8v10M4 18h16"/></svg>;
     case "explorer":     return <svg {...base}><circle cx="11" cy="11" r="7"/><path d="m21 21-4.5-4.5"/></svg>;
     case "alerts":       return <svg {...base}><path d="M18 16V10a6 6 0 0 0-12 0v6l-2 3h16z"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>;
     case "wallet":       return <svg {...base}><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M16 12h3"/><path d="M16 6V4H5a2 2 0 0 0-2 2"/></svg>;
@@ -470,7 +470,7 @@ const ClusterRing = ({ members = [], threshold = 5, size = 260 }: any) => {
 };
 
 /* ---------- MemoSignalChip ---------- */
-const MemoSignalChip = ({ proposalId, vote, expires }: any) => {
+const MemoSignalChip = ({ signalId, vote, expires }: any) => {
   const c = vote === "YES" ? "var(--ok)" : vote === "NO" ? "var(--err)" : "var(--fg-300)";
   return (
     <span className="mono" style={{
@@ -481,7 +481,7 @@ const MemoSignalChip = ({ proposalId, vote, expires }: any) => {
       border: "1px solid var(--fg-700)",
       fontSize: 11, letterSpacing: "0.04em",
     }}>
-      <b style={{ color: "var(--fg-100)", fontWeight: 500 }}>{proposalId}</b>
+      <b style={{ color: "var(--fg-100)", fontWeight: 500 }}>{signalId}</b>
       <span style={{ color: "var(--fg-500)" }}>:</span>
       <b style={{ color: c, fontWeight: 600, letterSpacing: "0.08em" }}>{vote}</b>
       {expires && <span style={{ color: "var(--fg-500)" }}>· {expires}</span>}

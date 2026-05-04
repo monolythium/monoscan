@@ -10,9 +10,20 @@ import {
   Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
 import { MONOSCAN_DATA, MARKETS } from "./data/mock";
-import { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage } from "./monoscan-extras";
+import { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
-import { useChainHead, useChainStrip, useLatestBlocks, useValidatorSet } from "./data/hooks";
+import {
+  useChainHead,
+  useChainStrip,
+  useLatestBlocks,
+  useClusterSet,
+  useHealthyClusters,
+  useActiveClusters,
+  useClusterDelegators,
+  useClusterEntity,
+  useDelegationCap,
+  useEntityRatchet,
+} from "./data/hooks";
 import { AskPage } from "./nl/AskPage";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
@@ -33,6 +44,8 @@ const SCAN = MONOSCAN_DATA;
 const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
   const block = strip?.blockNumber;
   const peers = strip?.peerCount;
+  const syncState = strip?.syncState;
+  const syncLag = strip?.syncLag;
   const netVersion = strip?.netVersion;
   return (
     <div className="ms-strip">
@@ -56,6 +69,12 @@ const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
         <>
           <Sep/>
           <Field label="peers" value={fmt(peers)}/>
+        </>
+      ) : null}
+      {syncState ? (
+        <>
+          <Sep/>
+          <Field label="sync" value={syncLag !== null && syncLag !== undefined ? `${syncState} · lag ${fmt(syncLag)}` : syncState}/>
         </>
       ) : null}
       <span style={{flex:1}}/>
@@ -99,7 +118,7 @@ const Header = ({ go, route }: any) => {
         <input
           value={q}
           onChange={e=>setQ(e.target.value)}
-          placeholder="Round number · cluster C-044 · operator 0x… · vertex hash · proposal PROP-43"
+          placeholder="Round number · cluster C-044 · operator 0x… · vertex hash"
         />
         <span className="ms-search__hint">enter ↵</span>
       </form>
@@ -122,7 +141,7 @@ const Header = ({ go, route }: any) => {
           ["#/operators",   "Operators"],
           ["#/wallets",     "Wallets"],
           ["#/stats",       "Statistics"],
-          ["#/governance",  "Governance"],
+          ["#/protocol",    "Protocol"],
         ].map(([h, l]) => (
           <a key={h} href={h} onClick={()=>go(h)}
             className={`ms-nav__item ${route===h ? "is-active" : ""}`}>{l}</a>
@@ -358,20 +377,22 @@ const Landing = ({ go }: any) => {
         </div>
       </section>
 
-      {/* ---------- GOVERNANCE + DENOMINATIONS ---------- */}
+      {/* ---------- CLUSTER HEALTH + DENOMINATIONS ---------- */}
       <section className="ms-grid-2">
-        <Card title="Active proposals" right={<a className="ms-link" href="#/governance" onClick={()=>go("#/governance")}>All →</a>}>
-          {SCAN.proposals.map(p => (
-            <div key={p.id} className="ms-prop">
+        <Card title="Cluster health" right={<a className="ms-link" href="#/clusters" onClick={()=>go("#/clusters")}>All →</a>}>
+          {SCAN.clusters.slice(0, 4).map(cl => (
+            <div key={cl.slot} className="ms-prop" onClick={()=>go(`#/cluster/${cl.slot}`)} style={{cursor:"pointer"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
                 <div>
-                  <span className="mono" style={{color:"var(--gold)",fontSize:12}}>{p.id}</span>
+                  <span className="mono" style={{color:"var(--gold)",fontSize:12}}>C-{String(cl.slot).padStart(3,"0")}</span>
                   <span style={{margin:"0 8px",color:"var(--fg-500)"}}>·</span>
-                  <span style={{fontSize:13}}>{p.title}</span>
+                  <span style={{fontSize:13}}>{cl.name}</span>
                 </div>
-                <span className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>closes {p.deadline}</span>
+                <span className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{cl.members}/{cl.size} live</span>
               </div>
-              <Tally tally={p.tally}/>
+              <div className="mono" style={{fontSize:11,color:"var(--fg-400)",marginTop:8}}>
+                {cl.tvs}M TVS · {pct(cl.vertexInclude,1)} vertex inclusion
+              </div>
             </div>
           ))}
         </Card>
@@ -552,6 +573,13 @@ const Tally = ({tally}: any) => {
 /* ============== CLUSTER DETAIL (rebuilt — ring hero + plain-language health) ============== */
 const ClusterPage = ({ slot, go }: any) => {
   const cl = SCAN.clusters.find(c => String(c.slot)===String(slot)) || SCAN.clusters[0];
+  const liveClusterId = Math.max(0, Number(cl.slot) - 1);
+  const liveClusters = useClusterSet();
+  const liveCluster = liveClusters.data?.find(c => c.id === liveClusterId) ?? null;
+  const delegators = useClusterDelegators(liveClusterId);
+  const delegationCap = useDelegationCap();
+  const clusterEntity = useClusterEntity(liveClusterId);
+  const entityRatchet = useEntityRatchet();
   const apy = clusterApy(cl);
   const ringMembers = cl.opMembers.map((m,i)=>({ ...m, id: m.handle+i }));
   const healthy = cl.state==="nominal";
@@ -658,7 +686,7 @@ const ClusterPage = ({ slot, go }: any) => {
             <div className="cl-bigstat">
               <div className="cap">Vertex inclusion</div>
               <div className="cl-bigstat__num mono num" style={{color: cl.vertexInclude>0.98 ? "var(--ok)" : "var(--warn)"}}>{pct(cl.vertexInclude,1)}</div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>proposals accepted</div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>clusters tracked</div>
             </div>
           </div>
 
@@ -673,6 +701,21 @@ const ClusterPage = ({ slot, go }: any) => {
       </section>
 
       <section className="ms-grid-2">
+        <Card title="Live protocol descriptor">
+          <div className="tx-kv">
+            <KVRow label="Cluster id" value={`${liveClusterId}`}/>
+            <KVRow label="Active" value={liveCluster ? (liveCluster.active ? "yes" : "no") : "not reported"}/>
+            <KVRow label="Stake weight" value={liveCluster?.stake ?? "—"}/>
+            <KVRow label="Pubkey" value={liveCluster?.pubkey ?? "—"} mono/>
+            <KVRow label="Delegators" value={delegators.data ? `${delegators.data.count}` : "—"}/>
+            <KVRow label="Delegation cap" value={delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "disabled" : `${delegationCap.data.capBps} bps`) : "—"}/>
+            <KVRow label="Entity" value={clusterEntity.data?.entity ?? "—"}/>
+            <KVRow label="Entity ratchet" value={entityRatchet.data ? `${entityRatchet.data.active}/${entityRatchet.data.threshold === 4294967295 ? "unset" : entityRatchet.data.threshold}` : "—"}/>
+          </div>
+          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
+            Live fields come from public RPC. Rich APY, operator roster, rewards, and vertex inclusion remain indexer-backed mock data.
+          </div>
+        </Card>
         <Card title="Members · 7 operators">
           <table className="ms-table">
             <thead><tr><th>Operator</th><th>Role</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Vertex rate</th><th></th></tr></thead>
@@ -761,6 +804,13 @@ const Stat = ({label, value, custom, tone}: any) => {
   );
 };
 
+const KVRow = ({ label, value, mono }: any) => (
+  <div className="tx-kv__row">
+    <span className="mono tx-kv__k">{label}</span>
+    <span className={`${mono ? "mono" : ""} tx-kv__v`} style={{wordBreak:"break-all"}}>{value}</span>
+  </div>
+);
+
 /* ============== OPERATOR PROFILE ============== */
 const OperatorPage = ({ addr, go }: any) => {
   const op = SCAN.operators.find(o => o.addrShort===addr) || SCAN.operators[0];
@@ -835,6 +885,10 @@ const clusterApy = (cl) => {
 };
 
 const ClustersPage = ({go}: any) => {
+  const liveClusters = useClusterSet();
+  const activeClustersLive = useActiveClusters();
+  const healthyClustersLive = useHealthyClusters();
+  const delegationCap = useDelegationCap();
   const [tab, setTab]       = useState("active"); // active|inactive
   const [filter, setFilter] = useState("all"); // all|nominal|maintenance|open (active tab) · all|jailed|queued (inactive tab)
   const [sort, setSort]     = useState("tvs"); // tvs|apy|members|diversity
@@ -845,6 +899,9 @@ const ClustersPage = ({go}: any) => {
   const nominal    = active.filter(c=>c.state==="nominal").length;
   const maint      = active.filter(c=>c.state==="maintenance").length;
   const openCount  = active.filter(c=>c.recruiting).length;
+  const liveDescriptorCount = liveClusters.data?.length ?? null;
+  const liveActiveCount = activeClustersLive.data?.length ?? null;
+  const liveHealthyCount = healthyClustersLive.data?.length ?? null;
   const totalTvs   = active.reduce((a,c)=>a+parseFloat(c.tvs),0);
   const avgApy     = active.reduce((a,c)=>a+clusterApy(c),0)/active.length;
   const topApy     = Math.max(...active.map(clusterApy));
@@ -883,7 +940,7 @@ const ClustersPage = ({go}: any) => {
           <div className="ov-hero__tag">
             <span className="ov-livedot"/>
             <span className="mono" style={{fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--fg-300)"}}>
-              Top {active.length} of {SCAN.clusters.length} · {nominal} live · 5-of-7 BFT
+              {liveActiveCount ?? active.length} active descriptors · {liveHealthyCount ?? nominal} healthy · 5-of-7 BFT
             </span>
           </div>
           <h1 className="ov-hero__title">
@@ -901,14 +958,16 @@ const ClustersPage = ({go}: any) => {
           </div>
         </div>
         <div className="ov-hero__stats">
-          <HeadlineStat label="Active signers" value={`${active.length}/100`}
-            sub={`${inactive.length} inactive · ${jailed.length} jailed`} delta={jailed.length===0?"all healthy":`${jailed.length} cooling down`} tone={jailed.length===0?"ok":"err"}/>
+          <HeadlineStat label="Active clusters" value={liveActiveCount !== null ? `${liveActiveCount}` : `${active.length}/100`}
+            sub={liveDescriptorCount !== null ? `${liveDescriptorCount} descriptors from RPC` : `${inactive.length} inactive · ${jailed.length} jailed`} delta={liveHealthyCount !== null ? `${liveHealthyCount} healthy` : jailed.length===0?"all healthy":`${jailed.length} cooling down`} tone={jailed.length===0?"ok":"err"}/>
           <HeadlineStat label="Total value staked" value={`${totalTvs.toFixed(0)}M LYTH`}
             sub="across active clusters" delta="+0.4M · 24h" tone="gold" accent/>
           <HeadlineStat label="Average APY" value={`${avgApy.toFixed(2)}%`}
             sub={`top cluster · ${topApy.toFixed(2)}%`} delta="paid in LYTH" tone="ok"/>
           <HeadlineStat label="Min TVS to enter top 100" value={`${minToEnter.toFixed(2)}M`}
             sub="ranking updates every epoch" delta={`${openCount} accepting ops`} tone="neutral"/>
+          <HeadlineStat label="Delegation cap" value={delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "off" : `${delegationCap.data.capBps} bps`) : "—"}
+            sub={delegationCap.data ? `sampled at block ${Number(delegationCap.data.blockNumber).toLocaleString()}` : "live RPC"} delta="protocol control" tone="neutral"/>
         </div>
       </section>
 
@@ -1161,15 +1220,17 @@ const MiniRing = ({ members, size=110, threshold=5 }: any) => {
 };
 
 const OperatorsPage = ({go}: any) => {
-  // Live validator set — `lyth_validatorSet` returns the descriptor list
-  // (id + pubkey + stake + active flag). It's a thin shape compared to the
-  // mocked operator profiles below; once the indexer surfaces operator
-  // reputation/region/uptime aggregates we can swap the mock list entirely.
+  // Live cluster descriptors (id + pubkey + stake + active flag). It's a thin
+  // shape compared to the mocked operator profiles below; once the indexer
+  // surfaces operator reputation/region/uptime aggregates we can swap the mock
+  // list entirely.
   // TODO(monolythium-vision): the SDK does not yet expose operator
   // memberships, region, reputation, or 90d uptime — see plans/monoscan.md
   // Stage 3 + mono-core OI-0070.
-  const validators = useValidatorSet();
-  const liveCount = validators.data?.length ?? null;
+  const clusters = useClusterSet();
+  const healthyClusters = useHealthyClusters();
+  const liveCount = clusters.data?.length ?? null;
+  const healthyCount = healthyClusters.data?.length ?? null;
   return (
     <div className="ms-page">
       <h1 className="ms-h1">Operators · {SCAN.operators.length}</h1>
@@ -1178,8 +1239,8 @@ const OperatorsPage = ({go}: any) => {
       </div>
       {liveCount !== null && (
         <div className="mono" style={{color:"var(--fg-500)",marginBottom:14,fontSize:11,letterSpacing:"0.06em"}}>
-          live validator set · {liveCount} descriptor{liveCount===1?"":"s"} reported by{" "}
-          <code style={{color:"var(--gold)"}}>lyth_validatorSet</code>
+          live cluster descriptors · {liveCount} descriptor{liveCount===1?"":"s"}
+          {healthyCount !== null ? ` · ${healthyCount} healthy` : ""}
         </div>
       )}
       <Card title="">
@@ -1211,48 +1272,6 @@ const OperatorsPage = ({go}: any) => {
     </div>
   );
 };
-
-const GovernancePage = ({go}: any) => (
-  <div className="ms-page">
-    <h1 className="ms-h1">Governance · memo-field signal-only</h1>
-    <div className="mono" style={{color:"var(--fg-400)",marginBottom:18,fontSize:13,maxWidth:680}}>
-      Per ADR-0005, on-chain proposals are signal-only — operators emit a PROP-N:YES|NO|ABSTAIN
-      memo-field tx, and Monoscan tallies them off-chain. There is no binding vote weight.
-    </div>
-    <div className="ms-grid-2">
-      <Card title="Active proposals">
-        {SCAN.proposals.map(p=>(
-          <div key={p.id} className="ms-prop">
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
-              <div>
-                <span className="mono" style={{color:"var(--gold)",fontSize:12}}>{p.id}</span>
-                <span style={{margin:"0 8px",color:"var(--fg-500)"}}>·</span>
-                <span style={{fontSize:13}}>{p.title}</span>
-              </div>
-              <span className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>closes {p.deadline}</span>
-            </div>
-            <div className="mono" style={{fontSize:11,color:"var(--fg-400)",marginTop:6,lineHeight:1.55}}>{p.abstract}</div>
-            <Tally tally={p.tally}/>
-          </div>
-        ))}
-      </Card>
-      <Card title="Recent outcomes">
-        {SCAN.proposalsHistory.map(p=>(
-          <div key={p.id} className="ms-prop">
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
-              <div>
-                <span className="mono" style={{color:"var(--fg-400)",fontSize:12}}>{p.id}</span>
-                <span style={{margin:"0 8px",color:"var(--fg-500)"}}>·</span>
-                <span style={{fontSize:13,color:"var(--fg-200)"}}>{p.title}</span>
-              </div>
-              <span className={`pill ${p.outcome==="PASSED"?"ok":"err"}`} style={{padding:"2px 8px",fontSize:10}}>{p.outcome}</span>
-            </div>
-          </div>
-        ))}
-      </Card>
-    </div>
-  </div>
-);
 
 /* ============== APP ============== */
 const App = () => {
@@ -1301,8 +1320,8 @@ const App = () => {
   else if (parts[0]==="clusters")   page = <ClustersPage go={go}/>;
   else if (parts[0]==="operator")   page = <OperatorPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
   else if (parts[0]==="operators")  page = <OperatorsPage go={go}/>;
-  else if (parts[0]==="governance") page = <GovernancePage go={go}/>;
   else if (parts[0]==="stats")      page = <StatsPage go={go}/>;
+  else if (parts[0]==="protocol")   page = <ProtocolPage go={go}/>;
   else if (parts[0]==="wallets")    page = <WalletsPage go={go}/>;
   else if (parts[0]==="wallet")     page = <WalletPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
   else if (parts[0]==="tx")         page = <TxPage hash={decodeURIComponent(parts[1]||"")} go={go}/>;
