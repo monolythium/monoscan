@@ -35,6 +35,7 @@ import {
   type DelegationCapResponse,
   type DelegationsResponse,
   type EntityRatchetResponse,
+  type EncryptionKeyResponse,
   type FeeHistoryResponse,
   type IndexerStatus,
   type MempoolSnapshot,
@@ -535,6 +536,21 @@ export function useActivePrecompiles() {
   });
 }
 
+export function useEncryptionKey() {
+  return useQuery<EncryptionKeyResponse | null>({
+    queryKey: QK.encryptionKey(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythGetEncryptionKey();
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
 export function useClusterDelegators(cluster: number | undefined) {
   return useQuery<ClusterDelegatorsResponse | null>({
     queryKey: QK.clusterDelegators(cluster ?? ""),
@@ -702,9 +718,8 @@ export interface AccountHistoryDigest {
  * sub-call is best-effort, so a partial node response degrades the digest
  * field-by-field rather than failing the whole query.
  *
- * The address activity feed is best-effort: older testnet nodes may not
- * expose `lyth_getAddressActivity` yet, so the wallet page keeps its fixture
- * rows as a fallback when this array is empty.
+ * The address activity feed is best-effort: empty testnet accounts commonly
+ * return no rows, so the wallet page keeps its fixture rows as a fallback.
  */
 export function useAccountHistory(addr: string | undefined) {
   return useQuery<AccountHistoryDigest | null>({

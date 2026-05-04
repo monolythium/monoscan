@@ -16,6 +16,7 @@ import {
   useActivePrecompiles,
   useBlockByHash,
   useBlockByNumber,
+  useEncryptionKey,
   useFeeStats,
   useNetworkStatus,
   useTokenBalances,
@@ -1181,10 +1182,12 @@ const SearchPage = ({ q, go }: any) => {
 const ProtocolPage = ({ go }: any) => {
   const precompiles = useActivePrecompiles();
   const feeStats = useFeeStats();
+  const encryptionKey = useEncryptionKey();
   const rows = precompiles.data ?? [];
   const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
     ? Number(feeStats.data.gasPrice) / 1e9
     : null;
+  const key = encryptionKey.data;
   return (
     <div className="ms-page">
       <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/stats")} style={{marginBottom:16}}>← Statistics</button>
@@ -1196,7 +1199,17 @@ const ProtocolPage = ({ go }: any) => {
         <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub="eth_gasPrice" tone="neutral"/>
         <StatCounter label="Fee samples" value={`${feeStats.data?.baseFeePerGas.length ?? 0}`} sub={feeStats.data?.oldestBlock ? `oldest ${feeStats.data.oldestBlock}` : "eth_feeHistory"} tone="neutral"/>
         <StatCounter label="Active precompiles" value={`${rows.filter((p:any)=>p.active ?? p.enabled).length}`} sub={`${rows.length} reported`} tone="neutral"/>
+        <StatCounter label="Encryption epoch" value={key ? `${Number(key.epoch).toLocaleString()}` : "—"} sub={key?.algo ?? "lyth_getEncryptionKey"} tone="neutral"/>
       </section>
+      {key && (
+        <Card title="Live encryption key">
+          <div className="tx-kv">
+            <KV label="Algorithm" value={key.algo}/>
+            <KV label="Epoch" value={Number(key.epoch).toLocaleString()} mono/>
+            <KV label="Encapsulation key" value={_short(key.encapsulationKey, 28)} mono/>
+          </div>
+        </Card>
+      )}
       <Card title="Precompile registry">
         <table className="ms-table">
           <thead><tr><th>Name</th><th>Address</th><th>Status</th></tr></thead>

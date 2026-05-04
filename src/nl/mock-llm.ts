@@ -98,11 +98,11 @@ export function matchQuery(q: string): Match | null {
 /* -------------------------------------------------------------------------- */
 
 /** Fmt a tool invocation: call the tool, wrap with name/input/result. */
-function call<TIn extends Record<string, unknown>>(
+async function call<TIn extends Record<string, unknown>>(
   name: ToolName,
   input: TIn,
-): ToolInvocation {
-  const result = invokeTool(name, input);
+): Promise<ToolInvocation> {
+  const result = await invokeTool(name, input);
   return { name, input, result };
 }
 
@@ -257,13 +257,13 @@ export async function ask(
 
   switch (matched.template) {
     case "block": {
-      const inv = call("get_block", { number_or_hash: matched.args.number_or_hash });
+      const inv = await call("get_block", { number_or_hash: matched.args.number_or_hash });
       tool_calls.push(inv);
       explanation = explainBlock(inv.result as GetBlockResult);
       break;
     }
     case "address": {
-      const inv = call("get_address_activity", {
+      const inv = await call("get_address_activity", {
         address: String(matched.args.address),
         limit: 5,
       });
@@ -272,19 +272,19 @@ export async function ask(
       break;
     }
     case "gaps": {
-      const inv = call("get_gap_records", { range: String(matched.args.range ?? "24h") });
+      const inv = await call("get_gap_records", { range: String(matched.args.range ?? "24h") });
       tool_calls.push(inv);
       explanation = explainGaps(inv.result as GetGapRecordsResult);
       break;
     }
     case "tokens": {
-      const inv = call("search_tokens", { query: String(matched.args.query) });
+      const inv = await call("search_tokens", { query: String(matched.args.query) });
       tool_calls.push(inv);
       explanation = explainTokens(inv.result as SearchTokensResult);
       break;
     }
     case "cluster": {
-      const inv = call("get_cluster", { id: Number(matched.args.id) });
+      const inv = await call("get_cluster", { id: Number(matched.args.id) });
       tool_calls.push(inv);
       explanation = explainCluster(inv.result as GetClusterResult);
       break;

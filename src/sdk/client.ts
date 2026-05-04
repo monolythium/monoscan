@@ -126,6 +126,7 @@ export const QK = {
   p2pPeers: () => ["mono", "peers"] as const,
   precompiles: () => ["mono", "protocol", "precompiles"] as const,
   feeStats: () => ["mono", "protocol", "fees"] as const,
+  encryptionKey: () => ["mono", "protocol", "encryption-key"] as const,
   clusterDelegators: (id: string | number) => ["mono", "cluster", id, "delegators"] as const,
   walletDelegations: (addr: string) => ["mono", "address", addr, "delegations"] as const,
   walletDelegationHistory: (addr: string) => ["mono", "address", addr, "delegation-history"] as const,
