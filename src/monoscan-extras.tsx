@@ -9,13 +9,32 @@
 import { useState as useStateX, useMemo as useMemoX, useEffect as useEffectX } from "react";
 import { Card } from "./primitives";
 import { MONOSCAN_DATA, MARKETS, NETWORK_STATS, WALLETS, TXS } from "./data/mock";
-import { useTxByHashLive, useBlockByNumber, useNetworkStatus } from "./data/hooks";
+import {
+  useAccountCode,
+  useAccountHistory,
+  useAddressLabel,
+  useActivePrecompiles,
+  useBlockByHash,
+  useBlockByNumber,
+  useFeeStats,
+  useNetworkStatus,
+  useTokenBalances,
+  useTxByHashLive,
+  useWalletDelegations,
+  useWalletDelegationHistory,
+} from "./data/hooks";
 
 /* Light helpers — keep local so this file is self-contained */
 const _fmt  = (n: any) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 const _fmtI = (n: any) => Math.round(n).toLocaleString();
 const _abbr = (n: any) => n >= 1e9 ? `${(n/1e9).toFixed(2)}B` : n >= 1e6 ? `${(n/1e6).toFixed(2)}M` : n >= 1e3 ? `${(n/1e3).toFixed(1)}K` : _fmt(n);
 const _short = (a: any, n=10) => a && a.length > n*2+3 ? `${a.slice(0, n)}…${a.slice(-4)}` : a;
+const _fmtLyth = (wei: bigint | null | undefined) => {
+  if (wei === null || wei === undefined) return null;
+  const whole = wei / 1_000_000_000_000_000_000n;
+  const frac = (wei % 1_000_000_000_000_000_000n) / 1_000_000_000_000_000n;
+  return `${whole.toLocaleString()}.${frac.toString().padStart(3, "0")} LYTH`;
+};
 
 /* Tiny sparkline for stat cards */
 const MiniSpark = ({ data, w=120, h=32, stroke="var(--gold)", fill="rgba(242,180,65,0.12)" }: any) => {
@@ -55,12 +74,14 @@ const StatsPage = ({ go }: any) => {
   const S = NETWORK_STATS;
   const t = S.totals;
   // Live counters — best-effort. When the node is reachable, the head round
-  // and validator count come from the live RPC; the rest of the page is
+  // and cluster count come from the live RPC; the rest of the page is
   // still mocked aggregate counters (txTotal, walletsTotal, contracts) until
   // mono-core OI-0070 ships an indexer aggregate view.
   // TODO(monolythium-vision): swap mocked aggregate counters for indexer
   // aggregates the moment the indexer surface lands.
   const live = useNetworkStatus();
+  const feeStats = useFeeStats();
+  const precompiles = useActivePrecompiles();
   const [round, setRound] = useStateX(t.vertices);
   const [txLast24, setTxLast24] = useStateX(t.txLast24);
   useEffectX(() => {
@@ -72,10 +93,17 @@ const StatsPage = ({ go }: any) => {
   }, []);
 
   const liveRound = live.data?.round ?? null;
-  const liveValidators = live.data?.validatorCount ?? null;
+  const liveClusters = live.data?.clusterCount ?? null;
   const livePeers = live.data?.peerCount ?? null;
+  const liveHealthyClusters = live.data?.healthyClusterCount ?? null;
+  const liveSyncState = live.data?.syncState ?? null;
+  const liveSyncLag = live.data?.syncLag ?? null;
   const liveMempoolReady = live.data?.mempoolReady ?? null;
   const headRound = liveRound ?? round;
+  const activePrecompiles = precompiles.data?.filter(p => (p as any).active ?? (p as any).enabled).length ?? null;
+  const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
+    ? Number(feeStats.data.gasPrice) / 1e9
+    : null;
 
   return (
     <div className="ms-page ms-stats">
@@ -91,7 +119,7 @@ const StatsPage = ({ go }: any) => {
           </h1>
           <p className="ov-hero__desc">
             Network-wide counters, cumulative flows, and health vitals since genesis.
-            Everything a researcher, auditor, or validator candidate needs before they commit capital.
+            Everything a researcher, auditor, or operator candidate needs before they commit capital.
           </p>
         </div>
         <div className="stats-hero__counter">
@@ -110,10 +138,12 @@ const StatsPage = ({ go }: any) => {
         <StatCounter label="Transactions · all-time" value={_abbr(t.txTotal)} sub={`${_fmt(txLast24)} in the last 24h`} trend={S.series.tx30d} tone="gold" onClick={()=>{}}/>
         <StatCounter label="Active wallets" value={_fmt(t.walletsTotal)} sub={`${_fmt(t.walletsActive24h)} active in 24h`} tone="neutral" onClick={()=>go("#/wallets")} clickable/>
         <StatCounter
-          label="Validators"
-          value={liveValidators !== null ? `${liveValidators}` : `${t.clustersActive}/${t.clustersTotal}`}
+          label="Clusters"
+          value={liveClusters !== null ? `${liveClusters}` : `${t.clustersActive}/${t.clustersTotal}`}
           sub={
-            livePeers !== null
+            liveHealthyClusters !== null
+              ? `${liveHealthyClusters} healthy · sync ${liveSyncState ?? "unknown"}${liveSyncLag !== null ? ` · lag ${liveSyncLag}` : ""}`
+              : livePeers !== null
               ? `${livePeers} peers · ${liveMempoolReady ?? 0} ready in mempool`
               : `${t.operators} unique operators`
           }
@@ -122,6 +152,8 @@ const StatsPage = ({ go }: any) => {
           clickable
         />
         <StatCounter label="Smart contracts deployed" value={_fmt(t.contracts)} sub={`${t.tokensListed} listed tokens`} tone="neutral"/>
+        <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub={feeStats.data?.baseFeePerGas.length ? `${feeStats.data.baseFeePerGas.length} fee samples` : "live fee endpoint"} tone="neutral"/>
+        <StatCounter label="Protocol surfaces" value={activePrecompiles !== null ? `${activePrecompiles}` : "—"} sub={precompiles.data ? `${precompiles.data.length} precompiles reported` : "live precompile registry"} tone="neutral"/>
         <StatCounter label="Private vs public txs" value={`${((t.privateTxs/t.txTotal)*100).toFixed(1)}%`} sub={`${_abbr(t.privateTxs)} private · ${_abbr(t.publicTxs)} public`} tone="neutral"/>
         <StatCounter label="Chain age" value={S.network.chainAge} sub={`genesis ${S.network.genesisDate}`} tone="neutral"/>
       </section>
@@ -398,6 +430,12 @@ const SupplyPie = ({ slices, hover, setHover }: any) => {
    WALLET DETAIL PAGE
 ===================================================== */
 const WalletPage = ({ addr, go }: any) => {
+  const live = useAccountHistory(addr);
+  const delegations = useWalletDelegations(addr);
+  const delegationHistory = useWalletDelegationHistory(addr, 20);
+  const tokenBalances = useTokenBalances(addr);
+  const addressLabel = useAddressLabel(addr);
+  const code = useAccountCode(addr);
   const w = WALLETS.find(w => w.addr === addr);
   if (!w) return (
     <div className="ms-page">
@@ -410,6 +448,16 @@ const WalletPage = ({ addr, go }: any) => {
   const totalOut = w.flow30d.reduce((a,d)=>a+d.out, 0);
   const totalRw  = w.flow30d.reduce((a,d)=>a+d.reward, 0);
   const net      = totalIn - totalOut;
+  const liveBalance = _fmtLyth(live.data?.balance);
+  const liveNonce = live.data?.nonce ?? null;
+  const livePolicy = live.data?.policy ?? null;
+  const liveActivity = live.data?.activity ?? [];
+  const liveDelegations = delegations.data?.rows ?? [];
+  const liveDelegationHistory = delegationHistory.data ?? [];
+  const liveTokenBalances = tokenBalances.data ?? [];
+  const liveLabel = addressLabel.data ?? null;
+  const codeValue = code.data ?? null;
+  const isContract = Boolean(codeValue && codeValue !== "0x");
 
   return (
     <div className="ms-page ms-wallet-detail">
@@ -417,20 +465,23 @@ const WalletPage = ({ addr, go }: any) => {
       <section className="wd-hero">
         <div className="wd-hero__meta">
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em"}}>WALLET · #{w.rank} OF {WALLETS.length}</div>
-          <h1 className="wd-hero__title">{w.tag || "Unlabeled wallet"}</h1>
+          <h1 className="wd-hero__title">{liveLabel?.displayName || w.tag || "Unlabeled wallet"}</h1>
           <div className="mono wd-hero__addr">{w.addr}</div>
           <div className="wd-hero__facts mono">
             <span>First seen · {w.firstSeenAgo}</span>
             <span className="sep"/>
-            <span>{_fmt(w.txCount)} transactions</span>
+            <span>{liveNonce !== null ? `${liveNonce} confirmed sends` : `${_fmt(w.txCount)} transactions`}</span>
+            {liveLabel && <><span className="sep"/><span>{liveLabel.category}</span></>}
+            {livePolicy && <><span className="sep"/><span>Policy · {livePolicy.mode}{livePolicy.explicit ? " explicit" : ""}</span></>}
+            {codeValue !== null && <><span className="sep"/><span>{isContract ? "Contract account" : "Externally-owned account"}</span></>}
             {w.stakedTo && <><span className="sep"/><span>Delegating to <a onClick={()=>go(`#/cluster/${w.stakedTo.replace("C-","").replace(/^0+/,"")}`)} style={{color:"var(--gold)",cursor:"pointer"}}>{w.stakedTo}</a></span></>}
           </div>
         </div>
         <div className="wd-hero__balances">
           <div className="wd-bal wd-bal--primary">
             <div className="mono wd-bal__label">MONO · public</div>
-            <div className="mono num wd-bal__value">{_fmt(w.bal)}</div>
-            <div className="mono wd-bal__sub">{w.pct.toFixed(3)}% of supply</div>
+            <div className="mono num wd-bal__value">{liveBalance ?? _fmt(w.bal)}</div>
+            <div className="mono wd-bal__sub">{liveBalance ? "live RPC balance" : `${w.pct.toFixed(3)}% of supply`}</div>
           </div>
           {w.extras.map((e,i)=>(
             <div key={i} className="wd-bal">
@@ -440,6 +491,84 @@ const WalletPage = ({ addr, go }: any) => {
           ))}
         </div>
       </section>
+
+      {(livePolicy || liveDelegations.length > 0 || codeValue !== null) && (
+        <section className="tx-split">
+          <Card title="Live account">
+            <div className="tx-kv">
+              <KV label="Balance" value={liveBalance ?? "—"} mono/>
+              <KV label="Nonce" value={liveNonce !== null ? `${liveNonce}` : "—"} mono/>
+              <KV label="Policy" value={livePolicy ? `${livePolicy.mode}${livePolicy.explicit ? " · explicit" : ""}` : "—"}/>
+              <KV label="Label" value={liveLabel ? `${liveLabel.category}${liveLabel.displayName ? ` · ${liveLabel.displayName}` : ""}` : "—"}/>
+              <KV label="Code" value={codeValue === null ? "—" : isContract ? `${codeValue.length} chars` : "0x"} mono/>
+            </div>
+          </Card>
+          <Card title="Live delegations">
+            {liveDelegations.length > 0 ? (
+              <table className="ms-table">
+                <thead><tr><th>Cluster</th><th style={{textAlign:"right"}}>Weight</th></tr></thead>
+                <tbody>
+                  {liveDelegations.map((row:any)=>(
+                    <tr key={row.cluster} onClick={()=>go(`#/cluster/${Number(row.cluster)+1}`)}>
+                      <td className="mono">C-{String(Number(row.cluster)+1).padStart(3,"0")}</td>
+                      <td className="mono num" style={{textAlign:"right"}}>{row.weightBps} bps</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:0}}>
+                No live delegation rows reported for this address.
+              </p>
+            )}
+          </Card>
+        </section>
+      )}
+
+      {(liveTokenBalances.length > 0 || liveDelegationHistory.length > 0) && (
+        <section className="tx-split">
+          <Card title="Indexed token balances">
+            {liveTokenBalances.length > 0 ? (
+              <table className="ms-table">
+                <thead><tr><th>Token id</th><th style={{textAlign:"right"}}>Balance</th><th style={{textAlign:"right"}}>Updated</th></tr></thead>
+                <tbody>
+                  {liveTokenBalances.map((row:any)=>(
+                    <tr key={row.tokenId}>
+                      <td className="mono" style={{fontSize:11}}>{_short(row.tokenId, 14)}</td>
+                      <td className="mono num" style={{textAlign:"right"}}>{row.balance}</td>
+                      <td className="mono num" style={{textAlign:"right"}}>{Number(row.updatedAtBlock).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:0}}>No indexed token-balance rows reported.</p>
+            )}
+          </Card>
+          <Card title="Delegation history">
+            {liveDelegationHistory.length > 0 ? (
+              <table className="ms-table">
+                <thead><tr><th>Kind</th><th>Cluster</th><th style={{textAlign:"right"}}>Weight</th><th style={{textAlign:"right"}}>Block</th></tr></thead>
+                <tbody>
+                  {liveDelegationHistory.map((row:any)=>(
+                    <tr key={`${row.blockHeight}-${row.txIndex}-${row.logIndex}`}>
+                      <td>{row.kind}</td>
+                      <td className="mono">
+                        C-{String(Number(row.cluster)+1).padStart(3,"0")}
+                        {row.toCluster !== null && row.toCluster !== undefined ? ` → C-${String(Number(row.toCluster)+1).padStart(3,"0")}` : ""}
+                      </td>
+                      <td className="mono num" style={{textAlign:"right"}}>{row.weightBps} bps</td>
+                      <td className="mono num" style={{textAlign:"right"}}>{Number(row.blockHeight).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:0}}>No indexed delegation events reported.</p>
+            )}
+          </Card>
+        </section>
+      )}
 
       {/* Flow diagram */}
       <section>
@@ -456,7 +585,7 @@ const WalletPage = ({ addr, go }: any) => {
 
       {/* Recent transactions */}
       <section>
-        <h3 className="ov-section-title">Recent transactions</h3>
+        <h3 className="ov-section-title">{liveActivity.length > 0 ? "Live address activity" : "Recent transactions"}</h3>
         <Card title="">
           <table className="ms-table wd-tx-table">
             <thead><tr>
@@ -468,7 +597,33 @@ const WalletPage = ({ addr, go }: any) => {
               <th style={{textAlign:"right"}}>When</th>
             </tr></thead>
             <tbody>
-              {w.txs.map(t=>(
+              {liveActivity.length > 0 ? liveActivity.map((row:any)=>(
+                <tr key={`${row.blockHeight}-${row.txIndex}-${row.logIndex}`}>
+                  <td>
+                    <span className={`wd-dir wd-dir--${row.direction === "out" ? "out" : "in"}`}>
+                      {row.direction === "out" ? "↗" : "↙"}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="mono" style={{fontSize:12,color:"var(--fg-100)"}}>
+                      {row.kind}{row.subKind ? ` · ${row.subKind}` : ""}
+                    </div>
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>
+                      tx {row.txIndex} · log {row.logIndex}
+                    </div>
+                  </td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
+                    {row.counterparty ? _short(row.counterparty, 14) : row.cluster !== null && row.cluster !== undefined ? `C-${String(Number(row.cluster)+1).padStart(3,"0")}` : "—"}
+                  </td>
+                  <td className="mono num" style={{textAlign:"right",color: row.direction==="out" ? "var(--err, #ff6b6b)" : "var(--ok, #73d13d)"}}>
+                    {row.amount ? `${row.direction==="out" ? "−" : "+"}${row.amount}` : row.weightBps !== null && row.weightBps !== undefined ? `${row.weightBps} bps` : "—"}
+                  </td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>—</td>
+                  <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>
+                    block {Number(row.blockHeight).toLocaleString()}
+                  </td>
+                </tr>
+              )) : w.txs.map(t=>(
                 <tr key={t.hash} onClick={()=>go(`#/tx/${encodeURIComponent(t.hash)}`)} className={t.status==="failed"?"wd-tx-failed":""}>
                   <td>
                     <span className={`wd-dir wd-dir--${t.direction}`}>
@@ -590,21 +745,21 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
 
 /* =====================================================
    TRANSACTION DETAIL PAGE
-   Tries `eth_getTransactionReceipt` for live status + block + gas first;
-   falls back to the mock fixture (full attestation panel) for everything
-   the live receipt does not yet expose. The rich indexer trace (logs,
-   decoded calldata, sig timeline) lands with mono-core OI-0070.
+   Tries `eth_getTransactionByHash` + receipt for live sender, recipient,
+   status, block, value, and gas first; falls back to the mock fixture for
+   the rich attestation panel until the indexer trace lands.
 ===================================================== */
 const TxPage = ({ hash, go }: any) => {
   const live = useTxByHashLive(hash);
-  const liveReceipt = live.data ?? null;
+  const liveTx = live.data?.tx ?? null;
+  const liveReceipt = live.data?.receipt ?? null;
   const fixture = TXS[hash];
 
   // Merge live receipt over the fixture so the UI always renders a complete
   // shape. When the live node is reachable and returns a real receipt the
   // status / block / gas fields are authoritative; the rest comes from the
   // mocked fixture until OI-0070 ships indexer-side enrichment.
-  const tx = liveReceipt
+  const tx = liveTx || liveReceipt
     ? {
         ...(fixture ?? {
           // Bare minimum so the page has something to render when there's
@@ -633,22 +788,32 @@ const TxPage = ({ hash, go }: any) => {
           logs: [],
           gasLimit: 0,
         }),
-        // Live overrides — keep the receipt's fields as the source of truth.
+        // Live overrides — keep the node fields as the source of truth.
+        hash: liveTx?.hash ?? liveReceipt?.tx_hash ?? fixture?.hash ?? hash,
+        from: liveTx?.from ?? fixture?.from ?? "—",
+        to: liveTx?.to ?? fixture?.to ?? "—",
+        amount: liveTx?.value ? Number(BigInt(liveTx.value)) / 1e18 : (fixture?.amount ?? 0),
+        gasLimit: liveTx?.gas ? Number(BigInt(liveTx.gas)) : (fixture?.gasLimit ?? 0),
+        nonce: liveTx?.nonce ? Number(BigInt(liveTx.nonce)) : (fixture?.nonce ?? 0),
+        contractInput: liveTx?.input && liveTx.input !== "0x" ? liveTx.input : (fixture?.contractInput ?? null),
         status:
-          (typeof (liveReceipt as any).status === "number"
-            ? ((liveReceipt as any).status === 1 ? "ok" : "failed")
+          (typeof liveReceipt?.status === "number"
+            ? (liveReceipt.status === 1 ? "ok" : "failed")
             : (fixture?.status ?? "ok")),
         gasUsed: Number(
-          (liveReceipt as any).gas_used ?? (liveReceipt as any).gasUsed ?? fixture?.gasUsed ?? 0,
+          liveReceipt?.gas_used ?? fixture?.gasUsed ?? 0,
         ),
         round: Number(
-          (liveReceipt as any).block_number ?? (liveReceipt as any).blockNumber ?? fixture?.round ?? 0,
+          liveReceipt?.block_number ??
+            (liveTx?.blockNumber ? BigInt(liveTx.blockNumber) : undefined) ??
+            fixture?.round ??
+            0,
         ),
         roundLabel:
-          (liveReceipt as any).block_number !== undefined ||
-          (liveReceipt as any).blockNumber !== undefined
+          liveReceipt?.block_number !== undefined || liveTx?.blockNumber !== undefined
             ? `block ${Number(
-                (liveReceipt as any).block_number ?? (liveReceipt as any).blockNumber,
+                liveReceipt?.block_number ??
+                  (liveTx?.blockNumber ? BigInt(liveTx.blockNumber) : 0n),
               ).toLocaleString()}`
             : (fixture?.roundLabel ?? "round —"),
       }
@@ -756,7 +921,7 @@ const TxPage = ({ hash, go }: any) => {
               </div>
             </div>
             <div className="tx-attest__sigs">
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em",marginBottom:8}}>SIGNATURE TIMELINE · ms after block proposal</div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em",marginBottom:8}}>SIGNATURE TIMELINE · ms after block assembly</div>
               {tx.signatures.map((s,i)=>(
                 <div key={i} className="tx-sig-row">
                   <span className="tx-sig-row__dot"/>
@@ -905,6 +1070,11 @@ const RoundPage = ({ round, go }: any) => {
 ===================================================== */
 const SearchPage = ({ q, go }: any) => {
   const ql = (q || "").toLowerCase();
+  const looksLikeHash = /^0x[0-9a-fA-F]{64}$/.test(q || "");
+  const looksLikeAddress = /^0x[0-9a-fA-F]{40}$/.test(q || "");
+  const looksLikeRound = /^\d+$/.test(q || "");
+  const liveBlockByHash = useBlockByHash(looksLikeHash ? q : undefined);
+  const liveTx = useTxByHashLive(looksLikeHash ? q : undefined);
   const D: any = MONOSCAN_DATA || {};
   const markets = (MARKETS || []).filter(m =>
     m.sym.toLowerCase().includes(ql) || (m.name||"").toLowerCase().includes(ql)
@@ -919,7 +1089,8 @@ const SearchPage = ({ q, go }: any) => {
   const wallets = (D.richList || []).filter(w =>
     (w.addr||"").toLowerCase().includes(ql) || (w.tag||"").toLowerCase().includes(ql)
   );
-  const total = markets.length + clusters.length + operators.length + wallets.length;
+  const liveHits = (liveBlockByHash.data ? 1 : 0) + (liveTx.data ? 1 : 0) + (looksLikeAddress ? 1 : 0) + (looksLikeRound ? 1 : 0);
+  const total = liveHits + markets.length + clusters.length + operators.length + wallets.length;
 
   const Section = ({ title, items, render }: any) =>
     items.length === 0 ? null : (
@@ -938,6 +1109,41 @@ const SearchPage = ({ q, go }: any) => {
       <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
         {total === 0 ? "No matches. Try a round number, C-NNN cluster id, 0x… operator address, or ticker." : `${total} result${total===1?"":"s"}`}
       </p>
+
+      {(looksLikeRound || looksLikeAddress || liveBlockByHash.data || liveTx.data || liveBlockByHash.isLoading || liveTx.isLoading) && (
+        <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
+          <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>Live lookup</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {looksLikeRound && (
+              <div className="ov-moverow" onClick={()=>go(`#/round/${q}`)}>
+                <span className="mono" style={{color:"var(--gold)",minWidth:120}}>round</span>
+                <span style={{flex:1}}>Open block/round #{Number(q).toLocaleString()}</span>
+              </div>
+            )}
+            {looksLikeAddress && (
+              <div className="ov-moverow" onClick={()=>go(`#/wallet/${encodeURIComponent(q)}`)}>
+                <span className="mono" style={{color:"var(--gold)",minWidth:120}}>address</span>
+                <span className="mono" style={{flex:1}}>{q}</span>
+              </div>
+            )}
+            {liveTx.data && (
+              <div className="ov-moverow" onClick={()=>go(`#/tx/${encodeURIComponent(q)}`)}>
+                <span className="mono" style={{color:"var(--gold)",minWidth:120}}>transaction</span>
+                <span className="mono" style={{flex:1}}>{q}</span>
+              </div>
+            )}
+            {liveBlockByHash.data && (
+              <div className="ov-moverow" onClick={()=>go(`#/round/${Number((liveBlockByHash.data as any).number)}`)}>
+                <span className="mono" style={{color:"var(--gold)",minWidth:120}}>block hash</span>
+                <span style={{flex:1}}>Block #{Number((liveBlockByHash.data as any).number).toLocaleString()}</span>
+              </div>
+            )}
+            {(liveBlockByHash.isLoading || liveTx.isLoading) && (
+              <div className="mono" style={{fontSize:11,color:"var(--fg-500)"}}>checking live RPC…</div>
+            )}
+          </div>
+        </div>
+      )}
 
       <Section title="Markets" items={markets} render={(m)=>(
         <div key={m.sym} className="ov-moverow" onClick={()=>go(`#/market/${m.sym}`)}>
@@ -972,10 +1178,47 @@ const SearchPage = ({ q, go }: any) => {
   );
 };
 
+const ProtocolPage = ({ go }: any) => {
+  const precompiles = useActivePrecompiles();
+  const feeStats = useFeeStats();
+  const rows = precompiles.data ?? [];
+  const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
+    ? Number(feeStats.data.gasPrice) / 1e9
+    : null;
+  return (
+    <div className="ms-page">
+      <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/stats")} style={{marginBottom:16}}>← Statistics</button>
+      <h1 className="ms-h1">Protocol status</h1>
+      <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
+        Live fee and precompile gates from the public testnet RPC.
+      </p>
+      <section className="stats-counters">
+        <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub="eth_gasPrice" tone="neutral"/>
+        <StatCounter label="Fee samples" value={`${feeStats.data?.baseFeePerGas.length ?? 0}`} sub={feeStats.data?.oldestBlock ? `oldest ${feeStats.data.oldestBlock}` : "eth_feeHistory"} tone="neutral"/>
+        <StatCounter label="Active precompiles" value={`${rows.filter((p:any)=>p.active ?? p.enabled).length}`} sub={`${rows.length} reported`} tone="neutral"/>
+      </section>
+      <Card title="Precompile registry">
+        <table className="ms-table">
+          <thead><tr><th>Name</th><th>Address</th><th>Status</th></tr></thead>
+          <tbody>
+            {rows.map((p:any)=>(
+              <tr key={p.address}>
+                <td style={{fontWeight:500}}>{p.name}</td>
+                <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{p.address}</td>
+                <td><span className={`pill ${(p.active ?? p.enabled) ? "ok" : "warn"}`}>{p.status ?? ((p.active ?? p.enabled) ? "active" : "disabled")}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+};
+
 const tagFor = (addr) => {
   const w = WALLETS && WALLETS.find(w => w.addr === addr);
   return w?.tag || null;
 };
 
 /* Named exports — replaces the legacy window-attach pattern. */
-export { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage };
+export { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage, ProtocolPage };

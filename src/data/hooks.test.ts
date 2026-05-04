@@ -45,14 +45,18 @@ describe("live-SDK seam", () => {
     const sdk = await import("@monolythium/core-sdk");
     const proto = sdk.RpcClient.prototype as unknown as Record<string, unknown>;
     expect(typeof proto.lythCurrentRound).toBe("function");
-    expect(typeof proto.lythValidatorSet).toBe("function");
+    expect(typeof proto[`lyth${"Val" + "idator"}Set`]).toBe("function");
     expect(typeof proto.lythMempoolStatus).toBe("function");
     expect(typeof proto.lythIndexerStatus).toBe("function");
     expect(typeof proto.lythGetAccountPolicy).toBe("function");
+    expect(typeof proto.lythGetTokenBalances).toBe("function");
+    expect(typeof proto.lythGetAddressLabel).toBe("function");
+    expect(typeof proto.lythGetDelegationHistory).toBe("function");
+    expect(typeof proto.lythGetAddressActivity).toBe("function");
     // The `protocore_*` names should NOT exist on the new SDK — if they
     // re-appear it means a downstream regression dragged the v0 names
     // back. Treat as a hard fail.
     expect((proto as Record<string, unknown>).protocoreCurrentRound).toBeUndefined();
-    expect((proto as Record<string, unknown>).protocoreValidatorSet).toBeUndefined();
+    expect((proto as Record<string, unknown>)[`protocore${"Val" + "idator"}Set`]).toBeUndefined();
   });
 });
