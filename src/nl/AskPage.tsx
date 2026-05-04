@@ -1,12 +1,11 @@
 /**
  * Ask Monoscan — natural-language search over typed node-service tools.
  *
- * MOCKUP STAGE — the LLM substrate is `mock-llm.ts` (deterministic
- * pattern matching); the typed tools in `tools.ts` return fixture data
- * keyed off the input. The full UX is real: streaming-style trace,
+ * HYBRID STAGE — the LLM substrate is `mock-llm.ts` (deterministic
+ * pattern matching); the typed tools in `tools.ts` are live-first for
+ * current RPC surfaces and fixture-backed for missing indexer data. The full UX is real: streaming-style trace,
  * collapsible per-tool view, Markdown answer block. The follow-up stage
- * swaps `mock-llm` for the real Anthropic Messages API and the fixture
- * tools for live SDK + indexer calls.
+ * swaps `mock-llm` for the real Anthropic Messages API.
  *
  * TODO(monolythium-vision): swap `ask` import for the real Claude API
  * client once `mono/api/monoscan-claude` is provisioned and the
@@ -34,7 +33,7 @@ export function AskPage({ go, initialQuery }: AskPageProps): ReactElement {
   const inflight = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  /** Run the (mock) LLM. Cancels any in-flight call first. */
+  /** Run the deterministic LLM router. Cancels any in-flight call first. */
   const runQuery = useCallback(async (q: string) => {
     if (!q.trim()) return;
     inflight.current?.abort();
@@ -89,7 +88,7 @@ export function AskPage({ go, initialQuery }: AskPageProps): ReactElement {
 
       <header className="ms-ask__head">
         <div className="cap" style={{ color: "var(--gold)" }}>
-          Ask the blockchain · mockup
+          Ask the blockchain · live tools
         </div>
         <h1 className="ms-h1">
           Ask Monoscan a question.{" "}
@@ -147,13 +146,13 @@ export function AskPage({ go, initialQuery }: AskPageProps): ReactElement {
         </div>
       )}
 
-      {/* Status line: a tiny disclosure that the LLM is mocked. */}
+      {/* Status line: a tiny disclosure that the LLM router is mocked. */}
       <div className="ms-ask__notice">
-        <span className="pill">mockup</span>
+        <span className="pill">hybrid</span>
         <span className="mono">
-          Five canned templates — block, address activity, gap records, token search,
-          cluster summary. Tool-call shapes match the live Anthropic Messages API; the
-          real Claude swap is one module change.
+          Deterministic routing with live RPC-backed tools where available. Gap records,
+          token search, and rich operator aggregates remain fixture-backed until their
+          indexer namespaces land.
         </span>
       </div>
 

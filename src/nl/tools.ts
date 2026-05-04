@@ -1,10 +1,8 @@
 /**
  * Typed tool implementations the (mock) LLM can invoke.
  *
- * Each tool here is **pure mockup** — it returns a deterministic fixture
- * keyed off the input. No live RPC, no SDK calls. The shapes match what
- * the real `@monolythium/core-sdk` + indexer API will return so the
- * renderer + tool-call signatures don't change when we swap to live data.
+ * Tools are live-first where mono-core already exposes a public RPC surface,
+ * then fall back to deterministic fixtures for indexer-only fields.
  *
  * TODO(monolythium-vision): swap each fixture function for the live SDK +
  * indexer call once mono-core OI-0070 (indexer aggregate) lands. The
@@ -16,6 +14,7 @@
  */
 
 import { MARKETS, MONOSCAN_DATA } from "../data/mock";
+import { getRpcClient, isRpcConfigured } from "../sdk/client";
 import type { ToolName } from "./types";
 
 /* -------------------------------------------------------------------------- */
@@ -27,6 +26,19 @@ const _hex = (n: number, w = 8): string =>
 
 const _shortHash = (n: number): string =>
   `0x${_hex(n)}…${_hex(n * 7919, 4)}`;
+
+const _toBig = (v: string | bigint | number | null | undefined): bigint => {
+  if (v === null || v === undefined) return 0n;
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number") return BigInt(v);
+  return BigInt(v);
+};
+
+const _formatLyth = (wei: bigint): string => {
+  const whole = wei / 1_000_000_000_000_000_000n;
+  const frac = (wei % 1_000_000_000_000_000_000n) / 1_000_000_000_000_000n;
+  return `${whole}.${frac.toString().padStart(3, "0")}`;
+};
 
 /** Deterministic pseudo-random in [0, 1) — keyed off an integer. */
 const _rand = (seed: number): number => {
@@ -65,10 +77,10 @@ export interface GetBlockResult {
 /**
  * Look up a block by number or hash.
  *
- * TODO(monolythium-vision): swap fixture for live SDK call
- * (`getRpcClient().ethGetBlockByNumber(...)`) once OI-0070 lands.
+ * Uses live block-header RPC when available. The per-block tx/memo/DAC
+ * enrichment remains fixture-backed until the indexer aggregate ships.
  */
-export function get_block(input: GetBlockInput): GetBlockResult {
+export async function get_block(input: GetBlockInput): Promise<GetBlockResult> {
   const raw = String(input.number_or_hash).toLowerCase();
   const n = /^\d+$/.test(raw)
     ? parseInt(raw, 10)
@@ -78,7 +90,7 @@ export function get_block(input: GetBlockInput): GetBlockResult {
   const txCount = 14 + Math.floor(_rand(seed) * 60);
   const gasLimit = 30_000_000;
   const gasUsed = Math.floor(gasLimit * (0.18 + _rand(seed + 1) * 0.4));
-  return {
+  const fallback: GetBlockResult = {
     number: n,
     hash: _shortHash(n),
     parent_hash: _shortHash(n - 1),
@@ -95,6 +107,27 @@ export function get_block(input: GetBlockInput): GetBlockResult {
     dac_coverage: 0.94 + _rand(seed + 3) * 0.05,
     status: "committed",
   };
+  if (!isRpcConfigured()) return fallback;
+  try {
+    const rpc = getRpcClient();
+    const live = raw.startsWith("0x") && raw.length > 20
+      ? await rpc.ethGetBlockByHash(String(input.number_or_hash))
+      : await rpc.ethGetBlockByNumber(n);
+    if (!live) return fallback;
+    return {
+      ...fallback,
+      number: Number(live.number),
+      hash: live.hash,
+      parent_hash: live.parent_hash,
+      round: Number(live.number),
+      timestamp_iso: new Date(Number(live.timestamp) * 1000).toISOString().replace(/\.\d{3}Z$/, "Z"),
+      gas_used: Number(live.gas_used),
+      gas_limit: Number(live.gas_limit),
+      status: "committed",
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -120,13 +153,13 @@ export interface GetTxResult {
 /**
  * Fetch a transaction receipt by hash.
  *
- * TODO(monolythium-vision): swap fixture for live SDK call
- * (`getRpcClient().ethGetTransactionReceipt(...)`).
+ * Uses live transaction + receipt RPC when available; memo/type enrichment
+ * remains fixture-backed until decoded calldata/indexer trace lands.
  */
-export function get_tx(input: GetTxInput): GetTxResult {
+export async function get_tx(input: GetTxInput): Promise<GetTxResult> {
   const seed = input.hash.length;
   const types: GetTxResult["type"][] = ["transfer", "swap", "stake", "vote", "contract"];
-  return {
+  const fallback: GetTxResult = {
     hash: input.hash,
     block_number: 12_300 + (seed % 400),
     from: `0x${_hex(seed * 31 + 17, 4)}…${_hex(seed * 7 + 3, 4)}`,
@@ -137,6 +170,27 @@ export function get_tx(input: GetTxInput): GetTxResult {
     memo: seed % 4 === 0 ? "PROP-43:YES" : null,
     type: types[seed % types.length],
   };
+  if (!isRpcConfigured()) return fallback;
+  try {
+    const rpc = getRpcClient();
+    const [tx, receipt] = await Promise.all([
+      rpc.ethGetTransactionByHash(input.hash).catch(() => null),
+      rpc.ethGetTransactionReceipt(input.hash).catch(() => null),
+    ]);
+    if (!tx && !receipt) return fallback;
+    return {
+      ...fallback,
+      hash: tx?.hash ?? receipt?.tx_hash ?? input.hash,
+      block_number: receipt ? Number(receipt.block_number) : tx ? Number(_toBig(tx.blockNumber)) : fallback.block_number,
+      from: tx?.from ?? fallback.from,
+      to: tx?.to ?? fallback.to,
+      value_lyth: tx ? _formatLyth(_toBig(tx.value)) : fallback.value_lyth,
+      status: receipt?.status === 0 ? "reverted" : "success",
+      type: tx?.input && tx.input !== "0x" ? "contract" : "transfer",
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -217,11 +271,10 @@ export interface GetClusterResult {
 /**
  * Fetch cluster summary + recent-round signing record.
  *
- * TODO(monolythium-vision): swap fixture for live SDK call (cluster
- * aggregate is OI-0070 — today's SDK cluster descriptor list only returns the
- * raw active set).
+ * Uses live cluster descriptors when available. Rich operator roster, APY,
+ * and recent signing aggregates still fall back to fixtures until OI-0070.
  */
-export function get_cluster(input: GetClusterInput): GetClusterResult {
+export async function get_cluster(input: GetClusterInput): Promise<GetClusterResult> {
   const D: any = MONOSCAN_DATA;
   const clusters: any[] = D.clusters || [];
   const cl = clusters.find((c) => c.slot === input.id) || clusters[0];
@@ -232,7 +285,7 @@ export function get_cluster(input: GetClusterInput): GetClusterResult {
       : cl.state === "maintenance"
         ? window - 6 - Math.floor(_rand(cl.slot) * 4)
         : window - 18 - Math.floor(_rand(cl.slot) * 6);
-  return {
+  const fallback: GetClusterResult = {
     slot: cl.slot,
     name: cl.name,
     state: cl.state,
@@ -248,6 +301,29 @@ export function get_cluster(input: GetClusterInput): GetClusterResult {
       .slice(0, 7)
       .map((m: any) => m.handle),
   };
+  if (!isRpcConfigured()) return fallback;
+  try {
+    const rpc = getRpcClient();
+    const [all, healthy]: Array<Array<{ id: number; pubkey: string; stake: string; active: boolean }>> = await Promise.all([
+      rpc.lythValidatorSet().catch(() => []),
+      rpc.lythListHealthyValidators().catch(() => []),
+    ]);
+    const live = all.find((row) => row.id === input.id);
+    if (!live) return fallback;
+    const isHealthy = healthy.some((row) => row.id === input.id);
+    return {
+      ...fallback,
+      slot: live.id,
+      name: `Cluster ${String(live.id).padStart(3, "0")}`,
+      state: live.active && isHealthy ? "nominal" : live.active ? "maintenance" : "jail",
+      members_live: live.active && isHealthy ? fallback.members_total : live.active ? Math.max(5, fallback.members_total - 1) : Math.max(0, fallback.members_total - 3),
+      tvs_m_lyth: Number((Number(live.stake) / 1_000_000).toFixed(3)),
+      rank: all.findIndex((row) => row.id === live.id) + 1,
+      active_operators: [_shortHash(live.id).replace("…", "")],
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -400,17 +476,13 @@ export interface GetAddressActivityResult {
 }
 
 /**
- * Recent activity for an address. Fixture data — real implementation
- * paginates the indexer's per-address feed.
- *
- * TODO(monolythium-vision): swap fixture for live indexer call once
- * mono-core OI-0070 ships the per-address activity feed. Privacy gate:
- * if the indexer reports `is_private_denomination: true` the renderer
- * must hide amounts (per `memory/protocore-v2-privacy-bifurcation.md`).
+ * Recent activity for an address. Uses live balance/policy/activity when
+ * the indexer-backed RPC returns rows; falls back to deterministic fixtures
+ * when the queried address has no indexed activity yet.
  */
-export function get_address_activity(
+export async function get_address_activity(
   input: GetAddressActivityInput,
-): GetAddressActivityResult {
+): Promise<GetAddressActivityResult> {
   const limit = input.limit ?? 5;
   const seed = input.address.length || 1;
   const types: AddressActivityRow["type"][] = [
@@ -432,13 +504,48 @@ export function get_address_activity(
       timestamp_relative: `${i * 4 + 1}m ago`,
     };
   });
-  return {
+  const fallback: GetAddressActivityResult = {
     address: input.address,
     count: rows.length,
     activity: rows,
     balance_lyth: (1_200 + _rand(seed) * 8_000).toFixed(4),
     is_private_denomination: false,
   };
+  if (!isRpcConfigured()) return fallback;
+  try {
+    const rpc = getRpcClient();
+    const [balance, policy, activity] = await Promise.all([
+      rpc.ethGetBalance(input.address, "latest").catch(() => null),
+      rpc.lythGetAccountPolicy(input.address).catch(() => null),
+      rpc.lythGetAddressActivity(input.address, limit).catch(() => []),
+    ]);
+    const liveRows: AddressActivityRow[] = activity.map((row, i) => {
+      const type: AddressActivityRow["type"] =
+        row.kind === "delegation" ? "stake"
+          : row.kind === "staking" ? "stake"
+            : row.kind === "swap" ? "swap"
+              : row.kind === "transfer" ? "transfer"
+                : "contract";
+      return {
+        hash: `block:${row.blockHeight}:${row.txIndex}:${row.logIndex}`,
+        block_number: Number(row.blockHeight),
+        direction: row.direction ?? "in",
+        counterparty: row.counterparty ?? (row.cluster !== null ? `C-${String(row.cluster + 1).padStart(3, "0")}` : "—"),
+        value_lyth: row.amount ?? (row.weightBps !== null ? `${row.weightBps} bps` : "—"),
+        type,
+        timestamp_relative: i === 0 ? "latest indexed" : `#${i + 1}`,
+      };
+    });
+    return {
+      ...fallback,
+      count: liveRows.length,
+      activity: liveRows.length > 0 ? liveRows : fallback.activity,
+      balance_lyth: balance ? _formatLyth(_toBig(balance.value)) : fallback.balance_lyth,
+      is_private_denomination: policy?.mode === "private",
+    };
+  } catch {
+    return fallback;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -550,7 +657,7 @@ export const TOOLS = {
  * Type-erased invoker the mock LLM uses. Real Claude integration calls
  * the same surface — just pulls `name` + `input` from the tool_use block.
  */
-export function invokeTool(name: ToolName, input: Record<string, unknown>): unknown {
+export async function invokeTool(name: ToolName, input: Record<string, unknown>): Promise<unknown> {
   switch (name) {
     case "get_block":
       return get_block(input as unknown as GetBlockInput);
