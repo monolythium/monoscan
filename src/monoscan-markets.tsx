@@ -432,7 +432,7 @@ const MarketPage = ({ sym, go }: any) => {
             </div>
           </div>
 
-          <button className="mono" onClick={()=>window.__msToast?.("Opens Monarch wallet extension — not part of this preview")} style={{
+          <button className="mono" onClick={()=>window.__msToast?.("Opens desktop or mobile wallet trading flow when wallet handoff is installed")} style={{
             marginTop:6,padding:"12px 0",background:"linear-gradient(180deg, var(--gold), #c98e22)",
             color:"#1a0f00",fontWeight:600,borderRadius:8,cursor:"pointer",border:0,
             fontSize:12,letterSpacing:"0.08em",textTransform:"uppercase",

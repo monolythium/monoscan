@@ -457,7 +457,7 @@ const ClusterRing = ({ members = [], threshold = 5, size = 260 }: any) => {
         alignItems: "center", justifyContent: "center",
         pointerEvents: "none", textAlign: "center", gap: 2,
       }}>
-        <div className="cap">signers live</div>
+        <div className="cap">operators live</div>
         <div style={{ fontFamily: "var(--f-mono)", fontSize: 38, fontWeight: 300, color: have >= threshold ? "var(--fg-100)" : "var(--state-jail)", letterSpacing: "-0.02em", lineHeight: 1 }}>
           {have}<span style={{ color: "var(--fg-500)" }}>/{total}</span>
         </div>

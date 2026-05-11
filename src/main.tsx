@@ -7,6 +7,7 @@ import { queryClient } from "./data/hooks";
 
 // Tokens + monoscan CSS — preserved verbatim from the static mockup.
 import "../styles/tokens.css";
+import "../styles/themes.css";
 import "../styles/monoscan.css";
 
 const container = document.getElementById("root");
