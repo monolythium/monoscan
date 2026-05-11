@@ -14,10 +14,14 @@ import {
   useAccountHistory,
   useAddressLabel,
   useActivePrecompiles,
+  useBlsRoundCertificate,
   useBlockByHash,
   useBlockByNumber,
+  useCapabilities,
+  useClusterResignations,
   useEncryptionKey,
   useFeeStats,
+  useLatestCheckpoint,
   useNetworkStatus,
   useTokenBalances,
   useTxByHashLive,
@@ -982,10 +986,15 @@ const KV = ({ label, value, mono, link, linkLabel }: any) => (
 ===================================================== */
 const RoundPage = ({ round, go }: any) => {
   const r = parseInt(round, 10);
-  const liveBlock = useBlockByNumber(Number.isFinite(r) ? r : undefined);
+  const roundNumber = Number.isFinite(r) ? r : undefined;
+  const liveBlock = useBlockByNumber(roundNumber);
+  const roundCert = useBlsRoundCertificate(roundNumber);
   const cur = MONOSCAN_DATA?.consensus?.round || 0;
   const verts = (MONOSCAN_DATA?.recentVertices || []).filter(v => v.round === r);
   const liveHeader: any = liveBlock.data ?? null;
+  const liveCert: any = roundCert.data ?? null;
+  const signerIndices = liveCert?.signer_indices ?? liveCert?.signerIndices ?? [];
+  const signerCount = Number(liveCert?.signer_count ?? liveCert?.signerCount ?? signerIndices.length ?? 0);
   const found = liveHeader || verts.length > 0 || (r > 0 && r <= cur);
   return (
     <div className="ms-page">
@@ -1035,6 +1044,25 @@ const RoundPage = ({ round, go }: any) => {
                 ? `${verts.length} cluster vertex${verts.length===1?"":"es"} committed at this round.`
                 : `Round committed ~${Math.max(0, (cur - r)).toLocaleString()} rounds ago.`}
             </p>
+          )}
+          {(liveCert || roundCert.isLoading || roundCert.isFetched) && (
+            <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
+              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>
+                BLS round certificate · lyth_getBlsRoundCertificate
+              </div>
+              {liveCert ? (
+                <div className="tx-kv">
+                  <KV label="Round" value={Number(liveCert.round ?? r).toLocaleString()} mono/>
+                  <KV label="Operators signed" value={`${signerCount}${signerIndices.length ? ` · [${signerIndices.join(", ")}]` : ""}`} mono/>
+                  <KV label="Signer bitmap" value={_short(liveCert.signers_bitmap ?? liveCert.signersBitmap ?? "—", 28)} mono/>
+                  <KV label="Aggregate signature" value={_short(liveCert.signature ?? "—", 28)} mono/>
+                </div>
+              ) : (
+                <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+                  {roundCert.isLoading ? "checking live certificate…" : "no round certificate returned for this height"}
+                </p>
+              )}
+            </div>
           )}
           {/*
             Per-vertex breakdown (memos, BLS agg, DAC) is still mock — the
@@ -1181,9 +1209,27 @@ const SearchPage = ({ q, go }: any) => {
 
 const ProtocolPage = ({ go }: any) => {
   const precompiles = useActivePrecompiles();
+  const capabilities = useCapabilities();
+  const checkpoint = useLatestCheckpoint();
+  const resignations = useClusterResignations(null, "all");
   const feeStats = useFeeStats();
   const encryptionKey = useEncryptionKey();
   const rows = precompiles.data ?? [];
+  const capabilityRows = Object.values(capabilities.data?.capabilities ?? {}).filter(Boolean) as any[];
+  const registryRows = capabilityRows.length
+    ? capabilityRows
+    : rows.map((p:any) => ({
+        address: p.address,
+        capabilityId: p.capabilityId ?? p.id ?? p.name,
+        capabilityName: p.capabilityName ?? p.name,
+        kind: p.kind ?? (p.gateable ? "gateable" : "non-gateable"),
+        active: p.active ?? p.enabled,
+        activationHeight: p.activationHeight ?? null,
+      }));
+  const activeCapabilityCount = capabilityRows.filter((c:any)=>c.active).length;
+  const checkpointRows = checkpoint.data ?? [];
+  const checkpointHeight = checkpointRows[0]?.blockHeight ?? null;
+  const resignationRows = resignations.data?.rows ?? [];
   const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
     ? Number(feeStats.data.gasPrice) / 1e9
     : null;
@@ -1193,12 +1239,30 @@ const ProtocolPage = ({ go }: any) => {
       <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/stats")} style={{marginBottom:16}}>← Statistics</button>
       <h1 className="ms-h1">Protocol status</h1>
       <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
-        Live fee and precompile gates from the public testnet RPC.
+        Live fee, capability gates, PQ checkpoint rows, and operator exit ledger from the public testnet RPC.
       </p>
       <section className="stats-counters">
         <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub="eth_gasPrice" tone="neutral"/>
         <StatCounter label="Fee samples" value={`${feeStats.data?.baseFeePerGas.length ?? 0}`} sub={feeStats.data?.oldestBlock ? `oldest ${feeStats.data.oldestBlock}` : "eth_feeHistory"} tone="neutral"/>
         <StatCounter label="Active precompiles" value={`${rows.filter((p:any)=>p.active ?? p.enabled).length}`} sub={`${rows.length} reported`} tone="neutral"/>
+        <StatCounter
+          label="Capabilities"
+          value={capabilityRows.length ? `${activeCapabilityCount}/${capabilityRows.length}` : "—"}
+          sub={capabilities.data ? `sampled at block ${Number(capabilities.data.blockNumber).toLocaleString()}` : "lyth_capabilities"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="PQ checkpoint"
+          value={checkpointHeight !== null && checkpointHeight !== undefined ? `#${Number(checkpointHeight).toLocaleString()}` : "—"}
+          sub={checkpointRows.length ? `${checkpointRows.length} operator signature rows` : "lyth_getLatestCheckpoint"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Operator exits"
+          value={`${resignationRows.length}`}
+          sub={resignations.data ? "cluster resignation ledger" : "lyth_getClusterResignations"}
+          tone="neutral"
+        />
         <StatCounter label="Encryption epoch" value={key ? `${Number(key.epoch).toLocaleString()}` : "—"} sub={key?.algo ?? "lyth_getEncryptionKey"} tone="neutral"/>
       </section>
       {key && (
@@ -1210,19 +1274,66 @@ const ProtocolPage = ({ go }: any) => {
           </div>
         </Card>
       )}
-      <Card title="Precompile registry">
+      <Card title="Latest PQ finality checkpoint">
+        {checkpointRows.length ? (
+          <table className="ms-table">
+            <thead><tr><th>Block</th><th>State root</th><th>Signer</th><th>Signature</th></tr></thead>
+            <tbody>
+              {checkpointRows.map((row:any, i:number)=>(
+                <tr key={`${row.signerPubkeyHex ?? row.signer_pubkey_hex}-${i}`}>
+                  <td className="mono">{Number(row.blockHeight ?? row.block_height).toLocaleString()}</td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{_short(row.stateRoot ?? row.state_root, 18)}</td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{_short(row.signerPubkeyHex ?? row.signer_pubkey_hex, 18)}</td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{_short(row.signatureHex ?? row.signature_hex, 18)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+            {checkpoint.isLoading ? "checking live checkpoint rows…" : "no checkpoint rows returned by this peer"}
+          </p>
+        )}
+      </Card>
+      <Card title="Capability registry">
         <table className="ms-table">
-          <thead><tr><th>Name</th><th>Address</th><th>Status</th></tr></thead>
+          <thead><tr><th>Capability</th><th>Address</th><th>Kind</th><th>Activation</th><th>Status</th></tr></thead>
           <tbody>
-            {rows.map((p:any)=>(
-              <tr key={p.address}>
-                <td style={{fontWeight:500}}>{p.name}</td>
+            {registryRows.map((p:any)=>(
+              <tr key={p.address ?? p.capabilityId}>
+                <td style={{fontWeight:500}}>{p.capabilityName ?? p.name}</td>
                 <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{p.address}</td>
-                <td><span className={`pill ${(p.active ?? p.enabled) ? "ok" : "warn"}`}>{p.status ?? ((p.active ?? p.enabled) ? "active" : "disabled")}</span></td>
+                <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{p.kind ?? "—"}</td>
+                <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>
+                  {p.activationHeight !== null && p.activationHeight !== undefined ? Number(p.activationHeight).toLocaleString() : "genesis"}
+                </td>
+                <td><span className={`pill ${(p.active ?? p.enabled) ? "ok" : "warn"}`}>{(p.active ?? p.enabled) ? "active" : "disabled"}</span></td>
               </tr>
             ))}
           </tbody>
         </table>
+      </Card>
+      <Card title="Operator exit ledger">
+        {resignationRows.length ? (
+          <table className="ms-table">
+            <thead><tr><th>Operator key</th><th>Status</th><th>Submitted</th><th>Effective</th><th>Nonce</th></tr></thead>
+            <tbody>
+              {resignationRows.map((row:any, i:number)=>(
+                <tr key={`${row.operator}-${row.nonce}-${i}`}>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{_short(row.operator, 18)}</td>
+                  <td><span className={`pill ${row.status === "applied" ? "ok" : "warn"}`}>{row.status}</span></td>
+                  <td className="mono">{row.submitted_at_height !== undefined ? Number(row.submitted_at_height).toLocaleString() : "—"}</td>
+                  <td className="mono">{row.effective_at_height !== undefined ? Number(row.effective_at_height).toLocaleString() : "—"}</td>
+                  <td className="mono">{Number(row.nonce).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+            {resignations.isLoading ? "checking exit ledger…" : "no operator exits reported by this peer"}
+          </p>
+        )}
       </Card>
     </div>
   );

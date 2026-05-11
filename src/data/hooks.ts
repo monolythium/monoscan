@@ -28,9 +28,13 @@ import {
   type AccountProofResponse,
   type AddressActivityEntry,
   type AddressLabelRecord,
+  type BlsCertificateResponse,
   type BlockHeader,
+  type CapabilitiesResponse,
+  type CheckpointRecord,
   type ClusterDelegatorsResponse,
   type ClusterEntityResponse,
+  type ClusterResignationsResponse,
   type DagSyncStatus,
   type DelegationCapResponse,
   type DelegationsResponse,
@@ -528,6 +532,71 @@ export function useActivePrecompiles() {
         const response = await getRpcClient().lythListActivePrecompiles("latest");
         if (Array.isArray(response)) return response;
         return (response as unknown as { precompiles?: PrecompileDescriptor[] }).precompiles ?? null;
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useCapabilities() {
+  return useQuery<CapabilitiesResponse | null>({
+    queryKey: QK.capabilities(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythCapabilities("latest");
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useLatestCheckpoint(belowHeight?: number | bigint | string | null) {
+  return useQuery<CheckpointRecord[] | null>({
+    queryKey: QK.latestCheckpoint(
+      belowHeight === undefined || belowHeight === null ? null : belowHeight.toString(),
+    ),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythGetLatestCheckpoint(belowHeight);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useClusterResignations(
+  operator?: string | null,
+  status: "pending" | "applied" | "all" | string | null = "all",
+) {
+  return useQuery<ClusterResignationsResponse | null>({
+    queryKey: QK.clusterResignations(operator ?? null, status ?? "all"),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythGetClusterResignations(operator ?? null, status ?? "all");
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useBlsRoundCertificate(round: number | undefined) {
+  return useQuery<BlsCertificateResponse | null>({
+    queryKey: QK.blsRoundCert(round ?? ""),
+    enabled: round !== undefined && Number.isFinite(round) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythGetBlsRoundCertificate(round as number);
       } catch {
         return null;
       }
