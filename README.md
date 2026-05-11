@@ -8,9 +8,9 @@ monoscan.xyz — public blockchain explorer for Monolythium v2.
 
 ## What this is
 
-Monoscan is the public web explorer for **Monolythium v2** — a Rust-native L1 running **LythiumDAG-BFT (Starfish-C)** consensus on `chain_id 6940`. It surfaces blocks, transactions, validator clusters, the native CLOB and perpetuals markets, gap records, and an "ask the blockchain" natural-language search.
+Monoscan is the public web explorer for **Monolythium v2** — a Rust-native L1 running **LythiumDAG-BFT (Starfish-C)** consensus on testnet `chain_id 69420`. It surfaces blocks, transactions, clusters/operators, protocol capability gates, and the explorer shell for markets, gap records, and natural-language chain search.
 
-Built as a Vite + React 19 + TypeScript SPA, served as a static `dist/` bundle behind Caddy. Live data wiring against any Monolythium v2 node's JSON-RPC + indexer ships in a follow-up stage; the current build renders shape-true mock data for design review.
+Built as a Vite + React 19 + TypeScript SPA, served as a static `dist/` bundle behind Caddy. The current build is partially live against any Monolythium v2 node's JSON-RPC surface: head/block data, fee history, mempool, clusters, account basics, delegation views, capability gates, checkpoints, certificate lookups, and operator-exit ledgers route through `@monolythium/core-sdk`. Indexer-only views such as market feeds, rich wallet aggregates, decoded transaction traces, gap records, and natural-language enrichment remain fixture-backed until the mono-core indexer APIs are live.
 
 ## Who this is for
 
@@ -30,7 +30,7 @@ Or visit the hosted instance at https://monoscan.xyz.
 
 ## Getting started
 
-Once `docker compose up` is running, open http://localhost:8080 in your browser. The current build is a static SPA — point it at any Monolythium v2 node's JSON-RPC + indexer endpoint (live wiring lands in the next stage).
+Once `docker compose up` is running, open http://localhost:8080 in your browser. For local development, `pnpm dev` serves the app at http://localhost:5174 and proxies `/rpc` to the testnet endpoint from `chain-registry` unless `VITE_MONOSCAN_RPC_URL` or `VITE_MONO_RPC_URL` is set.
 
 ## Documentation
 

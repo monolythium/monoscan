@@ -488,6 +488,7 @@ export function useP2pPeers() {
 
 export interface FeeStatsLive {
   gasPrice: bigint | null;
+  gasPriceSource: "eth_gasPrice" | "eth_feeHistory" | null;
   oldestBlock: string | null;
   baseFeePerGas: string[];
   gasUsedRatio: number[];
@@ -511,8 +512,12 @@ export function useFeeStats() {
         settle(rpc.ethFeeHistory(8, "latest", [])),
       ]);
       const feeHistory = history as FeeHistoryResponse | null;
+      const latestBaseFeeHex = feeHistory?.baseFeePerGas.at(-1);
+      const latestBaseFee = latestBaseFeeHex ? parseQuantityBig(latestBaseFeeHex) : null;
+      const gasPriceUsable = gasPrice !== null && gasPrice > 0n;
       return {
-        gasPrice,
+        gasPrice: gasPriceUsable ? gasPrice : latestBaseFee,
+        gasPriceSource: gasPriceUsable ? "eth_gasPrice" : latestBaseFee !== null ? "eth_feeHistory" : null,
         oldestBlock: feeHistory?.oldestBlock ?? null,
         baseFeePerGas: feeHistory?.baseFeePerGas ?? [],
         gasUsedRatio: feeHistory?.gasUsedRatio ?? [],
@@ -530,8 +535,7 @@ export function useActivePrecompiles() {
       if (!isRpcConfigured()) return null;
       try {
         const response = await getRpcClient().lythListActivePrecompiles("latest");
-        if (Array.isArray(response)) return response;
-        return (response as unknown as { precompiles?: PrecompileDescriptor[] }).precompiles ?? null;
+        return response.precompiles ?? null;
       } catch {
         return null;
       }
