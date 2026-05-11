@@ -53,6 +53,12 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythGetAddressLabel).toBe("function");
     expect(typeof proto.lythGetDelegationHistory).toBe("function");
     expect(typeof proto.lythGetAddressActivity).toBe("function");
+    expect(typeof proto.lythCapabilities).toBe("function");
+    expect(typeof proto.lythGetLatestCheckpoint).toBe("function");
+    expect(typeof proto.lythGetClusterResignations).toBe("function");
+    expect(typeof proto.lythGetBlsRoundCertificate).toBe("function");
+    expect(typeof proto.lythGetLeaderCertificate).toBe("function");
+    expect(typeof proto.lythGetDacCertificate).toBe("function");
     // The `protocore_*` names should NOT exist on the new SDK — if they
     // re-appear it means a downstream regression dragged the v0 names
     // back. Treat as a hard fail.

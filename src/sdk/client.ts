@@ -125,6 +125,12 @@ export const QK = {
   syncStatus: () => ["mono", "sync"] as const,
   p2pPeers: () => ["mono", "peers"] as const,
   precompiles: () => ["mono", "protocol", "precompiles"] as const,
+  capabilities: () => ["mono", "protocol", "capabilities"] as const,
+  latestCheckpoint: (belowHeight: number | string | null = null) =>
+    ["mono", "protocol", "latest-checkpoint", belowHeight ?? "latest"] as const,
+  clusterResignations: (operator: string | null = null, status: string | null = null) =>
+    ["mono", "protocol", "cluster-resignations", operator ?? "all", status ?? "all"] as const,
+  blsRoundCert: (round: number | string) => ["mono", "round", round, "bls-cert"] as const,
   feeStats: () => ["mono", "protocol", "fees"] as const,
   encryptionKey: () => ["mono", "protocol", "encryption-key"] as const,
   clusterDelegators: (id: string | number) => ["mono", "cluster", id, "delegators"] as const,
