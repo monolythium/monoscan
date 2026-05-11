@@ -1057,7 +1057,7 @@ const RoundPage = ({ round, go }: any) => {
                 <div className="tx-kv">
                   <KV label="Round" value={Number(liveCert.round ?? r).toLocaleString()} mono/>
                   <KV label="Operators signed" value={`${signerCount}${signerIndices.length ? ` · [${signerIndices.join(", ")}]` : ""}`} mono/>
-                  <KV label="Signer bitmap" value={_short(liveCert.signers_bitmap ?? liveCert.signersBitmap ?? "—", 28)} mono/>
+                  <KV label="Operator bitmap" value={_short(liveCert.signers_bitmap ?? liveCert.signersBitmap ?? "—", 28)} mono/>
                   <KV label="Aggregate signature" value={_short(liveCert.signature ?? "—", 28)} mono/>
                 </div>
               ) : (
@@ -1118,11 +1118,16 @@ const SearchPage = ({ q, go }: any) => {
   const operators = (D.topOperators || D.operators || []).filter(o =>
     (o.handle||"").toLowerCase().includes(ql) || (o.addrShort||"").toLowerCase().includes(ql)
   );
+  const proposals = [...(D.proposals || []), ...(D.proposalsHistory || [])].filter(p =>
+    (p.id||"").toLowerCase().includes(ql) ||
+    (p.title||"").toLowerCase().includes(ql) ||
+    (p.abstract||"").toLowerCase().includes(ql)
+  );
   const wallets = (D.richList || []).filter(w =>
     (w.addr||"").toLowerCase().includes(ql) || (w.tag||"").toLowerCase().includes(ql)
   );
   const liveHits = (liveBlockByHash.data ? 1 : 0) + (liveTx.data ? 1 : 0) + (looksLikeAddress ? 1 : 0) + (looksLikeRound ? 1 : 0);
-  const total = liveHits + markets.length + clusters.length + operators.length + wallets.length;
+  const total = liveHits + markets.length + clusters.length + operators.length + proposals.length + wallets.length;
 
   const Section = ({ title, items, render }: any) =>
     items.length === 0 ? null : (
@@ -1139,7 +1144,7 @@ const SearchPage = ({ q, go }: any) => {
       <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/")} style={{marginBottom:16}}>← Overview</button>
       <h1 className="ms-h1" style={{marginBottom:6}}>Search · <span style={{color:"var(--gold)"}}>"{q}"</span></h1>
       <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
-        {total === 0 ? "No matches. Try a round number, C-NNN cluster id, 0x… operator address, or ticker." : `${total} result${total===1?"":"s"}`}
+        {total === 0 ? "No matches. Try a round number, C-NNN cluster id, 0x… operator address, proposal id, or ticker." : `${total} result${total===1?"":"s"}`}
       </p>
 
       {(looksLikeRound || looksLikeAddress || liveBlockByHash.data || liveTx.data || liveBlockByHash.isLoading || liveTx.isLoading) && (
@@ -1197,6 +1202,14 @@ const SearchPage = ({ q, go }: any) => {
         <div key={o.addrShort} className="ov-moverow" onClick={()=>go(`#/operator/${o.addrShort}`)}>
           <span className="mono" style={{color:"var(--gold)",minWidth:120}}>{o.addrShort}</span>
           <span style={{flex:1}}>{o.handle}</span>
+        </div>
+      )}/>
+
+      <Section title="Signals" items={proposals} render={(p)=>(
+        <div key={p.id} className="ov-moverow" onClick={()=>go("#/governance")}>
+          <span className="mono" style={{color:"var(--gold)",minWidth:90}}>{p.id}</span>
+          <span style={{flex:1}}>{p.title}</span>
+          <span className="mono" style={{color:"var(--fg-400)"}}>{p.outcome || p.deadline}</span>
         </div>
       )}/>
 
@@ -1291,7 +1304,7 @@ const ProtocolPage = ({ go }: any) => {
       <Card title="Latest PQ finality checkpoint">
         {checkpointRows.length ? (
           <table className="ms-table">
-            <thead><tr><th>Block</th><th>State root</th><th>Signer</th><th>Signature</th></tr></thead>
+            <thead><tr><th>Block</th><th>State root</th><th>Operator key</th><th>Signature</th></tr></thead>
             <tbody>
               {checkpointRows.map((row:any, i:number)=>(
                 <tr key={`${row.signerPubkeyHex ?? row.signer_pubkey_hex}-${i}`}>

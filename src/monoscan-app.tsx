@@ -25,6 +25,7 @@ import {
   useEntityRatchet,
 } from "./data/hooks";
 import { AskPage } from "./nl/AskPage";
+import { MsThemeSwitcher } from "./monoscan-theme";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -33,6 +34,18 @@ const pct = (x, d=2) => `${(x*100).toFixed(d)}%`;
 const ago = (s) => s; // already strings
 
 const SCAN = MONOSCAN_DATA;
+const CHAIN_ID = 69420;
+
+const clusterLabel = (slot: number | string) => `C-${String(slot).padStart(3, "0")}`;
+
+const openWalletStakeIntent = (cluster: any) => {
+  const clusterId = String(cluster.slot);
+  const label = clusterLabel(cluster.slot);
+  const href = `monolythium://stake?cluster=${encodeURIComponent(label)}&clusterId=${encodeURIComponent(clusterId)}&chainId=${CHAIN_ID}`;
+  void navigator.clipboard?.writeText(href);
+  window.__msToast?.(`Opening desktop/mobile wallet staking flow for ${label}; link copied.`);
+  window.location.href = href;
+};
 
 /* ============== TOP STRIP ============== */
 /**
@@ -64,7 +77,7 @@ const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
       <Sep/>
       <Field label="commit p95" value={`${latencyMs}ms`}/>
       <Sep/>
-      <Field label="signers" value={`${signers.live}/${signers.total} clusters live`}/>
+      <Field label="clusters" value={`${signers.live}/${signers.total} live`}/>
       {peers !== null && peers !== undefined ? (
         <>
           <Sep/>
@@ -118,7 +131,7 @@ const Header = ({ go, route }: any) => {
         <input
           value={q}
           onChange={e=>setQ(e.target.value)}
-          placeholder="Round number · cluster C-044 · operator 0x… · vertex hash"
+          placeholder="Round number · cluster C-044 · operator 0x… · vertex hash · proposal PROP-43"
         />
         <span className="ms-search__hint">enter ↵</span>
       </form>
@@ -141,12 +154,14 @@ const Header = ({ go, route }: any) => {
           ["#/operators",   "Operators"],
           ["#/wallets",     "Wallets"],
           ["#/stats",       "Statistics"],
+          ["#/governance",  "Signals"],
           ["#/protocol",    "Protocol"],
         ].map(([h, l]) => (
           <a key={h} href={h} onClick={()=>go(h)}
             className={`ms-nav__item ${route===h ? "is-active" : ""}`}>{l}</a>
         ))}
       </nav>
+      <MsThemeSwitcher/>
     </header>
   );
 };
@@ -210,7 +225,7 @@ const Landing = ({ go }: any) => {
           </h1>
           <p className="ov-hero__desc">
             Monoscan is the public explorer for Monarch — every transfer, every trade, every stake
-            reward, reconciled against a DAG committee of {c.signers.total} clusters.
+            reward, reconciled against {c.signers.total} live clusters.
             Search anything, or dig into the data below.
           </p>
           <div className="ov-hero__ctas">
@@ -282,10 +297,10 @@ const Landing = ({ go }: any) => {
           <MiniSeries data={rateSeries} color="var(--gold)" height={28}/>
         </div>
         <div className="ov-conf__item">
-          <div className="ov-conf__label">Signer health · last 100 rounds</div>
+          <div className="ov-conf__label">Operator quorum · last 100 rounds</div>
           <SignersHist data={c.signersHist}/>
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:6,letterSpacing:"0.04em"}}>
-            26/28 nominal · 1 maintenance · 1 jail
+            100 clusters · 7 or 10 operators per cluster
           </div>
         </div>
         <button className="ov-conf__toggle mono" onClick={()=>setShowDeep(s=>!s)}>
@@ -372,27 +387,25 @@ const Landing = ({ go }: any) => {
                 </div>
               </div>
             ))}
-            <a href="#/clusters" onClick={()=>go("#/clusters")} className="mono ov-seeall">See all 28 clusters →</a>
+            <a href="#/clusters" onClick={()=>go("#/clusters")} className="mono ov-seeall">See all clusters →</a>
           </aside>
         </div>
       </section>
 
-      {/* ---------- CLUSTER HEALTH + DENOMINATIONS ---------- */}
+      {/* ---------- SIGNALS + DENOMINATIONS ---------- */}
       <section className="ms-grid-2">
-        <Card title="Cluster health" right={<a className="ms-link" href="#/clusters" onClick={()=>go("#/clusters")}>All →</a>}>
-          {SCAN.clusters.slice(0, 4).map(cl => (
-            <div key={cl.slot} className="ms-prop" onClick={()=>go(`#/cluster/${cl.slot}`)} style={{cursor:"pointer"}}>
+        <Card title="Active network signals" right={<a className="ms-link" href="#/governance" onClick={()=>go("#/governance")}>All →</a>}>
+          {SCAN.proposals.map(p => (
+            <div key={p.id} className="ms-prop" onClick={()=>go("#/governance")} style={{cursor:"pointer"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
                 <div>
-                  <span className="mono" style={{color:"var(--gold)",fontSize:12}}>C-{String(cl.slot).padStart(3,"0")}</span>
+                  <span className="mono" style={{color:"var(--gold)",fontSize:12}}>{p.id}</span>
                   <span style={{margin:"0 8px",color:"var(--fg-500)"}}>·</span>
-                  <span style={{fontSize:13}}>{cl.name}</span>
+                  <span style={{fontSize:13}}>{p.title}</span>
                 </div>
-                <span className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{cl.members}/{cl.size} live</span>
+                <span className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>closes {p.deadline}</span>
               </div>
-              <div className="mono" style={{fontSize:11,color:"var(--fg-400)",marginTop:8}}>
-                {cl.tvs}M TVS · {pct(cl.vertexInclude,1)} vertex inclusion
-              </div>
+              <Tally tally={p.tally}/>
             </div>
           ))}
         </Card>
@@ -618,7 +631,7 @@ const ClusterPage = ({ slot, go }: any) => {
               ))}
             </div>
             <div className="mono" style={{fontSize:9.5,color:"var(--fg-500)",textAlign:"center",marginTop:8,letterSpacing:"0.06em",lineHeight:1.5}}>
-              promotes to active<br/>if a signer is jailed
+              promotes to active<br/>if a cluster is jailed
             </div>
           </div>
         </div>
@@ -691,7 +704,7 @@ const ClusterPage = ({ slot, go }: any) => {
           </div>
 
           <div className="cl-hero__ctas">
-            <button className="ov-cta ov-cta--primary" onClick={()=>window.__msToast?.(`Opens wallet to delegate to ${cl.name} — not part of this preview`)}>Stake with {cl.name}</button>
+            <button className="ov-cta ov-cta--primary" onClick={()=>openWalletStakeIntent(cl)}>Stake with {cl.name}</button>
             <button className="ov-cta" onClick={()=>{ navigator.clipboard?.writeText(cl.aggKey); window.__msToast?.("Cluster aggregate key copied"); }}>Copy cluster key</button>
             <span className="mono" style={{fontSize:10,color:"var(--fg-500)",marginLeft:"auto"}}>
               {cl.aggKey}
@@ -948,8 +961,8 @@ const ClustersPage = ({go}: any) => {
             <span style={{color:"var(--fg-300)"}}>your stake.</span>
           </h1>
           <p className="ov-hero__desc">
-            Every cluster is a 7-operator DVT set. The protocol elects the top 100 by TVS as active
-            signers — others wait in the wings until their stake grows. Stake with any active cluster; your
+            Every cluster is a 7-operator DVT set. The protocol elects the top 100 by TVS into the active
+            cluster set — others wait in the wings until their stake grows. Stake with any active cluster; your
             delegation will roll over automatically if rankings shift.
           </p>
           <div className="ov-hero__ctas">
@@ -1042,7 +1055,7 @@ const ClustersPage = ({go}: any) => {
         {tab==="active" ? (
           <>
             <p className="ov-section-desc" style={{marginBottom:14,maxWidth:720}}>
-              Top 100 by TVS. These are the elected signers earning rewards this epoch. If a cluster is jailed, it drops into Inactive and must complete a 100-round cooldown before re-election.
+              Top 100 by TVS. These are the active clusters earning rewards this epoch. If a cluster is jailed, it drops into Inactive and must complete a 100-round cooldown before re-election.
             </p>
             <div className="cl-chips">
               <div className="cl-chipgroup">
@@ -1184,7 +1197,7 @@ const ClustersPage = ({go}: any) => {
   );
 };
 
-/* Small signer ring — 7 dots around a circle with quorum arc, compact */
+/* Small operator ring — 7 dots around a circle with quorum arc, compact */
 const MiniRing = ({ members, size=110, threshold=5 }: any) => {
   const cx = size/2, cy = size/2;
   const r  = size*0.34;
@@ -1273,6 +1286,59 @@ const OperatorsPage = ({go}: any) => {
   );
 };
 
+const GovernancePage = ({go}: any) => (
+  <div className="ms-page">
+    <h1 className="ms-h1">Governance signals · memo-field only</h1>
+    <div className="mono" style={{color:"var(--fg-400)",marginBottom:18,fontSize:13,maxWidth:760,lineHeight:1.6}}>
+      Monolythium does not use binding on-chain governance. This page tracks non-binding public signals:
+      operators can emit PROP-N:YES, PROP-N:NO, or PROP-N:ABSTAIN in memo-field transactions, and Monoscan
+      tallies those messages once the indexer exposes them.
+    </div>
+    <div className="ms-grid-2">
+      <Card title="Active signals">
+        {SCAN.proposals.map(p=>(
+          <div key={p.id} className="ms-prop">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:16}}>
+              <div>
+                <span className="mono" style={{color:"var(--gold)",fontSize:12}}>{p.id}</span>
+                <span style={{margin:"0 8px",color:"var(--fg-500)"}}>·</span>
+                <span style={{fontSize:13}}>{p.title}</span>
+              </div>
+              <span className="mono" style={{fontSize:11,color:"var(--fg-400)",whiteSpace:"nowrap"}}>closes {p.deadline}</span>
+            </div>
+            <div className="mono" style={{fontSize:11,color:"var(--fg-400)",marginTop:6,lineHeight:1.55}}>{p.abstract}</div>
+            <Tally tally={p.tally}/>
+          </div>
+        ))}
+      </Card>
+      <Card title="Recent outcomes">
+        {SCAN.proposalsHistory.map(p=>(
+          <div key={p.id} className="ms-prop">
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:16}}>
+              <div>
+                <span className="mono" style={{color:"var(--fg-400)",fontSize:12}}>{p.id}</span>
+                <span style={{margin:"0 8px",color:"var(--fg-500)"}}>·</span>
+                <span style={{fontSize:13,color:"var(--fg-200)"}}>{p.title}</span>
+              </div>
+              <span className={`pill ${p.outcome==="PASSED"?"ok":"err"}`} style={{padding:"2px 8px",fontSize:10}}>{p.outcome}</span>
+            </div>
+          </div>
+        ))}
+      </Card>
+    </div>
+    <Card title="Live data status">
+      <div className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.65}}>
+        The design surface is live in the app. Vote-weighted tallies are intentionally fixture-backed until
+        mono-core exposes a public indexer view for memo-field signal extraction. Until then, this page must
+        remain informational and must not be treated as protocol state.
+      </div>
+      <div style={{marginTop:14}}>
+        <button className="ov-cta" onClick={()=>go("#/search/PROP-43")}>Search PROP-43</button>
+      </div>
+    </Card>
+  </div>
+);
+
 /* ============== APP ============== */
 const App = () => {
   const [route, setRoute] = useState(window.location.hash || "#/");
@@ -1320,6 +1386,7 @@ const App = () => {
   else if (parts[0]==="clusters")   page = <ClustersPage go={go}/>;
   else if (parts[0]==="operator")   page = <OperatorPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
   else if (parts[0]==="operators")  page = <OperatorsPage go={go}/>;
+  else if (parts[0]==="governance") page = <GovernancePage go={go}/>;
   else if (parts[0]==="stats")      page = <StatsPage go={go}/>;
   else if (parts[0]==="protocol")   page = <ProtocolPage go={go}/>;
   else if (parts[0]==="wallets")    page = <WalletsPage go={go}/>;

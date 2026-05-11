@@ -191,14 +191,14 @@ export const MONOSCAN_DATA = {
     blsAggMs: 8.4,
     mempool: 1284,
     tvs: "248",
-    signers: { live: 26, total: 28 },
+    signers: { live: 100, total: 100 },
     signersHist: Array.from({ length: 100 }, (_, i) => (i === 43 ? 5 : i % 17 === 0 ? 6 : 7)),
   },
   clusters: _makeClusters(),
   operators: _makeOps().sort((a, b) => b.reputation - a.reputation),
   recentVertices: Array.from({ length: 12 }, (_, j) => ({
     round: 2_938_441 - j,
-    clusterSlot: ((j * 5 + 1) % 28) + 1,
+    clusterSlot: ((j * 5 + 1) % 100) + 1,
     txCount: 18 + Math.floor(Math.random() * 40),
     shards: 14000 + Math.floor(Math.random() * 500),
     dac: j !== 4,
@@ -215,6 +215,34 @@ export const MONOSCAN_DATA = {
       { kind: "Grant · DVT audit", amount: 75000, when: "20d ago", multiSigOk: "5/9" },
     ],
   },
+  proposals: [
+    {
+      id: "PROP-42",
+      title: "Raise cluster diversity-bonus weight 0.15 -> 0.25",
+      deadline: "in 3d",
+      abstract: "Non-binding signal to increase reward bonus for operators under-represented across clusters.",
+      tally: { yes: 61, no: 22, abstain: 17 },
+    },
+    {
+      id: "PROP-43",
+      title: "Adopt ML-DSA-65 as non-optional dual signature post-2027",
+      deadline: "in 11d",
+      abstract: "Non-binding signal that every operator should carry an ML-DSA alt key alongside SLH-DSA primary.",
+      tally: { yes: 74, no: 9, abstain: 17 },
+    },
+    {
+      id: "PROP-44",
+      title: "Reduce operator bond floor 50k -> 35k LYTH",
+      deadline: "in 18d",
+      abstract: "Non-binding signal to lower entry barriers while preserving slashing exposure.",
+      tally: { yes: 34, no: 48, abstain: 18 },
+    },
+  ],
+  proposalsHistory: [
+    { id: "PROP-41", title: "Bridge-relay fee cap at 18 bps", outcome: "PASSED" },
+    { id: "PROP-40", title: "Ban frontend-code fee stacking above 50bp", outcome: "PASSED" },
+    { id: "PROP-39", title: "Emergency halt timeout shortened to 72hr", outcome: "FAILED" },
+  ],
 };
 
 /* ================= MARKETS ================= */

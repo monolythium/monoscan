@@ -32,6 +32,8 @@ Or visit the hosted instance at https://monoscan.xyz.
 
 Once `docker compose up` is running, open http://localhost:8080 in your browser. For local development, `pnpm dev` serves the app at http://localhost:5174 and proxies `/rpc` to the testnet endpoint from `chain-registry` unless `VITE_MONOSCAN_RPC_URL` or `VITE_MONO_RPC_URL` is set.
 
+Self-hosting notes live in [docs/self-host.md](./docs/self-host.md).
+
 ## Documentation
 
 - Public docs: https://docs.monolythium.com
