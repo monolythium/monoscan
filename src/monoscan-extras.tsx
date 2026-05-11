@@ -109,6 +109,9 @@ const StatsPage = ({ go }: any) => {
   const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
     ? Number(feeStats.data.gasPrice) / 1e9
     : null;
+  const gasPriceSub = feeStats.data?.gasPriceSource === "eth_feeHistory"
+    ? "derived from fee history"
+    : feeStats.data?.gasPriceSource ?? "live fee endpoint";
 
   return (
     <div className="ms-page ms-stats">
@@ -157,7 +160,7 @@ const StatsPage = ({ go }: any) => {
           clickable
         />
         <StatCounter label="Smart contracts deployed" value={_fmt(t.contracts)} sub={`${t.tokensListed} listed tokens`} tone="neutral"/>
-        <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub={feeStats.data?.baseFeePerGas.length ? `${feeStats.data.baseFeePerGas.length} fee samples` : "live fee endpoint"} tone="neutral"/>
+        <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub={feeStats.data?.baseFeePerGas.length ? `${gasPriceSub} · ${feeStats.data.baseFeePerGas.length} samples` : gasPriceSub} tone="neutral"/>
         <StatCounter label="Protocol surfaces" value={activePrecompiles !== null ? `${activePrecompiles}` : "—"} sub={precompiles.data ? `${precompiles.data.length} precompiles reported` : "live precompile registry"} tone="neutral"/>
         <StatCounter label="Private vs public txs" value={`${((t.privateTxs/t.txTotal)*100).toFixed(1)}%`} sub={`${_abbr(t.privateTxs)} private · ${_abbr(t.publicTxs)} public`} tone="neutral"/>
         <StatCounter label="Chain age" value={S.network.chainAge} sub={`genesis ${S.network.genesisDate}`} tone="neutral"/>
@@ -1059,7 +1062,7 @@ const RoundPage = ({ round, go }: any) => {
                 </div>
               ) : (
                 <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
-                  {roundCert.isLoading ? "checking live certificate…" : "no round certificate returned for this height"}
+                  {roundCert.isLoading ? "checking live certificate…" : "RPC returned null; no persisted certificate is exposed for this round yet"}
                 </p>
               )}
             </div>
@@ -1214,6 +1217,7 @@ const ProtocolPage = ({ go }: any) => {
   const resignations = useClusterResignations(null, "all");
   const feeStats = useFeeStats();
   const encryptionKey = useEncryptionKey();
+  const network = useNetworkStatus();
   const rows = precompiles.data ?? [];
   const capabilityRows = Object.values(capabilities.data?.capabilities ?? {}).filter(Boolean) as any[];
   const registryRows = capabilityRows.length
@@ -1233,6 +1237,10 @@ const ProtocolPage = ({ go }: any) => {
   const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
     ? Number(feeStats.data.gasPrice) / 1e9
     : null;
+  const gasPriceSub = feeStats.data?.gasPriceSource === "eth_feeHistory"
+    ? "derived from eth_feeHistory"
+    : feeStats.data?.gasPriceSource ?? "eth_gasPrice";
+  const indexerHeight = network.data?.indexerHeight ?? null;
   const key = encryptionKey.data;
   return (
     <div className="ms-page">
@@ -1242,7 +1250,7 @@ const ProtocolPage = ({ go }: any) => {
         Live fee, capability gates, PQ checkpoint rows, and operator exit ledger from the public testnet RPC.
       </p>
       <section className="stats-counters">
-        <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub="eth_gasPrice" tone="neutral"/>
+        <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub={gasPriceSub} tone="neutral"/>
         <StatCounter label="Fee samples" value={`${feeStats.data?.baseFeePerGas.length ?? 0}`} sub={feeStats.data?.oldestBlock ? `oldest ${feeStats.data.oldestBlock}` : "eth_feeHistory"} tone="neutral"/>
         <StatCounter label="Active precompiles" value={`${rows.filter((p:any)=>p.active ?? p.enabled).length}`} sub={`${rows.length} reported`} tone="neutral"/>
         <StatCounter
@@ -1261,6 +1269,12 @@ const ProtocolPage = ({ go }: any) => {
           label="Operator exits"
           value={`${resignationRows.length}`}
           sub={resignations.data ? "cluster resignation ledger" : "lyth_getClusterResignations"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Indexer"
+          value={indexerHeight !== null ? `#${indexerHeight.toLocaleString()}` : network.data ? "off" : "—"}
+          sub={indexerHeight !== null ? "lyth_indexerStatus" : "disabled or not reporting"}
           tone="neutral"
         />
         <StatCounter label="Encryption epoch" value={key ? `${Number(key.epoch).toLocaleString()}` : "—"} sub={key?.algo ?? "lyth_getEncryptionKey"} tone="neutral"/>
@@ -1291,7 +1305,7 @@ const ProtocolPage = ({ go }: any) => {
           </table>
         ) : (
           <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
-            {checkpoint.isLoading ? "checking live checkpoint rows…" : "no checkpoint rows returned by this peer"}
+            {checkpoint.isLoading ? "checking live checkpoint rows…" : "RPC returned no checkpoint rows; checkpoint persistence is not live on this peer yet"}
           </p>
         )}
       </Card>
