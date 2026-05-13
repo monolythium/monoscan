@@ -68,7 +68,6 @@ export interface GetBlockResult {
   tx_count: number;
   gas_used: number;
   gas_limit: number;
-  memo_count: number;
   bls_agg_ms: number;
   dac_coverage: number;
   status: "committed" | "pending";
@@ -77,7 +76,7 @@ export interface GetBlockResult {
 /**
  * Look up a block by number or hash.
  *
- * Uses live block-header RPC when available. The per-block tx/memo/DAC
+ * Uses live block-header RPC when available. The per-block tx/DAC
  * enrichment remains fixture-backed until the indexer aggregate ships.
  */
 export async function get_block(input: GetBlockInput): Promise<GetBlockResult> {
@@ -102,7 +101,6 @@ export async function get_block(input: GetBlockInput): Promise<GetBlockResult> {
     tx_count: txCount,
     gas_used: gasUsed,
     gas_limit: gasLimit,
-    memo_count: Math.max(1, Math.floor(txCount * 0.62)),
     bls_agg_ms: 1.2 + _rand(seed + 2) * 0.9,
     dac_coverage: 0.94 + _rand(seed + 3) * 0.05,
     status: "committed",
@@ -147,18 +145,18 @@ export interface GetTxResult {
   fee_lyth: string;
   status: "success" | "reverted";
   memo: string | null;
-  type: "transfer" | "swap" | "stake" | "vote" | "contract";
+  type: "transfer" | "swap" | "stake" | "contract";
 }
 
 /**
  * Fetch a transaction receipt by hash.
  *
- * Uses live transaction + receipt RPC when available; memo/type enrichment
+ * Uses live transaction + receipt RPC when available; tx-type enrichment
  * remains fixture-backed until decoded calldata/indexer trace lands.
  */
 export async function get_tx(input: GetTxInput): Promise<GetTxResult> {
   const seed = input.hash.length;
-  const types: GetTxResult["type"][] = ["transfer", "swap", "stake", "vote", "contract"];
+  const types: GetTxResult["type"][] = ["transfer", "swap", "stake", "contract"];
   const fallback: GetTxResult = {
     hash: input.hash,
     block_number: 12_300 + (seed % 400),
@@ -167,7 +165,7 @@ export async function get_tx(input: GetTxInput): Promise<GetTxResult> {
     value_lyth: (1 + _rand(seed) * 999).toFixed(4),
     fee_lyth: (0.0001 + _rand(seed + 1) * 0.0009).toFixed(6),
     status: "success",
-    memo: seed % 4 === 0 ? "PROP-43:YES" : null,
+    memo: null,
     type: types[seed % types.length],
   };
   if (!isRpcConfigured()) return fallback;
@@ -354,7 +352,7 @@ export interface GetGapRecordsResult {
  *
  * TODO(monolythium-vision): swap fixture for live indexer call once
  * mono-core OI-0070 ships the gap-record digest. The data model already
- * matches `memory/protocore-v2-node-specs.md`.
+ * follows the whitepaper v4.0 gap-record model.
  */
 export function get_gap_records(input: GetGapRecordsInput): GetGapRecordsResult {
   const range = input.range ?? "24h";
@@ -463,7 +461,7 @@ export interface AddressActivityRow {
   direction: "in" | "out";
   counterparty: string;
   value_lyth: string;
-  type: "transfer" | "swap" | "stake" | "vote" | "contract";
+  type: "transfer" | "swap" | "stake" | "contract";
   timestamp_relative: string;
 }
 
@@ -489,7 +487,6 @@ export async function get_address_activity(
     "transfer",
     "swap",
     "stake",
-    "vote",
     "contract",
   ];
   const rows: AddressActivityRow[] = Array.from({ length: limit }, (_, i) => {
@@ -566,7 +563,7 @@ export const TOOL_CATALOG: ReadonlyArray<{
 }> = [
   {
     name: "get_block",
-    description: "Fetch a block by number or hash. Returns committed state, gas, memo count, BLS aggregation, DAC coverage.",
+    description: "Fetch a block by number or hash. Returns committed state, gas, transaction count, BLS aggregation, DAC coverage.",
     input_schema: {
       type: "object",
       properties: {

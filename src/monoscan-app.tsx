@@ -1,5 +1,5 @@
 /* =====================================================
-   Monoscan — public chain explorer for Monolythium v2
+   Monoscan — public chain explorer for Monolythium v4.0
    Three views: Landing · Cluster detail · Operator profile.
    Hash-routed; data is faked but shape-true to data.tsx.
 ===================================================== */
@@ -99,9 +99,9 @@ const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
         </>
       ) : null}
       <span style={{flex:1}}/>
-      <Field label="network" value={netVersion ? `chain-id ${netVersion}` : "monolythium-v2"}/>
+      <Field label="network" value={netVersion ? `chain-id ${netVersion}` : "testnet 69420"}/>
       <Sep/>
-      <Field label="proto" value="protocore-v2"/>
+      <Field label="proto" value="whitepaper v4.0"/>
     </div>
   );
 };
@@ -131,7 +131,7 @@ const Header = ({ go, route }: any) => {
         <span className="ms-brand__mark"/>
         <div>
           <b>Monoscan</b>
-          <small>monolythium-v2 explorer</small>
+          <small>monolythium v4.0 explorer</small>
         </div>
       </a>
       <form onSubmit={submit} className="ms-search">
@@ -139,7 +139,7 @@ const Header = ({ go, route }: any) => {
         <input
           value={q}
           onChange={e=>setQ(e.target.value)}
-          placeholder="Round number · cluster C-044 · operator 0x… · vertex hash · proposal PROP-43"
+          placeholder="Round number · cluster C-044 · operator 0x… · vertex hash · tx hash"
         />
         <span className="ms-search__hint">enter ↵</span>
       </form>
@@ -162,7 +162,6 @@ const Header = ({ go, route }: any) => {
           ["#/operators",   "Operators"],
           ["#/wallets",     "Wallets"],
           ["#/stats",       "Statistics"],
-          ["#/governance",  "Signals"],
           ["#/protocol",    "Protocol"],
         ].map(([h, l]) => (
           <a key={h} href={h} onClick={()=>go(h)}
@@ -188,7 +187,7 @@ const Landing = ({ go }: any) => {
   // Live latest blocks for the on-chain feed strip. Falls back to the mocked
   // recent vertices when the node is offline so the page never goes blank.
   // TODO(monolythium-vision): once mono-core OI-0070 lands the indexer's
-  // per-vertex breakdown (memo count, BLS-agg ms, DAC coverage, cluster
+  // per-vertex breakdown (transaction count, BLS-agg ms, DAC coverage, cluster
   // attribution), swap these block headers for the richer vertex shape the
   // designs demand.
   const liveBlocks = useLatestBlocks(8);
@@ -339,7 +338,7 @@ const Landing = ({ go }: any) => {
         <div className="ov-feed__head">
           <div>
             <h3 className="ov-section-title">Live on-chain</h3>
-            <p className="ov-section-desc">Every round commits a batch of memos to the DAG. Click any row for its full receipt.</p>
+            <p className="ov-section-desc">Every round commits a batch of encrypted transactions to the DAG. Click any row for its full receipt.</p>
           </div>
           <div className="mono" style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:"var(--fg-400)",letterSpacing:"0.04em"}}>
             <span className="ov-livedot"/> streaming · {c.ratePerSec.toFixed(1)}/s
@@ -373,7 +372,7 @@ const Landing = ({ go }: any) => {
                   <div key={i} className="ov-feed__row" onClick={()=>go(`#/cluster/${v.clusterSlot}`)}>
                     <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·{fmt(v.round)}</span>
                     <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>C-{String(v.clusterSlot).padStart(3,"0")}</span>
-                    <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{v.txCount} memos settled</span>
+                    <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{v.txCount} txs settled</span>
                     <span className="mono" style={{color:"var(--fg-500)",fontSize:10.5}}>{v.blsAggMs.toFixed(1)}ms</span>
                     <span className={`pill ${v.dac?"ok":"warn"}`} style={{padding:"2px 7px",fontSize:9.5}}>
                       {v.dac ? "committed" : "pending"}
@@ -400,20 +399,22 @@ const Landing = ({ go }: any) => {
         </div>
       </section>
 
-      {/* ---------- SIGNALS + DENOMINATIONS ---------- */}
+      {/* ---------- OPERATOR SURFACES + DENOMINATIONS ---------- */}
       <section className="ms-grid-2">
-        <Card title="Active network signals" right={<a className="ms-link" href="#/governance" onClick={()=>go("#/governance")}>All →</a>}>
-          {SCAN.proposals.map(p => (
-            <div key={p.id} className="ms-prop" onClick={()=>go("#/governance")} style={{cursor:"pointer"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
-                <div>
-                  <span className="mono" style={{color:"var(--gold)",fontSize:12}}>{p.id}</span>
-                  <span style={{margin:"0 8px",color:"var(--fg-500)"}}>·</span>
-                  <span style={{fontSize:13}}>{p.title}</span>
-                </div>
-                <span className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>closes {p.deadline}</span>
+        <Card title="Live operator surfaces" right={<a className="ms-link" href="#/operators" onClick={()=>go("#/operators")}>Open →</a>}>
+          {[
+            ["Cluster directory", "lyth_clusterDirectory"],
+            ["Cluster status", "lyth_clusterStatus"],
+            ["Operator risk", "lyth_operatorRisk"],
+          ].map(([label, method]) => (
+            <div key={method} className="ms-prop">
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:14}}>
+                <span style={{fontSize:13}}>{label}</span>
+                <span className="mono" style={{fontSize:11,color:"var(--gold)"}}>{method}</span>
               </div>
-              <Tally tally={p.tally}/>
+              <div className="mono" style={{fontSize:10.5,color:"var(--fg-500)",marginTop:5}}>
+                wired through the TypeScript SDK with typed failure/null handling
+              </div>
             </div>
           ))}
         </Card>
@@ -572,24 +573,6 @@ const SignersHist = ({data}: any) => (
     })}
   </div>
 );
-
-const Tally = ({tally}: any) => {
-  const total = tally.yes+tally.no+tally.abstain;
-  return (
-    <div style={{marginTop:8}}>
-      <div style={{display:"flex",height:6,borderRadius:3,overflow:"hidden",background:"rgba(255,255,255,0.04)"}}>
-        <div style={{width:`${tally.yes/total*100}%`,background:"var(--ok)"}}/>
-        <div style={{width:`${tally.no/total*100}%`,background:"var(--err)"}}/>
-        <div style={{width:`${tally.abstain/total*100}%`,background:"var(--fg-500)"}}/>
-      </div>
-      <div className="mono" style={{display:"flex",gap:14,fontSize:10,color:"var(--fg-400)",marginTop:6,letterSpacing:"0.04em"}}>
-        <span><b style={{color:"var(--ok)"}}>YES</b> {tally.yes}%</span>
-        <span><b style={{color:"var(--err)"}}>NO</b> {tally.no}%</span>
-        <span><b>ABSTAIN</b> {tally.abstain}%</span>
-      </div>
-    </div>
-  );
-};
 
 /* ============== CLUSTER DETAIL (rebuilt — ring hero + plain-language health) ============== */
 const ClusterPage = ({ slot, go }: any) => {
@@ -821,7 +804,7 @@ const ClusterPage = ({ slot, go }: any) => {
             <div key={i} className="ms-vrow">
               <div className="mono" style={{color:"var(--gold)",fontSize:13,minWidth:90}}>r·{fmt(v.round)}</div>
               <div className="mono" style={{flex:1,fontSize:11,color:"var(--fg-300)"}}>
-                {v.txCount} memos · DAC {v.dac?"✓":"✗"} · agg {v.blsAggMs.toFixed(1)}ms
+                {v.txCount} txs · DAC {v.dac?"✓":"✗"} · agg {v.blsAggMs.toFixed(1)}ms
               </div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>{v.hashShort}</div>
             </div>
@@ -1370,59 +1353,6 @@ const OperatorsPage = ({go}: any) => {
   );
 };
 
-const GovernancePage = ({go}: any) => (
-  <div className="ms-page">
-    <h1 className="ms-h1">Governance signals · memo-field only</h1>
-    <div className="mono" style={{color:"var(--fg-400)",marginBottom:18,fontSize:13,maxWidth:760,lineHeight:1.6}}>
-      Monolythium does not use binding on-chain governance. This page tracks non-binding public signals:
-      operators can emit PROP-N:YES, PROP-N:NO, or PROP-N:ABSTAIN in memo-field transactions, and Monoscan
-      tallies those messages once the indexer exposes them.
-    </div>
-    <div className="ms-grid-2">
-      <Card title="Active signals">
-        {SCAN.proposals.map(p=>(
-          <div key={p.id} className="ms-prop">
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:16}}>
-              <div>
-                <span className="mono" style={{color:"var(--gold)",fontSize:12}}>{p.id}</span>
-                <span style={{margin:"0 8px",color:"var(--fg-500)"}}>·</span>
-                <span style={{fontSize:13}}>{p.title}</span>
-              </div>
-              <span className="mono" style={{fontSize:11,color:"var(--fg-400)",whiteSpace:"nowrap"}}>closes {p.deadline}</span>
-            </div>
-            <div className="mono" style={{fontSize:11,color:"var(--fg-400)",marginTop:6,lineHeight:1.55}}>{p.abstract}</div>
-            <Tally tally={p.tally}/>
-          </div>
-        ))}
-      </Card>
-      <Card title="Recent outcomes">
-        {SCAN.proposalsHistory.map(p=>(
-          <div key={p.id} className="ms-prop">
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:16}}>
-              <div>
-                <span className="mono" style={{color:"var(--fg-400)",fontSize:12}}>{p.id}</span>
-                <span style={{margin:"0 8px",color:"var(--fg-500)"}}>·</span>
-                <span style={{fontSize:13,color:"var(--fg-200)"}}>{p.title}</span>
-              </div>
-              <span className={`pill ${p.outcome==="PASSED"?"ok":"err"}`} style={{padding:"2px 8px",fontSize:10}}>{p.outcome}</span>
-            </div>
-          </div>
-        ))}
-      </Card>
-    </div>
-    <Card title="Live data status">
-      <div className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.65}}>
-        The design surface is live in the app. Vote-weighted tallies are intentionally fixture-backed until
-        mono-core exposes a public indexer view for memo-field signal extraction. Until then, this page must
-        remain informational and must not be treated as protocol state.
-      </div>
-      <div style={{marginTop:14}}>
-        <button className="ov-cta" onClick={()=>go("#/search/PROP-43")}>Search PROP-43</button>
-      </div>
-    </Card>
-  </div>
-);
-
 /* ============== APP ============== */
 const App = () => {
   const [route, setRoute] = useState(window.location.hash || "#/");
@@ -1470,7 +1400,6 @@ const App = () => {
   else if (parts[0]==="clusters")   page = <ClustersPage go={go}/>;
   else if (parts[0]==="operator")   page = <OperatorPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
   else if (parts[0]==="operators")  page = <OperatorsPage go={go}/>;
-  else if (parts[0]==="governance") page = <GovernancePage go={go}/>;
   else if (parts[0]==="stats")      page = <StatsPage go={go}/>;
   else if (parts[0]==="protocol")   page = <ProtocolPage go={go}/>;
   else if (parts[0]==="wallets")    page = <WalletsPage go={go}/>;

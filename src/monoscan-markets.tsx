@@ -96,7 +96,7 @@ const MarketsPage = ({ go }: any) => {
     <div className="ms-page ms-markets">
       <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:20,flexWrap:"wrap"}}>
         <div>
-          <div className="cap">Markets · settled on monarch-v2</div>
+          <div className="cap">Markets · settled on Monolythium</div>
           <h1 className="ms-h1" style={{marginTop:4}}>Top 100 by 24h volume</h1>
           <div className="mono" style={{color:"var(--fg-400)",marginTop:8,fontSize:13,maxWidth:720,lineHeight:1.55}}>
             Orderbook matching happens on-chain. Every fill carries a DAG round and an attestation quorum —

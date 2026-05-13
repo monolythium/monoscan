@@ -1,5 +1,5 @@
 /* =====================================================
-   Monarch Desktop v2 — Primitives
+   Monoscan v4.0 — Primitives
    Shared atomic components. Imported as ES modules.
 ===================================================== */
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -469,26 +469,6 @@ const ClusterRing = ({ members = [], threshold = 5, size = 260 }: any) => {
   );
 };
 
-/* ---------- MemoSignalChip ---------- */
-const MemoSignalChip = ({ signalId, vote, expires }: any) => {
-  const c = vote === "YES" ? "var(--ok)" : vote === "NO" ? "var(--err)" : "var(--fg-300)";
-  return (
-    <span className="mono" style={{
-      display: "inline-flex", alignItems: "center", gap: 8,
-      padding: "3px 10px",
-      borderRadius: 6,
-      background: "rgba(255,255,255,0.04)",
-      border: "1px solid var(--fg-700)",
-      fontSize: 11, letterSpacing: "0.04em",
-    }}>
-      <b style={{ color: "var(--fg-100)", fontWeight: 500 }}>{signalId}</b>
-      <span style={{ color: "var(--fg-500)" }}>:</span>
-      <b style={{ color: c, fontWeight: 600, letterSpacing: "0.08em" }}>{vote}</b>
-      {expires && <span style={{ color: "var(--fg-500)" }}>· {expires}</span>}
-    </span>
-  );
-};
-
 /* ---------- PrivateBadge ---------- */
 const PrivateBadge = ({ style = {} }: any) => (
   <span className="mono denom-private-badge" style={style}>
@@ -579,6 +559,6 @@ export {
   Icon, StatusDot, Pill, Kbd, Halo, Avatar, Sparkline, RollingDigit, RoundTicker,
   QuorumBar, StateMachinePill, STATE_META, STATE_ORDER,
   AttestationBadge, BondMeter, SigningStrip, ClusterRing,
-  MemoSignalChip, PrivateBadge, AlgoBadge, StandbyTray,
+  PrivateBadge, AlgoBadge, StandbyTray,
   Divider, SectionHead, Card,
 };

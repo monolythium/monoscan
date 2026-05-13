@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "Monoscan - public web blockchain explorer for Monolythium v2 / LythiumDAG-BFT",
+  "description": "Monoscan - public web blockchain explorer for Monolythium v4.0 / LythiumDAG-BFT",
   "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",

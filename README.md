@@ -1,6 +1,6 @@
 # monoscan
 
-monoscan.xyz — public blockchain explorer for Monolythium v2.
+monoscan.xyz — public blockchain explorer for Monolythium v4.0.
 
 > Part of the [Monolythium](https://monolythium.com) ecosystem — a sovereign Layer-1 for finality-first apps.
 
@@ -8,9 +8,9 @@ monoscan.xyz — public blockchain explorer for Monolythium v2.
 
 ## What this is
 
-Monoscan is the public web explorer for **Monolythium v2** — a Rust-native L1 running **LythiumDAG-BFT (Starfish-C)** consensus on testnet `chain_id 69420`. It surfaces blocks, transactions, clusters/operators, protocol capability gates, and the explorer shell for markets, gap records, and natural-language chain search.
+Monoscan is the public web explorer for **Monolythium v4.0** — a Rust-native L1 running **LythiumDAG-BFT (Starfish-C)** consensus on testnet `chain_id 69420`. It surfaces blocks, transactions, clusters/operators, protocol capability gates, and the explorer shell for markets, gap records, and natural-language chain search.
 
-Built as a Vite + React 19 + TypeScript SPA, served as a static `dist/` bundle behind Caddy. The current build is partially live against any Monolythium v2 node's JSON-RPC surface: head/block data, fee history, mempool, clusters, account basics, delegation views, capability gates, checkpoints, certificate lookups, and operator-exit ledgers route through `@monolythium/core-sdk`. Indexer-only views such as market feeds, rich wallet aggregates, decoded transaction traces, gap records, and natural-language enrichment remain fixture-backed until the mono-core indexer APIs are live.
+Built as a Vite + React 19 + TypeScript SPA, served as a static `dist/` bundle behind Caddy. The current build is partially live against any Monolythium v4.0 node's JSON-RPC surface: head/block data, fee history, mempool, clusters, account basics, delegation views, capability gates, checkpoints, certificate lookups, and operator-exit ledgers route through `@monolythium/core-sdk`. Indexer-only views such as market feeds, rich wallet aggregates, decoded transaction traces, gap records, and natural-language enrichment remain fixture-backed until the mono-core indexer APIs are live.
 
 ## Who this is for
 
