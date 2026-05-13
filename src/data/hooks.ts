@@ -33,8 +33,10 @@ import {
   type CapabilitiesResponse,
   type CheckpointRecord,
   type ClusterDelegatorsResponse,
+  type ClusterDirectoryEntryResponse,
   type ClusterEntityResponse,
   type ClusterResignationsResponse,
+  type ClusterStatusResponse,
   type DagSyncStatus,
   type DelegationCapResponse,
   type DelegationsResponse,
@@ -43,6 +45,11 @@ import {
   type FeeHistoryResponse,
   type IndexerStatus,
   type MempoolSnapshot,
+  type OperatorAuthorityResponse,
+  type OperatorInfoResponse,
+  type OperatorRiskResponse,
+  type OperatorSigningActivityResponse,
+  type UpcomingDutiesResponse,
   type PeerSummary,
   type PrecompileDescriptor,
   type RpcClient,
@@ -91,9 +98,12 @@ function bigToNumOpt(x: bigint | null | undefined): number | null {
 
 export interface ClusterDescriptor {
   id: number;
-  pubkey: string;
-  stake: string;
+  pubkey: string | null;
+  stake: string | null;
   active: boolean;
+  size: number | null;
+  threshold: number | null;
+  aggregateHealth: string | null;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -366,15 +376,28 @@ export function useTxByHashLive(hash: string | undefined) {
 /* Cluster + address surfaces.                                                 */
 /* -------------------------------------------------------------------------- */
 
-const clusterSetMethod = `lyth${"Val" + "idator"}Set` as keyof RpcClient;
-const activeClusterMethod = `lythListActive${"Val" + "idators"}` as keyof RpcClient;
-const healthyClusterMethod = `lythListHealthy${"Val" + "idators"}` as keyof RpcClient;
+function directoryEntryToCluster(row: ClusterDirectoryEntryResponse): ClusterDescriptor {
+  return {
+    id: row.clusterId,
+    pubkey: null,
+    stake: null,
+    active: row.active,
+    size: row.size,
+    threshold: row.threshold,
+    aggregateHealth: row.aggregateHealth,
+  };
+}
 
-async function readClusterSet(method: keyof RpcClient): Promise<ClusterDescriptor[] | null> {
+async function readClusterSet(
+  filter: "all" | "active" | "healthy" = "all",
+): Promise<ClusterDescriptor[] | null> {
   if (!isRpcConfigured()) return null;
-  const rpc = getRpcClient() as unknown as Record<string, () => Promise<ClusterDescriptor[]>>;
   try {
-    return await rpc[String(method)]();
+    const page = await getRpcClient().lythClusterDirectory(0, 100);
+    let rows = page.clusters;
+    if (filter === "active") rows = rows.filter((c) => c.active);
+    if (filter === "healthy") rows = rows.filter((c) => c.aggregateHealth === "ok");
+    return rows.map(directoryEntryToCluster);
   } catch {
     return null;
   }
@@ -388,7 +411,7 @@ export function useClusterSet() {
       // TODO(monolythium-vision): swap to indexer aggregate (cluster +
       // operator + reward) once mono-core OI-0070 lands. Today's RPC returns
       // a compact descriptor list; the profile cards remain fixture-backed.
-      return readClusterSet(clusterSetMethod);
+      return readClusterSet();
     },
     staleTime: 30_000,
   });
@@ -397,7 +420,7 @@ export function useClusterSet() {
 export function useActiveClusters() {
   return useQuery<ClusterDescriptor[] | null>({
     queryKey: QK.activeClusters(),
-    queryFn: () => readClusterSet(activeClusterMethod),
+    queryFn: () => readClusterSet("active"),
     staleTime: 30_000,
   });
 }
@@ -405,7 +428,99 @@ export function useActiveClusters() {
 export function useHealthyClusters() {
   return useQuery<ClusterDescriptor[] | null>({
     queryKey: QK.healthyClusters(),
-    queryFn: () => readClusterSet(healthyClusterMethod),
+    queryFn: () => readClusterSet("healthy"),
+    staleTime: 30_000,
+  });
+}
+
+export function useClusterStatus(cluster: number | undefined) {
+  return useQuery<ClusterStatusResponse | null>({
+    queryKey: QK.clusterStatus(cluster ?? ""),
+    enabled: cluster !== undefined && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythClusterStatus(cluster as number);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+const OPERATOR_ID_RE = /^0x[0-9a-fA-F]{64}$/;
+
+export function useOperatorAuthority(operatorId: string | undefined) {
+  return useQuery<OperatorAuthorityResponse | null>({
+    queryKey: QK.operatorAuthority(operatorId ?? ""),
+    enabled: Boolean(operatorId && OPERATOR_ID_RE.test(operatorId)) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythResolveOperatorAuthority(operatorId as string);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useOperatorInfo(operatorId: string | undefined) {
+  return useQuery<OperatorInfoResponse | null>({
+    queryKey: QK.operatorInfo(operatorId ?? ""),
+    enabled: Boolean(operatorId && OPERATOR_ID_RE.test(operatorId)) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythOperatorInfo(operatorId as string);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useOperatorSigningActivity(authorityIndex: number | undefined, limit = 25) {
+  return useQuery<OperatorSigningActivityResponse | null>({
+    queryKey: [...QK.operatorSigningActivity(authorityIndex ?? ""), limit] as const,
+    enabled: authorityIndex !== undefined && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythSigningActivity(authorityIndex as number, limit);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useOperatorDuties(authorityIndex: number | undefined, horizonRounds = 100) {
+  return useQuery<UpcomingDutiesResponse | null>({
+    queryKey: [...QK.operatorDuties(authorityIndex ?? ""), horizonRounds] as const,
+    enabled: authorityIndex !== undefined && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythUpcomingDuties(authorityIndex as number, horizonRounds);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useOperatorRisk(authorityIndex: number | undefined, windowRounds = 250) {
+  return useQuery<OperatorRiskResponse | null>({
+    queryKey: [...QK.operatorRisk(authorityIndex ?? ""), windowRounds] as const,
+    enabled: authorityIndex !== undefined && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythOperatorRisk(authorityIndex as number, windowRounds);
+      } catch {
+        return null;
+      }
+    },
     staleTime: 30_000,
   });
 }
@@ -873,8 +988,8 @@ export function useNetworkStatus() {
             settle(rpc.lythCurrentRound().then((r) => bigToNum(r.height))),
             settle(rpc.netPeerCount().then((p) => bigToNum(p))),
             settle(rpc.debugP2pPeers().then((p) => p.length)),
-            settle(readClusterSet(activeClusterMethod).then((v) => v?.length ?? null)),
-            settle(readClusterSet(healthyClusterMethod).then((v) => v?.length ?? null)),
+            settle(readClusterSet("active").then((v) => v?.length ?? null)),
+            settle(readClusterSet("healthy").then((v) => v?.length ?? null)),
             settle(rpc.lythSyncStatus()),
             settle(rpc.lythMempoolStatus()),
             settle(rpc.lythIndexerStatus()),

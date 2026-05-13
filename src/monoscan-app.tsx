@@ -17,8 +17,14 @@ import {
   useChainStrip,
   useLatestBlocks,
   useClusterSet,
+  useClusterStatus,
   useHealthyClusters,
   useActiveClusters,
+  useOperatorAuthority,
+  useOperatorDuties,
+  useOperatorInfo,
+  useOperatorRisk,
+  useOperatorSigningActivity,
   useClusterDelegators,
   useClusterEntity,
   useDelegationCap,
@@ -32,6 +38,8 @@ const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const fmt = (n) => n.toLocaleString();
 const pct = (x, d=2) => `${(x*100).toFixed(d)}%`;
 const ago = (s) => s; // already strings
+const shortHex = (value = "", head = 8, tail = 4) =>
+  value.length > head + tail + 3 ? `${value.slice(0, head)}…${value.slice(-tail)}` : value;
 
 const SCAN = MONOSCAN_DATA;
 const CHAIN_ID = 69420;
@@ -589,18 +597,51 @@ const ClusterPage = ({ slot, go }: any) => {
   const liveClusterId = Math.max(0, Number(cl.slot) - 1);
   const liveClusters = useClusterSet();
   const liveCluster = liveClusters.data?.find(c => c.id === liveClusterId) ?? null;
+  const clusterStatus = useClusterStatus(liveClusterId);
+  const liveStatus = clusterStatus.data;
   const delegators = useClusterDelegators(liveClusterId);
   const delegationCap = useDelegationCap();
   const clusterEntity = useClusterEntity(liveClusterId);
   const entityRatchet = useEntityRatchet();
   const apy = clusterApy(cl);
-  const ringMembers = cl.opMembers.map((m,i)=>({ ...m, id: m.handle+i }));
-  const healthy = cl.state==="nominal";
-  const summary = cl.state==="nominal"
-    ? `Operating nominally. All ${cl.members} of ${cl.size} operators are signing vertices on time, well above the 5-of-7 quorum threshold.`
-    : cl.state==="maintenance"
-      ? `One operator is degraded or offline. ${cl.members} of ${cl.size} are signing — still safely above quorum.`
-      : `Below quorum. ${cl.members} of ${cl.size} operators signing — delegated stake is safe but not earning until quorum is restored.`;
+  const liveRingMembers = liveStatus?.members?.length
+    ? liveStatus.members.map((m, i) => ({
+        id: m.operatorId,
+        handle: shortHex(m.operatorId, 10, 6),
+        addrShort: m.operatorId,
+        role: m.state,
+        rep: 0,
+        vertexRate: 0,
+        state: m.state === "active" ? "live" : m.state === "lagging" ? "lag" : m.state === "standby" ? "standby" : "down",
+      }))
+    : null;
+  const ringMembers = liveRingMembers ?? cl.opMembers.map((m,i)=>({ ...m, id: m.handle+i }));
+  const liveOperators = liveStatus?.live ?? cl.members;
+  const totalOperators = liveStatus?.size ?? cl.size;
+  const threshold = liveStatus?.threshold ?? 5;
+  const quorum = liveStatus?.quorum ?? null;
+  const healthy = quorum ? quorum === "ok" : cl.state==="nominal";
+  const summary = quorum === "ok"
+    ? `Operating nominally. ${liveOperators} of ${totalOperators} operators are live, above the ${threshold}-of-${totalOperators} quorum threshold.`
+    : quorum === "degraded"
+      ? `Some operators are degraded or offline. ${liveOperators} of ${totalOperators} are live — still above quorum.`
+      : quorum === "halted"
+        ? `Below quorum. ${liveOperators} of ${totalOperators} operators are live — delegated stake is safe but not earning until quorum is restored.`
+        : cl.state==="nominal"
+          ? `Operating nominally. All ${cl.members} of ${cl.size} operators are signing vertices on time, well above the 5-of-7 quorum threshold.`
+          : cl.state==="maintenance"
+            ? `One operator is degraded or offline. ${cl.members} of ${cl.size} are signing — still safely above quorum.`
+            : `Below quorum. ${cl.members} of ${cl.size} operators signing — delegated stake is safe but not earning until quorum is restored.`;
+  const memberRows = liveStatus?.members?.length
+    ? liveStatus.members.map((m) => ({
+        handle: shortHex(m.operatorId, 10, 6),
+        addrShort: m.operatorId,
+        role: m.state,
+        rep: null,
+        vertexRate: null,
+        state: m.state === "active" ? "live" : m.state === "lagging" ? "lag" : m.state,
+      }))
+    : cl.opMembers;
 
   return (
     <div className="ms-page">
@@ -613,7 +654,7 @@ const ClusterPage = ({ slot, go }: any) => {
       {/* Ring hero — left: ring + standby tray, right: plain-language health + 4 key stats + stake CTA */}
       <section className="cl-hero">
         <div className="cl-hero__ring">
-          <ClusterRing members={ringMembers} threshold={5} size={280}/>
+          <ClusterRing members={ringMembers} threshold={threshold} size={280}/>
           <div className="cl-bench">
             <div className="cap" style={{marginBottom:8,textAlign:"center"}}>Standby bench · {cl.backupCount}/3</div>
             <div className="cl-bench__row">
@@ -638,7 +679,7 @@ const ClusterPage = ({ slot, go }: any) => {
         <div className="cl-hero__body">
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
             <span className="cl-rank-badge">#{cl.rank} of 100</span>
-            <span className="cap">DVT cluster · 7 active · 5-of-7 BFT · up to 3 standby</span>
+            <span className="cap">DVT cluster · {totalOperators} operators · {threshold}-of-{totalOperators} BFT · up to 3 standby</span>
           </div>
           <h1 className="ms-h1" style={{marginTop:4,marginBottom:4}}>{cl.name}</h1>
           <div className="mono" style={{fontSize:11,color:"var(--fg-500)",letterSpacing:"0.03em",marginBottom:8}}>
@@ -717,24 +758,27 @@ const ClusterPage = ({ slot, go }: any) => {
         <Card title="Live protocol descriptor">
           <div className="tx-kv">
             <KVRow label="Cluster id" value={`${liveClusterId}`}/>
-            <KVRow label="Active" value={liveCluster ? (liveCluster.active ? "yes" : "no") : "not reported"}/>
+            <KVRow label="Quorum" value={liveStatus?.quorum ?? liveCluster?.aggregateHealth ?? "not reported"}/>
+            <KVRow label="Live operators" value={liveStatus ? `${liveStatus.live}/${liveStatus.size}` : "—"}/>
+            <KVRow label="Active" value={liveStatus ? (liveStatus.live > 0 ? "yes" : "no") : liveCluster ? (liveCluster.active ? "yes" : "no") : "not reported"}/>
             <KVRow label="Stake weight" value={liveCluster?.stake ?? "—"}/>
-            <KVRow label="Pubkey" value={liveCluster?.pubkey ?? "—"} mono/>
+            <KVRow label="First BLS key" value={liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? "—"} mono/>
+            <KVRow label="Last update" value={liveStatus ? `${liveStatus.lastUpdateHeight}` : "—"}/>
             <KVRow label="Delegators" value={delegators.data ? `${delegators.data.count}` : "—"}/>
             <KVRow label="Delegation cap" value={delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "disabled" : `${delegationCap.data.capBps} bps`) : "—"}/>
             <KVRow label="Entity" value={clusterEntity.data?.entity ?? "—"}/>
             <KVRow label="Entity ratchet" value={entityRatchet.data ? `${entityRatchet.data.active}/${entityRatchet.data.threshold === 4294967295 ? "unset" : entityRatchet.data.threshold}` : "—"}/>
           </div>
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
-            Live fields come from public RPC. Rich APY, operator roster, rewards, and vertex inclusion remain indexer-backed mock data.
+            Cluster status, quorum, and member BLS keys come from public RPC. Rich APY, rewards, and vertex inclusion remain indexer-backed mock data.
           </div>
         </Card>
         <Card title="Members · 7 operators">
           <table className="ms-table">
             <thead><tr><th>Operator</th><th>Role</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Vertex rate</th><th></th></tr></thead>
             <tbody>
-              {cl.opMembers.map(m=>(
-                <tr key={m.handle} onClick={()=>go(`#/operator/${m.addrShort}`)}>
+              {memberRows.map(m=>(
+                <tr key={m.addrShort} onClick={()=>go(`#/operator/${encodeURIComponent(m.addrShort)}`)}>
                   <td>
                     <div style={{display:"flex",gap:10,alignItems:"center"}}>
                       <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${m.handle.charCodeAt(0)*7%360})`}}/>
@@ -745,8 +789,8 @@ const ClusterPage = ({ slot, go }: any) => {
                     </div>
                   </td>
                   <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{m.role}</td>
-                  <td className="mono num" style={{textAlign:"right"}}>{m.rep.toFixed(2)}</td>
-                  <td className="mono num" style={{textAlign:"right"}}>{pct(m.vertexRate,1)}</td>
+                  <td className="mono num" style={{textAlign:"right"}}>{m.rep == null ? "—" : m.rep.toFixed(2)}</td>
+                  <td className="mono num" style={{textAlign:"right"}}>{m.vertexRate == null ? "—" : pct(m.vertexRate,1)}</td>
                   <td>
                     <span className="dot" style={{
                       color: m.state==="live"?"var(--ok)":m.state==="lag"?"var(--warn)":"var(--err)"
@@ -827,6 +871,30 @@ const KVRow = ({ label, value, mono }: any) => (
 /* ============== OPERATOR PROFILE ============== */
 const OperatorPage = ({ addr, go }: any) => {
   const op = SCAN.operators.find(o => o.addrShort===addr) || SCAN.operators[0];
+  const liveOperatorId = /^0x[0-9a-fA-F]{64}$/.test(addr) ? addr : undefined;
+  const operatorInfo = useOperatorInfo(liveOperatorId);
+  const authority = useOperatorAuthority(liveOperatorId);
+  const authorityIndex = authority.data?.authorityIndex;
+  const signing = useOperatorSigningActivity(authorityIndex, 25);
+  const duties = useOperatorDuties(authorityIndex, 100);
+  const risk = useOperatorRisk(authorityIndex, 250);
+  const signedCount = signing.data?.entries.filter((row) => row.status === "signed").length ?? null;
+  const missedCount = signing.data?.entries.filter((row) => row.status === "missed").length ?? null;
+  const jailStatus = risk.data?.jailStatus
+    ? "reason" in risk.data.jailStatus
+      ? risk.data.jailStatus.reason
+      : risk.data.jailStatus.tombstoned
+        ? "tombstoned"
+        : risk.data.jailStatus.jailed
+          ? `jailed until ${risk.data.jailStatus.jailedUntilHeight}`
+          : "clear"
+    : null;
+  const keyRotation = duties.data?.duties.keyRotation;
+  const keyRotationLabel = keyRotation
+    ? "nextRound" in keyRotation
+      ? `round ${keyRotation.nextRound}`
+      : keyRotation.reason
+    : "—";
   return (
     <div className="ms-page">
       <div className="ms-crumb">
@@ -866,6 +934,22 @@ const OperatorPage = ({ addr, go }: any) => {
               ))}
             </tbody>
           </table>
+        </Card>
+        <Card title="Live operator telemetry">
+          <div className="tx-kv">
+            <KVRow label="Operator id" value={liveOperatorId ?? op.addrShort} mono/>
+            <KVRow label="Authority index" value={authorityIndex ?? "—"}/>
+            <KVRow label="Lifecycle" value={operatorInfo.data?.lifecycleState ?? "—"}/>
+            <KVRow label="Bonded amount" value={operatorInfo.data?.bondedAmount ?? "—"} mono/>
+            <KVRow label="BLS key" value={authority.data?.blsPubkey ?? operatorInfo.data?.blsKeyFingerprint ?? "—"} mono/>
+            <KVRow label="Recent signed/missed" value={signedCount === null ? "—" : `${signedCount}/${missedCount ?? 0}`}/>
+            <KVRow label="Miss rate" value={risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}%` : "—"}/>
+            <KVRow label="Jail status" value={jailStatus ?? "—"}/>
+            <KVRow label="Next key rotation" value={keyRotationLabel}/>
+          </div>
+          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
+            Live telemetry appears when this page is opened from a live cluster member id. Mock operator profiles keep their fixture metrics until the indexer exposes reputation and membership aggregates.
+          </div>
         </Card>
         <Card title="Reputation timeline · 12 months">
           <Sparkline data={op.repHist} width={520} height={140} color="var(--ok)"/>
