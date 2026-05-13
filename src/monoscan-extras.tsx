@@ -786,7 +786,7 @@ const TxPage = ({ hash, go }: any) => {
           feeDenom: "LYTH",
           cluster: "C-001",
           clusterName: "—",
-          memo: "",
+          inputNote: "",
           nonce: 0,
           quorumSigners: 7,
           quorumRequired: 5,
@@ -898,7 +898,7 @@ const TxPage = ({ hash, go }: any) => {
             <KV label="Timestamp" value={tx.when}/>
             <KV label="Cluster" value={`${tx.clusterName} (${tx.cluster})`} link={()=>go(`#/cluster/${tx.cluster.replace("C-","").replace(/^0+/,"")}`)}/>
             <KV label="Nonce" value={tx.nonce.toString()}/>
-            {tx.memo && <KV label="Memo" value={tx.memo}/>}
+            {tx.inputNote && <KV label="Input note" value={tx.inputNote}/>}
           </div>
         </Card>
         <Card title="Fees & execution">

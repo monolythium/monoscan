@@ -44,7 +44,7 @@ const Icon = ({ name, size = 16, color = "currentColor", style = {} }: any) => {
     case "ota":          return <svg {...base}><path d="M12 3v10m-4-4 4 4 4-4"/><path d="M4 17a8 8 0 0 0 16 0"/></svg>;
     case "vouch":        return <svg {...base}><path d="M9 12l2 2 5-6"/><circle cx="12" cy="12" r="9"/></svg>;
     case "eject":        return <svg {...base}><path d="M5 19h14M12 4 5 14h14z"/></svg>;
-    case "memo":         return <svg {...base}><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>;
+    case "note":         return <svg {...base}><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>;
     case "ask":          return <svg {...base}><path d="M21 12a9 9 0 1 1-4-7.5L21 3l-1 4"/><circle cx="12" cy="12" r="1" fill={color}/></svg>;
     case "palette":      return <svg {...base}><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h10M7 11h6M7 15h10"/></svg>;
     case "play":         return <svg {...base}><path d="m6 4 14 8-14 8z" fill={color}/></svg>;
