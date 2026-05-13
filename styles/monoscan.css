@@ -279,7 +279,7 @@ body::after {
 .ms-vrow:last-child { border-bottom: none; }
 .ms-vrow:hover { background: rgba(255,255,255,0.02); }
 
-/* ============ PROPOSAL ============ */
+/* ============ ACTION ROW ============ */
 .ms-prop { padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
 .ms-prop:last-child { border-bottom: none; }
 
