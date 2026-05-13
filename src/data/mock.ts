@@ -638,7 +638,7 @@ WALLETS.forEach((w: any) => {
       clusterName: MONOSCAN_DATA.clusters.find((c: any) => c.slot === (t.round % 100) + 1)?.name || "—",
       gasUsed: Math.floor(21_000 + r() * 80_000),
       gasLimit: Math.floor(120_000 + r() * 80_000),
-      memo:
+      inputNote:
         t.kind === "transfer" && r() > 0.7
           ? "payroll · cycle 42"
           : t.kind === "swap"

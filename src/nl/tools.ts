@@ -144,7 +144,7 @@ export interface GetTxResult {
   value_lyth: string;
   fee_lyth: string;
   status: "success" | "reverted";
-  memo: string | null;
+  input_note: string | null;
   type: "transfer" | "swap" | "stake" | "contract";
 }
 
@@ -165,7 +165,7 @@ export async function get_tx(input: GetTxInput): Promise<GetTxResult> {
     value_lyth: (1 + _rand(seed) * 999).toFixed(4),
     fee_lyth: (0.0001 + _rand(seed + 1) * 0.0009).toFixed(6),
     status: "success",
-    memo: null,
+    input_note: null,
     type: types[seed % types.length],
   };
   if (!isRpcConfigured()) return fallback;
