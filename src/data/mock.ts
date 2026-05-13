@@ -72,7 +72,7 @@ const _makeOps = () =>
   }));
 
 const CLUSTER_NAMES = [
-  "Vega Nexus", "Orion Stake", "Cygnus Labs", "Polaris One", "Andromeda Collective", "Lyra Signals", "Perseus Guild", "Draco Node",
+  "Vega Nexus", "Orion Stake", "Cygnus Labs", "Polaris One", "Andromeda Collective", "Lyra Systems", "Perseus Guild", "Draco Node",
   "Phoenix Commons", "Serpens Works", "Carina Relay", "Hydra Signal", "Pegasus Yield", "Ursa DVT", "Centaurus Pool", "Aquila Gate",
   "Capella Labs", "Altair Collective", "Rigel Committee", "Sirius Operations", "Deneb Network", "Arcturus Guild", "Castor Nexus", "Pollux Relay",
   "Canopus Node", "Bellatrix Syndicate", "Procyon Forge", "Antares Collective", "Mira Works", "Atlas Commons", "Betelgeuse Pool", "Spica Stake",
@@ -210,39 +210,11 @@ export const MONOSCAN_DATA = {
     multisig: "fnd1:treasury:5-of-9",
     balance: "12.4M LYTH",
     recent: [
-      { kind: "Grant · Monoscan v2 dev", amount: 120000, when: "2d ago", multiSigOk: "5/9" },
+      { kind: "Grant · Monoscan dev", amount: 120000, when: "2d ago", multiSigOk: "5/9" },
       { kind: "Payroll · core contributors", amount: 184000, when: "12d ago", multiSigOk: "6/9" },
       { kind: "Grant · DVT audit", amount: 75000, when: "20d ago", multiSigOk: "5/9" },
     ],
   },
-  proposals: [
-    {
-      id: "PROP-42",
-      title: "Raise cluster diversity-bonus weight 0.15 -> 0.25",
-      deadline: "in 3d",
-      abstract: "Non-binding signal to increase reward bonus for operators under-represented across clusters.",
-      tally: { yes: 61, no: 22, abstain: 17 },
-    },
-    {
-      id: "PROP-43",
-      title: "Adopt ML-DSA-65 as non-optional dual signature post-2027",
-      deadline: "in 11d",
-      abstract: "Non-binding signal that every operator should carry an ML-DSA alt key alongside SLH-DSA primary.",
-      tally: { yes: 74, no: 9, abstain: 17 },
-    },
-    {
-      id: "PROP-44",
-      title: "Reduce operator bond floor 50k -> 35k LYTH",
-      deadline: "in 18d",
-      abstract: "Non-binding signal to lower entry barriers while preserving slashing exposure.",
-      tally: { yes: 34, no: 48, abstain: 18 },
-    },
-  ],
-  proposalsHistory: [
-    { id: "PROP-41", title: "Bridge-relay fee cap at 18 bps", outcome: "PASSED" },
-    { id: "PROP-40", title: "Ban frontend-code fee stacking above 50bp", outcome: "PASSED" },
-    { id: "PROP-39", title: "Emergency halt timeout shortened to 72hr", outcome: "FAILED" },
-  ],
 };
 
 /* ================= MARKETS ================= */
@@ -352,7 +324,7 @@ for (let i = 31; i <= 100; i++) {
     "Ion", "Jade", "Koda", "Lyre", "Muon", "Nova", "Opal", "Prism", "Quark", "Radon",
     "Sable", "Tilde", "Ursa", "Valor", "Wane", "Xeno", "Yield", "Zen", "Arrow", "Blaze",
     "Clade", "Delve", "Ember", "Fern", "Gild", "Hymn", "Inkle", "Juno", "Krait", "Lith",
-    "Mote", "Nell", "Onyx", "Peak", "Quill", "Ruse", "Spire", "Tally", "Urge", "Vant",
+    "Mote", "Nell", "Onyx", "Peak", "Quill", "Ruse", "Spire", "Taran", "Urge", "Vant",
   ];
   const sym = names[i - 31].slice(0, 4).toUpperCase();
   MARKET_DEFS.push([i, sym, names[i - 31], "major", tier]);
@@ -578,7 +550,7 @@ const _mkFlow = (seed: number) => {
 
 /**
  * TODO(monolythium-vision): rich list + per-wallet detail need the
- * indexer (`get_address_activity` per memory `protocore-v2-explorer-design.md`).
+ * indexer (`get_address_activity` per the whitepaper v4.0 explorer surface).
  */
 const _wallets: any = WALLET_TAGS.map((w: any, i: number) => {
   const seed = parseInt(w.addr.replace(/[^0-9a-f]/gi, "").slice(-4) || (i + 1).toString(), 16) || i + 1;

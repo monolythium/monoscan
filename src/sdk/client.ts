@@ -1,7 +1,7 @@
 /**
  * Monoscan SDK seam.
  *
- * Single place every page/component gets typed access to a Monolythium v2
+ * Single place every page/component gets typed access to a Monolythium v4.0
  * node from. Hand-written `fetch` calls are forbidden — import the
  * singletons here instead. See ../../CLAUDE.md section 4.3 + the orchestration
  * contract at ../../../CLAUDE.md section 6.
