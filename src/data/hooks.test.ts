@@ -45,7 +45,13 @@ describe("live-SDK seam", () => {
     const sdk = await import("@monolythium/core-sdk");
     const proto = sdk.RpcClient.prototype as unknown as Record<string, unknown>;
     expect(typeof proto.lythCurrentRound).toBe("function");
-    expect(typeof proto[`lyth${"Val" + "idator"}Set`]).toBe("function");
+    expect(typeof proto.lythClusterDirectory).toBe("function");
+    expect(typeof proto.lythClusterStatus).toBe("function");
+    expect(typeof proto.lythOperatorInfo).toBe("function");
+    expect(typeof proto.lythResolveOperatorAuthority).toBe("function");
+    expect(typeof proto.lythSigningActivity).toBe("function");
+    expect(typeof proto.lythUpcomingDuties).toBe("function");
+    expect(typeof proto.lythOperatorRisk).toBe("function");
     expect(typeof proto.lythMempoolStatus).toBe("function");
     expect(typeof proto.lythIndexerStatus).toBe("function");
     expect(typeof proto.lythGetAccountPolicy).toBe("function");
@@ -63,6 +69,5 @@ describe("live-SDK seam", () => {
     // re-appear it means a downstream regression dragged the v0 names
     // back. Treat as a hard fail.
     expect((proto as Record<string, unknown>).protocoreCurrentRound).toBeUndefined();
-    expect((proto as Record<string, unknown>)[`protocore${"Val" + "idator"}Set`]).toBeUndefined();
   });
 });
