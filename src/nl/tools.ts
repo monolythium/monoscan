@@ -302,22 +302,28 @@ export async function get_cluster(input: GetClusterInput): Promise<GetClusterRes
   if (!isRpcConfigured()) return fallback;
   try {
     const rpc = getRpcClient();
-    const [all, healthy]: Array<Array<{ id: number; pubkey: string; stake: string; active: boolean }>> = await Promise.all([
-      rpc.lythValidatorSet().catch(() => []),
-      rpc.lythListHealthyValidators().catch(() => []),
-    ]);
-    const live = all.find((row) => row.id === input.id);
+    const directory = await rpc.lythClusterDirectory(0, 100).catch(() => null);
+    const rows = directory?.clusters ?? [];
+    const live = rows.find((row) => row.clusterId === input.id);
     if (!live) return fallback;
-    const isHealthy = healthy.some((row) => row.id === input.id);
+    const status = await rpc.lythClusterStatus(live.clusterId).catch(() => null);
+    const isHealthy = live.aggregateHealth === "ok";
+    const liveOperators = status?.live ?? (live.active && isHealthy ? live.size : fallback.members_live);
     return {
       ...fallback,
-      slot: live.id,
-      name: `Cluster ${String(live.id).padStart(3, "0")}`,
+      slot: live.clusterId,
+      name: `Cluster ${String(live.clusterId).padStart(3, "0")}`,
       state: live.active && isHealthy ? "nominal" : live.active ? "maintenance" : "jail",
-      members_live: live.active && isHealthy ? fallback.members_total : live.active ? Math.max(5, fallback.members_total - 1) : Math.max(0, fallback.members_total - 3),
-      tvs_m_lyth: Number((Number(live.stake) / 1_000_000).toFixed(3)),
-      rank: all.findIndex((row) => row.id === live.id) + 1,
-      active_operators: [_shortHash(live.id).replace("…", "")],
+      members_live: liveOperators,
+      members_total: status?.size ?? live.size,
+      standby_count: Math.max(0, (status?.size ?? live.size) - liveOperators),
+      tvs_m_lyth: fallback.tvs_m_lyth,
+      rank: rows.findIndex((row) => row.clusterId === live.clusterId) + 1,
+      active_operators:
+        status?.members
+          .filter((member) => member.state === "live")
+          .slice(0, 7)
+          .map((member) => member.operatorId) ?? fallback.active_operators,
     };
   } catch {
     return fallback;
