@@ -44,6 +44,12 @@ describe("live-SDK seam", () => {
     // fails before any consumer hits the broken wire.
     const sdk = await import("@monolythium/core-sdk");
     const proto = sdk.RpcClient.prototype as unknown as Record<string, unknown>;
+    const apiProto = sdk.ApiClient.prototype as unknown as Record<string, unknown>;
+    expect(typeof apiProto.block).toBe("function");
+    expect(typeof apiProto.transaction).toBe("function");
+    expect(typeof apiProto.addressActivity).toBe("function");
+    expect(typeof apiProto.clusters).toBe("function");
+    expect(typeof apiProto.operator).toBe("function");
     expect(typeof proto.lythCurrentRound).toBe("function");
     expect(typeof proto.lythClusterDirectory).toBe("function");
     expect(typeof proto.lythClusterStatus).toBe("function");

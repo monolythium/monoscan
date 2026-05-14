@@ -28,6 +28,11 @@ import {
   type AccountProofResponse,
   type AddressActivityEntry,
   type AddressLabelRecord,
+  type ApiAddressActivityEntry,
+  type ApiBlockHeader,
+  type ApiClusterStatus,
+  type ApiTransactionReceipt,
+  type ApiTransactionView,
   type BlsCertificateResponse,
   type BlockHeader,
   type CapabilitiesResponse,
@@ -57,7 +62,7 @@ import {
   type TransactionView,
   type TokenBalanceRecord,
 } from "@monolythium/core-sdk";
-import { getRpcClient, isRpcConfigured, isWebSocketEnabled, QK } from "../sdk/client";
+import { getApiClient, getRpcClient, isRpcConfigured, isWebSocketEnabled, QK } from "../sdk/client";
 
 /** Singleton React-Query client. */
 export const queryClient = new QueryClient({
@@ -94,6 +99,93 @@ function bigToNum(x: bigint): number {
 
 function bigToNumOpt(x: bigint | null | undefined): number | null {
   return x === null || x === undefined ? null : bigToNum(x);
+}
+
+function numToBig(x: number): bigint {
+  return BigInt(Math.trunc(x));
+}
+
+function decimalToHexQuantity(value: string | number | bigint | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "0x0";
+  const big = typeof value === "bigint" ? value : BigInt(value);
+  return `0x${big.toString(16)}`;
+}
+
+function apiBlockToRpcHeader(block: ApiBlockHeader): BlockHeader {
+  return {
+    number: numToBig(block.height),
+    hash: block.blockHash,
+    parent_hash: block.parentHash,
+    state_root: block.stateRoot,
+    timestamp: numToBig(block.timestamp),
+    gas_used: numToBig(block.gasUsed),
+    gas_limit: numToBig(block.gasLimit),
+  };
+}
+
+function apiTxToRpcTx(tx: ApiTransactionView, chainId: number): TransactionView {
+  return {
+    hash: tx.txHash,
+    blockHash: tx.blockHash,
+    blockNumber: decimalToHexQuantity(tx.blockHeight),
+    transactionIndex: decimalToHexQuantity(tx.txIndex),
+    from: tx.from,
+    to: tx.to,
+    nonce: decimalToHexQuantity(tx.nonce),
+    value: decimalToHexQuantity(tx.value),
+    gas: decimalToHexQuantity(tx.gasLimit),
+    maxFeePerGas: decimalToHexQuantity(tx.maxFeePerGas),
+    maxPriorityFeePerGas: decimalToHexQuantity(tx.maxPriorityFeePerGas),
+    input: tx.input,
+    type: "0x2",
+    chainId: decimalToHexQuantity(chainId),
+  };
+}
+
+function apiReceiptToRpcReceipt(receipt: ApiTransactionReceipt): TransactionReceipt {
+  return {
+    tx_hash: receipt.txHash,
+    block_hash: receipt.blockHash,
+    block_number: numToBig(receipt.blockHeight),
+    tx_index: receipt.txIndex,
+    status: receipt.status,
+    gas_used: numToBig(receipt.gasUsed),
+  };
+}
+
+function apiActivityToRpcActivity(row: ApiAddressActivityEntry): AddressActivityEntry {
+  return {
+    blockHeight: numToBig(row.blockHeight),
+    txIndex: row.txIndex,
+    logIndex: row.logIndex,
+    kind: row.kind,
+    direction: row.direction,
+    counterparty: row.counterparty,
+    tokenId: row.tokenId,
+    amount: row.amount,
+    cluster: row.cluster,
+    weightBps: row.weightBps,
+    subKind: row.subKind,
+  };
+}
+
+function apiClusterStatusToRpcStatus(row: ApiClusterStatus): ClusterStatusResponse {
+  return {
+    clusterId: row.clusterId,
+    threshold: row.threshold,
+    size: row.size,
+    live: row.live,
+    lagging: row.lagging,
+    offline: row.offline,
+    maintenance: row.maintenance,
+    members: row.members,
+    epoch: row.epoch === null ? null : numToBig(row.epoch),
+    round: row.round === null ? null : numToBig(row.round),
+    quorum: row.quorum,
+    reputationScore: row.reputationScore,
+    livenessScore: row.livenessScore,
+    lastUpdateHeight: numToBig(row.lastUpdateHeight),
+  };
 }
 
 export interface ClusterDescriptor {
@@ -234,8 +326,13 @@ export function useBlockByHash(hash: string | undefined) {
     queryKey: QK.blockByHash(hash ?? ""),
     enabled: Boolean(hash) && isRpcConfigured(),
     queryFn: async () => {
-      const rpc = getRpcClient();
-      return rpc.ethGetBlockByHash(hash as string);
+      const api = getApiClient();
+      try {
+        const response = await api.block(hash as string);
+        return apiBlockToRpcHeader(response.data.block);
+      } catch {
+        return getRpcClient().ethGetBlockByHash(hash as string);
+      }
     },
   });
 }
@@ -249,8 +346,13 @@ export function useBlockByNumber(n: number | "latest" | undefined) {
     queryKey: QK.blockByNumber(n ?? "latest"),
     enabled: n !== undefined && isRpcConfigured(),
     queryFn: async () => {
-      const rpc = getRpcClient();
-      return rpc.ethGetBlockByNumber(n as number | "latest");
+      const api = getApiClient();
+      try {
+        const response = await api.block(n as number | "latest");
+        return apiBlockToRpcHeader(response.data.block);
+      } catch {
+        return getRpcClient().ethGetBlockByNumber(n as number | "latest");
+      }
     },
     // For the chain tip we want the head poll cadence; for fixed heights
     // headers are immutable so default 30s staleTime is fine.
@@ -277,8 +379,14 @@ export function useLatestBlocks(count = 10) {
       const tipBig = await rpc.ethBlockNumber();
       const tip = bigToNum(tipBig);
       const heights = Array.from({ length: count }, (_, i) => tip - i).filter((h) => h >= 0);
+      const api = getApiClient();
       const blocks = await Promise.all(
-        heights.map((h) => rpc.ethGetBlockByNumber(h).catch(() => null)),
+        heights.map((h) =>
+          api
+            .block(h)
+            .then((response) => apiBlockToRpcHeader(response.data.block))
+            .catch(() => rpc.ethGetBlockByNumber(h).catch(() => null)),
+        ),
       );
       return blocks.filter((b): b is BlockHeader => b !== null);
     },
@@ -336,8 +444,12 @@ export function useTxReceipt(hash: string | undefined) {
     queryKey: QK.txReceipt(hash ?? ""),
     enabled: Boolean(hash) && isRpcConfigured(),
     queryFn: async () => {
-      const rpc = getRpcClient();
-      return rpc.ethGetTransactionReceipt(hash as string);
+      try {
+        const response = await getApiClient().transactionReceipt(hash as string);
+        return apiReceiptToRpcReceipt(response.data.receipt);
+      } catch {
+        return getRpcClient().ethGetTransactionReceipt(hash as string);
+      }
     },
   });
 }
@@ -360,6 +472,17 @@ export function useTxByHashLive(hash: string | undefined) {
     queryKey: QK.txLive(hash ?? ""),
     enabled: Boolean(hash) && isRpcConfigured(),
     queryFn: async () => {
+      try {
+        const response = await getApiClient().transaction(hash as string);
+        return {
+          tx: apiTxToRpcTx(response.data.transaction, response.chainId),
+          receipt: response.data.receipt
+            ? apiReceiptToRpcReceipt(response.data.receipt)
+            : null,
+        };
+      } catch {
+        // Fall through to JSON-RPC for older nodes without `/api/v1`.
+      }
       const rpc = getRpcClient();
       const [tx, receipt] = await Promise.all([
         rpc.ethGetTransactionByHash(hash as string).catch(() => null),
@@ -393,7 +516,10 @@ async function readClusterSet(
 ): Promise<ClusterDescriptor[] | null> {
   if (!isRpcConfigured()) return null;
   try {
-    const page = await getRpcClient().lythClusterDirectory(0, 100);
+    const page = await getApiClient()
+      .clusters(0, 100)
+      .then((response) => response.data.clusters)
+      .catch(() => getRpcClient().lythClusterDirectory(0, 100));
     let rows = page.clusters;
     if (filter === "active") rows = rows.filter((c) => c.active);
     if (filter === "healthy") rows = rows.filter((c) => c.aggregateHealth === "ok");
@@ -439,7 +565,10 @@ export function useClusterStatus(cluster: number | undefined) {
     enabled: cluster !== undefined && isRpcConfigured(),
     queryFn: async () => {
       try {
-        return await getRpcClient().lythClusterStatus(cluster as number);
+        return await getApiClient()
+          .cluster(cluster as number)
+          .then((response) => apiClusterStatusToRpcStatus(response.data.cluster))
+          .catch(() => getRpcClient().lythClusterStatus(cluster as number));
       } catch {
         return null;
       }
@@ -471,7 +600,10 @@ export function useOperatorInfo(operatorId: string | undefined) {
     enabled: Boolean(operatorId && OPERATOR_ID_RE.test(operatorId)) && isRpcConfigured(),
     queryFn: async () => {
       try {
-        return await getRpcClient().lythOperatorInfo(operatorId as string);
+        return await getApiClient()
+          .operator(operatorId as string)
+          .then((response) => response.data.operator)
+          .catch(() => getRpcClient().lythOperatorInfo(operatorId as string));
       } catch {
         return null;
       }
@@ -927,7 +1059,12 @@ export function useAccountHistory(addr: string | undefined) {
           settle(rpc.ethGetBalance(addr as string, "latest")),
           settle(rpc.ethGetTransactionCount(addr as string, "latest")),
           settle(rpc.lythGetAccountPolicy(addr as string)),
-          settle(rpc.lythGetAddressActivity(addr as string, 30)),
+          settle(
+            getApiClient()
+              .addressActivity(addr as string, 30)
+              .then((response) => response.data.entries.map(apiActivityToRpcActivity))
+              .catch(() => rpc.lythGetAddressActivity(addr as string, 30)),
+          ),
         ]);
         return {
           balance: balanceEnv ? parseQuantityBig(balanceEnv.value) : null,

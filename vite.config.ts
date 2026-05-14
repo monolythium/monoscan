@@ -23,6 +23,10 @@ export default defineConfig({
             changeOrigin: true,
             rewrite: () => "/",
           },
+          "/api": {
+            target: testnetRpc,
+            changeOrigin: true,
+          },
         }
       : undefined,
   },
