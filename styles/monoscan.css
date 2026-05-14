@@ -664,6 +664,15 @@ body::after {
   color: var(--fg-100);
   font-size: 13px;
 }
+.get-live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  color: var(--fg-500);
+  font-size: 11.5px;
+}
 .get-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(330px, 0.88fr);
@@ -779,6 +788,11 @@ body::after {
   align-items: center;
   gap: 10px;
 }
+.get-pay small {
+  color: var(--fg-500);
+  font-size: 10px;
+  line-height: 1.1;
+}
 .get-pay__coin {
   width: 28px;
   height: 28px;
@@ -790,11 +804,60 @@ body::after {
   font-family: var(--f-mono);
   font-size: 12px;
 }
+.get-disclosure {
+  border: 1px solid var(--fg-700);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.025);
+  overflow: hidden;
+}
+.get-disclosure summary {
+  min-height: 42px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  color: var(--fg-200);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.get-disclosure summary::after {
+  content: "⌄";
+  color: var(--fg-500);
+}
+.get-disclosure[open] summary::after { transform: rotate(180deg); }
+.get-disclosure div {
+  padding: 0 14px 14px;
+  color: var(--fg-500);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.get-disclosure p {
+  margin: 0;
+}
+.get-disclosure p + p {
+  margin-top: 8px;
+}
 .get-actions {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
   padding-top: 4px;
+}
+.get-actions .ov-cta:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+.get-error {
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,107,107,0.28);
+  background: rgba(255,107,107,0.08);
+  color: var(--err);
+  font-size: 12px;
+  line-height: 1.45;
 }
 .get-preview {
   display: grid;
@@ -847,6 +910,28 @@ body::after {
   font-size: 12px;
   line-height: 1.5;
 }
+.get-payment {
+  display: grid;
+  gap: 14px;
+}
+.get-payment__amount {
+  font-size: 30px;
+  line-height: 1.05;
+  color: var(--gold);
+  font-weight: 300;
+}
+.get-payment__amount span {
+  font-size: 13px;
+  color: var(--fg-400);
+}
+.get-pay-status {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: var(--fg-500);
+  font-size: 11.5px;
+}
 .get-timeline {
   display: grid;
   gap: 14px;
@@ -891,6 +976,40 @@ body::after {
   margin-top: 2px;
   color: var(--fg-500);
   font-size: 11.5px;
+}
+.get-buyers {
+  display: grid;
+  gap: 10px;
+}
+.get-buyer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding: 12px;
+  border: 1px solid var(--fg-700);
+  border-radius: 8px;
+  background: rgba(0,0,0,0.16);
+}
+.get-buyer span {
+  color: var(--fg-400);
+  font-size: 11px;
+}
+.get-buyer b {
+  color: var(--fg-100);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: right;
+}
+.get-buyer small {
+  grid-column: 1 / -1;
+  color: var(--fg-500);
+  font-size: 11px;
+}
+.get-empty {
+  margin: 0;
+  color: var(--fg-500);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* ============ RESPONSIVE ============ */
