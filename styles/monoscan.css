@@ -133,21 +133,12 @@ body::after {
 }
 .ms-brand { display: flex; align-items: center; gap: 12px; }
 .ms-brand__mark {
-  width: 26px; height: 26px; position: relative;
-  display: grid; place-items: center;
+  width: 32px;
+  height: 32px;
+  display: block;
   flex-shrink: 0;
-}
-.ms-brand__mark::before, .ms-brand__mark::after {
-  content: ""; position: absolute; inset: 0; border-radius: 6px;
-}
-.ms-brand__mark::before {
-  background: linear-gradient(135deg, var(--gold) 0%, #ff8a4c 100%);
-  transform: rotate(45deg);
-  box-shadow: 0 0 20px rgba(var(--gold-glow), 0.4);
-}
-.ms-brand__mark::after {
-  background: var(--ink-100);
-  transform: rotate(45deg) scale(0.55);
+  object-fit: contain;
+  filter: drop-shadow(0 0 14px rgba(126,75,255,0.36));
 }
 .ms-brand b { display: block; font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
 .ms-brand small { display: block; font-family: var(--f-mono); font-size: var(--fs-10); color: var(--fg-400); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 1px; }
@@ -2060,7 +2051,7 @@ html[data-theme="crimson"] .ms-brand__mark,
 html[data-theme="neon"] .ms-brand__mark,
 html[data-theme="midnight"] .ms-brand__mark,
 html[data-theme="glass"] .ms-brand__mark {
-  background: var(--gold);
+  background: transparent;
 }
 
 html[data-theme="mono"] .ms-card {
