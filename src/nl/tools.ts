@@ -4,10 +4,9 @@
  * Tools are live-first where mono-core already exposes a public RPC surface,
  * then fall back to deterministic fixtures for indexer-only fields.
  *
- * TODO(monolythium-vision): swap each fixture function for the live SDK +
- * indexer call once mono-core OI-0070 (indexer aggregate) lands. The
- * Anthropic tool definitions consume these signatures verbatim, so the
- * swap is one body-change per function.
+ * The remaining fixture paths are list-level aggregates or metadata surfaces
+ * that the public RPC does not expose yet. The Anthropic tool definitions
+ * consume these signatures verbatim, so each future swap is one body change.
  *
  * The fixtures are intentionally tiny — the goal is a coherent demo, not
  * exhaustive testnet replay.
@@ -151,8 +150,8 @@ export interface GetTxResult {
 /**
  * Fetch a transaction receipt by hash.
  *
- * Uses live transaction + receipt RPC when available; tx-type enrichment
- * remains fixture-backed until decoded calldata/indexer trace lands.
+ * Uses `lyth_decodeTx` when available so tx type, memo, status, and value
+ * come from the same explorer-grade RPC the transaction page consumes.
  */
 export async function get_tx(input: GetTxInput): Promise<GetTxResult> {
   const seed = input.hash.length;
@@ -171,6 +170,31 @@ export async function get_tx(input: GetTxInput): Promise<GetTxResult> {
   if (!isRpcConfigured()) return fallback;
   try {
     const rpc = getRpcClient();
+    const decoded = await rpc.lythDecodeTx(input.hash).catch(() => null);
+    if (decoded) {
+      const calldata = decoded.decodedCalldata && typeof decoded.decodedCalldata === "object"
+        ? decoded.decodedCalldata as Record<string, unknown>
+        : null;
+      const method = String(calldata?.method ?? calldata?.methodName ?? "").toLowerCase();
+      const type: GetTxResult["type"] = method.includes("swap")
+        ? "swap"
+        : method.includes("stake") || method.includes("delegat")
+          ? "stake"
+          : method
+            ? "contract"
+            : "transfer";
+      return {
+        ...fallback,
+        hash: decoded.txHash,
+        block_number: Number(decoded.blockNumber),
+        from: decoded.from,
+        to: decoded.to ?? "contract creation",
+        value_lyth: _formatLyth(_toBig(decoded.value)),
+        status: decoded.status === "reverted" ? "reverted" : "success",
+        input_note: decoded.memo,
+        type,
+      };
+    }
     const [tx, receipt] = await Promise.all([
       rpc.ethGetTransactionByHash(input.hash).catch(() => null),
       rpc.ethGetTransactionReceipt(input.hash).catch(() => null),
@@ -343,7 +367,7 @@ export interface GapRecord {
   start_round: number;
   end_round: number;
   duration_ms: number;
-  reason: "heartbeat" | "network-pause" | "coalesced";
+  reason: string;
   cluster_offline: string | null;
 }
 
@@ -355,13 +379,31 @@ export interface GetGapRecordsResult {
 
 /**
  * Heartbeat-throttled empty-block gap records over a window.
- *
- * TODO(monolythium-vision): swap fixture for live indexer call once
- * mono-core OI-0070 ships the gap-record digest. The data model already
- * follows the whitepaper v4.0 gap-record model.
  */
-export function get_gap_records(input: GetGapRecordsInput): GetGapRecordsResult {
+export async function get_gap_records(input: GetGapRecordsInput): Promise<GetGapRecordsResult> {
   const range = input.range ?? "24h";
+  if (isRpcConfigured()) {
+    try {
+      const rpc = getRpcClient();
+      const latest = Number(await rpc.ethBlockNumber());
+      const span = range === "30d" ? 1024 : range === "7d" ? 512 : 128;
+      const from = Math.max(0, latest - span);
+      const live = await rpc.lythGapRecords(from, latest);
+      return {
+        range: `${Number(live.range.fromBlock).toLocaleString()}-${Number(live.range.toBlock).toLocaleString()}`,
+        count: live.gapRecords.length,
+        records: live.gapRecords.map((row) => ({
+          start_round: Number(row.startBlock),
+          end_round: Number(row.endBlock),
+          duration_ms: Number(row.durationSeconds) * 1000,
+          reason: row.reason,
+          cluster_offline: null,
+        })),
+      };
+    } catch {
+      // Fall through to deterministic fixtures.
+    }
+  }
   // Three canned records — tuned to look like a real testnet day:
   // one heartbeat coalesced gap, one network pause from a cluster outage,
   // and one short maintenance window.
@@ -421,12 +463,48 @@ export interface SearchTokensResult {
 /**
  * Substring search over the listed market set.
  *
- * TODO(monolythium-vision): swap fixture for live indexer call once
- * mono-core ships a `lyth_searchTokens` namespace (currently mocked
- * via `data/mock.ts::MARKETS`).
+ * Uses the live CLOB market/search index when available. Market-cap and
+ * 24h-change remain fixture-only fields; live CLOB summaries expose last
+ * price, total base volume, and trade count.
  */
-export function search_tokens(input: SearchTokensInput): SearchTokensResult {
+export async function search_tokens(input: SearchTokensInput): Promise<SearchTokensResult> {
   const q = input.query.toLowerCase().trim();
+  if (isRpcConfigured()) {
+    try {
+      const rpc = getRpcClient();
+      const [search, clob] = await Promise.all([
+        rpc.lythSearch(input.query, 8).catch(() => null),
+        rpc.lythClobMarkets(50).catch(() => null),
+      ]);
+      const hitIds = new Set((search?.hits ?? []).map((hit) => hit.id.toLowerCase()));
+      const live = (clob?.markets ?? [])
+        .filter((m) => m.marketId.toLowerCase().includes(q) || hitIds.has(m.marketId.toLowerCase()))
+        .slice(0, 8)
+        .map((m, i): TokenMatch => {
+          const price = Number(m.lastPrice);
+          const baseVolume = Number(m.totalVolumeBase);
+          return {
+            symbol: `MKT-${i + 1}`,
+            name: `CLOB ${m.marketId.slice(0, 10)}…${m.marketId.slice(-6)}`,
+            price_usd: Number((Number.isFinite(price) ? price : 0).toFixed(price < 1 ? 5 : 3)),
+            change_24h_pct: 0,
+            market_cap_usd: 0,
+            volume_24h_usd: Math.round(
+              Number.isFinite(price) && Number.isFinite(baseVolume) ? price * baseVolume : 0,
+            ),
+          };
+        });
+      if (live.length > 0) {
+        return {
+          query: input.query,
+          count: live.length,
+          tokens: live,
+        };
+      }
+    } catch {
+      // Fall through to fixture markets.
+    }
+  }
   const matched = (MARKETS as any[])
     .filter(
       (m) =>
@@ -517,7 +595,9 @@ export async function get_address_activity(
   if (!isRpcConfigured()) return fallback;
   try {
     const rpc = getRpcClient();
-    const [balance, policy, activity] = await Promise.all([
+    const [profile, flow, balance, policy, activity] = await Promise.all([
+      rpc.lythAddressProfile(input.address).catch(() => null),
+      rpc.lythAddressFlow(input.address, Math.max(limit, 25)).catch(() => null),
       rpc.ethGetBalance(input.address, "latest").catch(() => null),
       rpc.lythGetAccountPolicy(input.address).catch(() => null),
       rpc.lythGetAddressActivity(input.address, limit).catch(() => []),
@@ -539,12 +619,25 @@ export async function get_address_activity(
         timestamp_relative: i === 0 ? "latest indexed" : `#${i + 1}`,
       };
     });
+    const flowRows: AddressActivityRow[] = (flow?.topCounterparties ?? [])
+      .slice(0, limit)
+      .map((row, i) => ({
+        hash: `counterparty:${i}`,
+        block_number: 0,
+        direction: _toBig(row.outbound) > _toBig(row.inbound) ? "out" : "in",
+        counterparty: row.address,
+        value_lyth: _formatLyth(_toBig(_toBig(row.outbound) > _toBig(row.inbound) ? row.outbound : row.inbound)),
+        type: "transfer",
+        timestamp_relative: `${row.eventCount} indexed event${row.eventCount === 1 ? "" : "s"}`,
+      }));
     return {
       ...fallback,
-      count: liveRows.length,
-      activity: liveRows.length > 0 ? liveRows : fallback.activity,
-      balance_lyth: balance ? _formatLyth(_toBig(balance.value)) : fallback.balance_lyth,
-      is_private_denomination: policy?.mode === "private",
+      count: liveRows.length || flowRows.length,
+      activity: liveRows.length > 0 ? liveRows : flowRows.length > 0 ? flowRows : fallback.activity,
+      balance_lyth: profile
+        ? _formatLyth(_toBig(profile.account.nativeBalance))
+        : balance ? _formatLyth(_toBig(balance.value)) : fallback.balance_lyth,
+      is_private_denomination: policy?.mode === "private" || profile?.activity.kind === "private",
     };
   } catch {
     return fallback;

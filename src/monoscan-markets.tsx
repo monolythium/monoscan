@@ -9,6 +9,8 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { MARKETS } from "./data/mock";
+import { useClobMarket, useClobMarkets, useClobOhlc, useClobOrderBook, useClobTrades } from "./data/hooks";
+import { getMarketIdForSymbol } from "./sdk/client";
 
 /* ----- formatters ----- */
 const mkFmt = (n: any, dp?: any) => {
@@ -20,6 +22,22 @@ const mkMoney = (n: any) => n < 1 ? `$${n.toFixed(4)}` : n < 100 ? `$${n.toFixed
 const mkUsd   = (n: any) => n>=1e9 ? `$${(n/1e9).toFixed(2)}B` : n>=1e6 ? `$${(n/1e6).toFixed(2)}M` : n>=1e3 ? `$${(n/1e3).toFixed(2)}K` : `$${n.toFixed(0)}`;
 const mkNum   = (n: any) => n>=1e9 ? `${(n/1e9).toFixed(2)}B` : n>=1e6 ? `${(n/1e6).toFixed(2)}M` : n>=1e3 ? `${(n/1e3).toFixed(2)}K` : `${n.toFixed(0)}`;
 const mkAgo   = (ts: any) => { const s = (Date.now()-ts)/1000; if (s<60) return `${s|0}s ago`; if (s<3600) return `${(s/60)|0}m ago`; if (s<86400) return `${(s/3600)|0}h ago`; return `${(s/86400)|0}d ago`; };
+const mkDec = (value: any, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+const _shortMarketId = (id: string) => `${id.slice(0, 10)}…${id.slice(-6)}`;
+const _shortAddr = (id: string, head = 8, tail = 4) =>
+  id && id.length > head + tail + 3 ? `${id.slice(0, head)}…${id.slice(-tail)}` : id;
+const _cumLevels = (rows: Array<{ price: string; size: string }>) => {
+  let total = 0;
+  return rows.map((row) => {
+    const px = mkDec(row.price);
+    const sz = mkDec(row.size);
+    total += sz;
+    return { px, sz, total };
+  });
+};
 
 /* Token glyph — seeded, visually stable */
 const TokenMark = ({ sym, size=24 }: any) => {
@@ -58,6 +76,39 @@ const MarketsPage = ({ go }: any) => {
   const [sort, setSort] = useState("rank");
   const [dir, setDir] = useState(1);
   const [tab, setTab] = useState("all");
+  const liveMarkets = useClobMarkets(100);
+
+  const liveRows = useMemo(() => {
+    return (liveMarkets.data?.markets ?? []).map((row: any, i: number) => {
+      const fixture = MARKETS.find((m: any) => getMarketIdForSymbol(m.sym) === row.marketId);
+      const price = mkDec(row.lastPrice, fixture?.price ?? 0);
+      const baseVolume = mkDec(row.totalVolumeBase, 0);
+      const fallbackSpark = fixture?.sparkline ?? [price || 0, price || 0];
+      return {
+        ...(fixture ?? {}),
+        rank: i + 1,
+        sym: fixture?.sym ?? `MKT-${i + 1}`,
+        name: fixture?.name ?? `CLOB ${_shortMarketId(row.marketId)}`,
+        kind: fixture?.kind ?? "native",
+        price,
+        chg24h: fixture?.chg24h ?? 0,
+        sparkline: fallbackSpark,
+        vol24h: price > 0 ? baseVolume * price : baseVolume,
+        liquidity: fixture?.liquidity ?? 0,
+        mcap: fixture?.mcap ?? 0,
+        holders: fixture?.holders ?? 0,
+        verified: fixture?.verified ?? true,
+        trades: fixture?.trades?.length ? fixture.trades : [{ round: row.lastBlockHeight }],
+        marketId: row.marketId,
+        tradeCount: row.tradeCount,
+        totalVolumeBase: baseVolume,
+        hasFixture: Boolean(fixture),
+        live: true,
+      };
+    });
+  }, [liveMarkets.data]);
+
+  const marketRows = liveRows.length ? liveRows : MARKETS;
 
   const tabs = [
     { k:"all",    label:"All markets" },
@@ -68,10 +119,14 @@ const MarketsPage = ({ go }: any) => {
   ];
 
   const filtered = useMemo(() => {
-    let m = MARKETS.slice();
+    let m = marketRows.slice();
     if (q) {
       const qq = q.toLowerCase();
-      m = m.filter(t => t.sym.toLowerCase().includes(qq) || t.name.toLowerCase().includes(qq));
+      m = m.filter(t =>
+        t.sym.toLowerCase().includes(qq) ||
+        t.name.toLowerCase().includes(qq) ||
+        (t.marketId ?? "").toLowerCase().includes(qq),
+      );
     }
     if (tab==="mono")    m = m.filter(t => t.kind==="mono");
     if (tab==="stable")  m = m.filter(t => t.kind==="stable");
@@ -83,14 +138,15 @@ const MarketsPage = ({ go }: any) => {
       return dir*((A||0) - (B||0));
     });
     return m;
-  }, [q, sort, dir, tab]);
+  }, [marketRows, q, sort, dir, tab]);
 
   const flip = (k) => { if (sort===k) setDir(-dir); else { setSort(k); setDir(k==="rank"||k==="sym"?1:-1); } };
   const arrow = (k) => sort!==k ? "" : (dir>0 ? " ↑" : " ↓");
 
-  const totalMCAP = MARKETS.reduce((a,t)=>a+t.mcap,0);
-  const totalVOL  = MARKETS.reduce((a,t)=>a+t.vol24h,0);
-  const totalLIQ  = MARKETS.reduce((a,t)=>a+t.liquidity,0);
+  const totalMCAP = marketRows.reduce((a,t)=>a+(t.mcap || 0),0);
+  const totalVOL  = marketRows.reduce((a,t)=>a+(t.vol24h || 0),0);
+  const totalLIQ  = marketRows.reduce((a,t)=>a+(t.liquidity || 0),0);
+  const usingLiveMarkets = liveRows.length > 0;
 
   return (
     <div className="ms-page ms-markets">
@@ -105,16 +161,20 @@ const MarketsPage = ({ go }: any) => {
         </div>
         <div style={{display:"flex",gap:14,alignItems:"flex-end"}}>
           <div style={{textAlign:"right"}}>
-            <div className="cap">Total MCAP</div>
-            <div className="mono num" style={{fontSize:20,color:"var(--fg-100)",marginTop:2}}>{mkUsd(totalMCAP)}</div>
+            <div className="cap">{usingLiveMarkets ? "Live markets" : "Total MCAP"}</div>
+            <div className="mono num" style={{fontSize:20,color:"var(--fg-100)",marginTop:2}}>
+              {usingLiveMarkets ? liveRows.length.toLocaleString() : mkUsd(totalMCAP)}
+            </div>
           </div>
           <div style={{textAlign:"right"}}>
-            <div className="cap">24H volume</div>
+            <div className="cap">{usingLiveMarkets ? "Indexed volume" : "24H volume"}</div>
             <div className="mono num" style={{fontSize:20,color:"var(--fg-100)",marginTop:2}}>{mkUsd(totalVOL)}</div>
           </div>
           <div style={{textAlign:"right"}}>
-            <div className="cap">Total liquidity</div>
-            <div className="mono num" style={{fontSize:20,color:"var(--fg-100)",marginTop:2}}>{mkUsd(totalLIQ)}</div>
+            <div className="cap">{usingLiveMarkets ? "Trades indexed" : "Total liquidity"}</div>
+            <div className="mono num" style={{fontSize:20,color:"var(--fg-100)",marginTop:2}}>
+              {usingLiveMarkets ? liveRows.reduce((a,t)=>a+(t.tradeCount || 0),0).toLocaleString() : mkUsd(totalLIQ)}
+            </div>
           </div>
         </div>
       </div>
@@ -165,7 +225,7 @@ const MarketsPage = ({ go }: any) => {
           </thead>
           <tbody>
             {filtered.map(t => (
-              <tr key={t.sym} onClick={()=>go(`#/market/${t.sym}`)}>
+              <tr key={t.marketId ?? t.sym} onClick={()=>go(`#/market/${encodeURIComponent(t.live && !t.hasFixture ? t.marketId : t.sym)}`)}>
                 <td className="mono num" style={{color:"var(--fg-500)",fontSize:11.5}}>{t.rank}</td>
                 <td>
                   <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -175,7 +235,9 @@ const MarketsPage = ({ go }: any) => {
                         <span style={{fontWeight:500,color:"var(--fg-100)",fontSize:13}}>{t.sym}</span>
                         {t.verified && <span title="verified" style={{color:"var(--gold)",fontSize:11,lineHeight:1}}>✓</span>}
                       </div>
-                      <div className="mono" style={{fontSize:10.5,color:"var(--fg-500)",marginTop:1,letterSpacing:"0.02em"}}>{t.name}</div>
+                      <div className="mono" style={{fontSize:10.5,color:"var(--fg-500)",marginTop:1,letterSpacing:"0.02em"}}>
+                        {t.live && !t.hasFixture ? `market ${_shortMarketId(t.marketId)}` : t.name}
+                      </div>
                     </div>
                   </div>
                 </td>
@@ -185,13 +247,13 @@ const MarketsPage = ({ go }: any) => {
                   <span style={{display:"inline-block"}}><Spark data={t.sparkline} up={t.chg24h>=0} w={96} h={24}/></span>
                 </td>
                 <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:12}}>{mkUsd(t.vol24h)}</td>
-                <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{mkUsd(t.liquidity)}</td>
-                <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{mkUsd(t.mcap)}</td>
-                <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:12}}>{mkNum(t.holders)}</td>
+                <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkUsd(t.liquidity)}</td>
+                <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkUsd(t.mcap)}</td>
+                <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkNum(t.holders)}</td>
                 <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>
                   <span style={{display:"inline-flex",alignItems:"center",gap:5}}>
                     <span className="dot" style={{color:"var(--ok)",width:5,height:5}}/>
-                    round {t.trades[0].round.toLocaleString()}
+                    round {Number(t.trades[0]?.round ?? t.lastBlockHeight ?? 0).toLocaleString()}
                   </span>
                 </td>
               </tr>
@@ -209,7 +271,32 @@ const MarketsPage = ({ go }: any) => {
 
 /* ---------- MARKET DETAIL ---------- */
 const MarketPage = ({ sym, go }: any) => {
-  const tkn = MARKETS.find(m => m.sym === sym) || MARKETS[0];
+  const routeKey = decodeURIComponent(sym ?? "");
+  const configuredMarketId = getMarketIdForSymbol(routeKey);
+  const liveMarkets = useClobMarkets(100);
+  const matchedLiveSummary = liveMarkets.data?.markets.find((row: any) =>
+    row.marketId === configuredMarketId || row.marketId === routeKey,
+  ) ?? null;
+  const marketId = configuredMarketId ?? (/^0x[0-9a-fA-F]{64}$/.test(routeKey) ? routeKey : matchedLiveSummary?.marketId);
+  const clob = useClobMarket(marketId);
+  const liveTrades = useClobTrades(marketId, 50);
+  const liveOhlc = useClobOhlc(marketId);
+  const liveBook = useClobOrderBook(marketId, 9);
+  const liveMarket = clob.data?.market ?? null;
+  const matchedLiveIndex = matchedLiveSummary ? liveMarkets.data?.markets.indexOf(matchedLiveSummary) ?? -1 : -1;
+  const tkn = MARKETS.find((m: any) => m.sym === routeKey || getMarketIdForSymbol(m.sym) === marketId) || {
+    ...MARKETS[0],
+    rank: matchedLiveSummary ? matchedLiveIndex + 1 : MARKETS[0].rank,
+    sym: matchedLiveSummary ? `MKT-${matchedLiveIndex + 1}` : MARKETS[0].sym,
+    name: matchedLiveSummary ? `CLOB ${_shortMarketId(matchedLiveSummary.marketId)}` : MARKETS[0].name,
+    contract: marketId ?? MARKETS[0].contract,
+    price: matchedLiveSummary ? mkDec(matchedLiveSummary.lastPrice, MARKETS[0].price) : MARKETS[0].price,
+    vol24h: matchedLiveSummary ? mkDec(matchedLiveSummary.totalVolumeBase, 0) : MARKETS[0].vol24h,
+    liquidity: 0,
+    mcap: 0,
+    holders: 0,
+    verified: Boolean(matchedLiveSummary),
+  };
   const [range, setRange] = useState("1D");
   const [orderSide, setOrderSide] = useState("buy");
   const [orderType, setOrderType] = useState("limit");
@@ -217,39 +304,91 @@ const MarketPage = ({ sym, go }: any) => {
   const ranges = ["1H","4H","1D","7D","1M","1Y","All"];
   const chg = tkn.chg24h;
   const up = chg >= 0;
+  const bestBid = liveMarket ? mkDec(liveMarket.bestBidPrice, tkn.price - tkn.tick) : null;
+  const bestAsk = liveMarket ? mkDec(liveMarket.bestAskPrice, tkn.price + tkn.tick) : null;
+  const lastTrade = liveMarket ? mkDec(liveMarket.lastTradePrice, 0) : null;
+  const livePrice = lastTrade && lastTrade > 0
+    ? lastTrade
+    : bestBid !== null && bestAsk !== null && bestBid > 0 && bestAsk > 0
+      ? (bestBid + bestAsk) / 2
+      : null;
+  const tick = liveMarket ? mkDec(liveMarket.tickSize, tkn.tick) : tkn.tick;
+  const totalVolumeBase = liveMarket ? mkDec(liveMarket.totalVolumeBase, tkn.vol24h) : tkn.vol24h;
+  const takerFeeBps = liveMarket?.takerFeeBps ?? 5;
 
   // chart
-  const ohlc = tkn.ohlc;
+  const liveCandles = (liveOhlc.data?.candles ?? [])
+    .map((c: any) => ({
+      o: mkDec(c.open),
+      h: mkDec(c.high),
+      l: mkDec(c.low),
+      c: mkDec(c.close),
+      v: mkDec(c.volumeBase),
+      startBlock: c.startBlock,
+      endBlock: c.endBlock,
+    }))
+    .filter((c: any) => c.o > 0 || c.h > 0 || c.l > 0 || c.c > 0);
+  const ohlc = liveCandles.length > 1 ? liveCandles : tkn.ohlc;
   const closes = ohlc.map(c=>c.c);
   const chartLo = Math.min(...closes)*0.996;
   const chartHi = Math.max(...closes)*1.004;
+  const chartSpan = chartHi - chartLo || 1;
   const W = 900, H = 320;
   const sx = (i) => (i / (closes.length - 1)) * (W - 48);
-  const sy = (v) => H - ((v - chartLo) / (chartHi - chartLo)) * (H - 20) - 10;
+  const sy = (v) => H - ((v - chartLo) / chartSpan) * (H - 20) - 10;
   const linePath = closes.map((v,i)=>`${i===0?"M":"L"}${sx(i).toFixed(1)},${sy(v).toFixed(1)}`).join(" ");
   const areaPath = `${linePath} L${sx(closes.length-1).toFixed(1)},${H} L0,${H} Z`;
-  const mid = tkn.price;
+  const mid = livePrice ?? tkn.price;
   const midY = sy(mid);
 
   // orderbook derived from trades — make plausible levels
   const bookLevels = 9;
-  const asks = Array.from({length:bookLevels},(_,i)=>{
-    const px = +(mid + tkn.tick*(i+1)).toFixed(mid<1?6:mid<100?3:2);
-    const sz = 40 + ((i*37 + sym.length*11) % 7) * 60 + i*25;
+  const syntheticAsks = Array.from({length:bookLevels},(_,i)=>{
+    const px = +(mid + tick*(i+1)).toFixed(mid<1?6:mid<100?3:2);
+    const sz = 40 + ((i*37 + tkn.sym.length*11) % 7) * 60 + i*25;
     return { px, sz, total:0 };
   });
-  const bids = Array.from({length:bookLevels},(_,i)=>{
-    const px = +(mid - tkn.tick*(i+1)).toFixed(mid<1?6:mid<100?3:2);
-    const sz = 40 + ((i*29 + sym.length*7) % 7) * 65 + i*22;
+  const syntheticBids = Array.from({length:bookLevels},(_,i)=>{
+    const px = +(mid - tick*(i+1)).toFixed(mid<1?6:mid<100?3:2);
+    const sz = 40 + ((i*29 + tkn.sym.length*7) % 7) * 65 + i*22;
     return { px, sz, total:0 };
   });
   let aT=0, bT=0;
-  asks.forEach(a=>{ aT+=a.sz; a.total=aT; });
-  bids.forEach(b=>{ bT+=b.sz; b.total=bT; });
-  const maxT = Math.max(aT, bT);
+  syntheticAsks.forEach(a=>{ aT+=a.sz; a.total=aT; });
+  syntheticBids.forEach(b=>{ bT+=b.sz; b.total=bT; });
+  const liveAsks = _cumLevels(liveBook.data?.asks ?? []);
+  const liveBids = _cumLevels(liveBook.data?.bids ?? []);
+  const asks = liveAsks.length ? liveAsks : syntheticAsks;
+  const bids = liveBids.length ? liveBids : syntheticBids;
+  const maxT = Math.max(
+    1,
+    asks[asks.length - 1]?.total ?? 0,
+    bids[bids.length - 1]?.total ?? 0,
+  );
 
-  const buyVol  = tkn.trades.filter(t=>t.side==="buy").reduce((a,t)=>a+t.value,0);
-  const sellVol = tkn.trades.filter(t=>t.side==="sell").reduce((a,t)=>a+t.value,0);
+  const liveTradeRows = (liveTrades.data?.trades ?? []).map((row: any, i: number) => {
+    const px = mkDec(row.price);
+    const sz = mkDec(row.amount);
+    return {
+      t: 0,
+      live: true,
+      side: "fill",
+      px,
+      sz,
+      value: px * sz,
+      maker: _shortAddr(row.maker, 7, 4),
+      taker: _shortAddr(row.taker, 7, 4),
+      venue: "clob",
+      round: row.blockHeight,
+      attest: "indexed",
+      txIndex: row.txIndex,
+      logIndex: row.logIndex,
+      key: `${row.blockHeight}-${row.txIndex}-${row.logIndex}-${i}`,
+    };
+  });
+  const tradeRows = liveTradeRows.length ? liveTradeRows : tkn.trades;
+  const buyVol  = liveBids.length ? (bids[bids.length - 1]?.total ?? 0) * mid : tkn.trades.filter(t=>t.side==="buy").reduce((a,t)=>a+t.value,0);
+  const sellVol = liveAsks.length ? (asks[asks.length - 1]?.total ?? 0) * mid : tkn.trades.filter(t=>t.side==="sell").reduce((a,t)=>a+t.value,0);
 
   return (
     <div className="ms-page ms-market">
@@ -267,9 +406,11 @@ const MarketPage = ({ sym, go }: any) => {
             <h1 className="ms-h1" style={{fontSize:30,margin:0,letterSpacing:"-0.02em"}}>{tkn.name}</h1>
             <span className="mono" style={{color:"var(--fg-400)",fontSize:18,letterSpacing:"0.02em"}}>({tkn.sym})</span>
             {tkn.verified && <span className="pill ok" style={{fontSize:10.5}}>✓ verified</span>}
+            {liveMarket && <span className="pill ok" style={{fontSize:10.5}}>live CLOB</span>}
           </div>
           <div className="mono" style={{display:"flex",alignItems:"center",gap:10,marginTop:6,color:"var(--fg-400)",fontSize:11.5,letterSpacing:"0.02em"}}>
             <span style={{padding:"3px 8px",background:"rgba(255,255,255,0.04)",border:"1px solid var(--fg-700)",borderRadius:4}}>{tkn.contract}</span>
+            {marketId && <span title={marketId}>market {_shortMarketId(marketId)}</span>}
             <span style={{cursor:"pointer",color:"var(--fg-300)"}} title="copy">⎘</span>
             <span style={{cursor:"pointer",color:"var(--fg-300)"}}>Try API ↗</span>
             <span>·</span>
@@ -278,20 +419,22 @@ const MarketPage = ({ sym, go }: any) => {
         </div>
         <div style={{flex:1}}/>
         <div style={{textAlign:"right"}}>
-          <div className="mono num" style={{fontSize:28,color:"var(--fg-100)",letterSpacing:"-0.02em",fontWeight:300}}>{mkMoney(tkn.price)}</div>
-          <div className="mono" style={{fontSize:12,marginTop:2,color: up?"var(--ok)":"var(--err)"}}>{up?"▲":"▼"} {Math.abs(chg).toFixed(3)}% · 24h</div>
+          <div className="mono num" style={{fontSize:28,color:"var(--fg-100)",letterSpacing:"-0.02em",fontWeight:300}}>{mkMoney(mid)}</div>
+          <div className="mono" style={{fontSize:12,marginTop:2,color: up?"var(--ok)":"var(--err)"}}>
+            {liveMarket ? "live CLOB midpoint" : `${up?"▲":"▼"} ${Math.abs(chg).toFixed(3)}% · 24h`}
+          </div>
         </div>
       </section>
 
       {/* QUICK STATS STRIP */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(6,minmax(0,1fr))",gap:10,padding:"10px 0"}}>
         {[
-          ["Price", mkMoney(tkn.price), up?"var(--ok)":"var(--err)", `${chg>=0?"+":""}${chg.toFixed(2)}%`],
+          ["Price", mkMoney(mid), up?"var(--ok)":"var(--err)", liveMarket ? "lyth_clobMarket" : `${chg>=0?"+":""}${chg.toFixed(2)}%`],
           ["Liquidity", mkUsd(tkn.liquidity)],
-          ["24h volume", mkUsd(tkn.vol24h)],
+          [liveMarket ? "Base volume" : "24h volume", liveMarket ? mkNum(totalVolumeBase) : mkUsd(tkn.vol24h)],
           ["MCAP", mkUsd(tkn.mcap)],
           ["Holders", mkNum(tkn.holders)],
-          ["Age", `${tkn.age.days}d`],
+          [liveMarket ? "Taker fee" : "Age", liveMarket ? `${takerFeeBps} bps` : `${tkn.age.days}d`],
         ].map(([k,v,col,sub])=>(
           <div key={k} style={{padding:"10px 14px",borderRadius:8,border:"1px solid var(--fg-700)",background:"rgba(255,255,255,0.02)"}}>
             <div className="cap" style={{fontSize:9.5}}>{k}</div>
@@ -354,8 +497,8 @@ const MarketPage = ({ sym, go }: any) => {
               ))}
             </svg>
             <div className="mono" style={{position:"absolute",left:12,top:10,fontSize:10.5,color:"var(--fg-400)",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:10}}>
-              <span><span className="dot" style={{color:"var(--ok)",width:5,height:5,marginRight:6}}/>live · round {tkn.trades[0].round.toLocaleString()}</span>
-              <span>commit {tkn.trades[0].round%1000}ms ago</span>
+              <span><span className="dot" style={{color:"var(--ok)",width:5,height:5,marginRight:6}}/>{liveCandles.length > 1 ? "indexed OHLC" : "live"} · round {Number(tradeRows[0]?.round ?? tkn.trades[0].round).toLocaleString()}</span>
+              <span>{liveCandles.length > 1 ? `${liveCandles.length} buckets` : `commit ${tkn.trades[0].round%1000}ms ago`}</span>
             </div>
           </div>
 
@@ -439,9 +582,9 @@ const MarketPage = ({ sym, go }: any) => {
           }}>Connect wallet</button>
 
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",paddingTop:8,borderTop:"1px solid var(--fg-700)",display:"grid",gridTemplateColumns:"1fr auto",rowGap:3}}>
-            <span>Rate</span><span style={{color:"var(--fg-300)"}}>1 {tkn.sym} ≈ {mkMoney(tkn.price)}</span>
+            <span>Rate</span><span style={{color:"var(--fg-300)"}}>1 {tkn.sym} ≈ {mkMoney(mid)}</span>
             <span>Route</span><span style={{color:"var(--fg-300)"}}>coinzen · pool #14</span>
-            <span>Maker · taker</span><span style={{color:"var(--fg-300)"}}>0.02% · 0.05%</span>
+            <span>Maker · taker</span><span style={{color:"var(--fg-300)"}}>0.02% · {(takerFeeBps / 100).toFixed(2)}%</span>
             <span>Settles</span><span style={{color:"var(--ok)"}}>~1 round · 340ms</span>
             <span>Attestation</span><span style={{color:"var(--ok)"}}>quorum 11/11 · SLH-DSA</span>
           </div>
@@ -506,18 +649,27 @@ const MarketPage = ({ sym, go }: any) => {
                 </tr>
               </thead>
               <tbody>
-                {tkn.trades.map((t,i)=>(
-                  <tr key={i} onClick={()=>go(`#/round/${t.round}`)}>
-                    <td className="mono" style={{color:"var(--fg-400)",fontSize:11}}>{mkAgo(t.t)}</td>
+                {tradeRows.map((t:any,i:number)=>(
+                  <tr key={t.key ?? i} onClick={()=>go(`#/round/${t.round}`)}>
+                    <td className="mono" style={{color:"var(--fg-400)",fontSize:11}}>{t.live ? `block ${Number(t.round).toLocaleString()}` : mkAgo(t.t)}</td>
                     <td>
+                      {(() => {
+                        const isBuy = t.side === "buy";
+                        const isSell = t.side === "sell";
+                        const bg = isBuy ? "oklch(0.78 0.14 155 / 0.14)" : isSell ? "oklch(0.70 0.20 22 / 0.14)" : "rgba(242,180,65,0.10)";
+                        const color = isBuy ? "var(--ok)" : isSell ? "var(--err)" : "var(--gold)";
+                        const border = isBuy ? "oklch(0.78 0.14 155 / 0.3)" : isSell ? "oklch(0.70 0.20 22 / 0.3)" : "rgba(242,180,65,0.25)";
+                        return (
                       <span className="mono" style={{
                         padding:"2px 7px",borderRadius:3,fontSize:10,letterSpacing:"0.06em",fontWeight:500,
-                        background: t.side==="buy" ? "oklch(0.78 0.14 155 / 0.14)" : "oklch(0.70 0.20 22 / 0.14)",
-                        color: t.side==="buy" ? "var(--ok)" : "var(--err)",
-                        border: `1px solid ${t.side==="buy" ? "oklch(0.78 0.14 155 / 0.3)" : "oklch(0.70 0.20 22 / 0.3)"}`,
+                        background: bg,
+                        color,
+                        border: `1px solid ${border}`,
                       }}>{t.side.toUpperCase()}</span>
+                        );
+                      })()}
                     </td>
-                    <td className="mono num" style={{textAlign:"right",color: t.side==="buy"?"var(--ok)":"var(--err)",fontSize:12}}>{mkMoney(t.px)}</td>
+                    <td className="mono num" style={{textAlign:"right",color: t.side==="buy"?"var(--ok)":t.side==="sell"?"var(--err)":"var(--gold)",fontSize:12}}>{mkMoney(t.px)}</td>
                     <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:11.5}}>${t.value.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
                     <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:11.5}}>{mkNum(t.sz)} {tkn.sym}</td>
                     <td>
@@ -532,7 +684,7 @@ const MarketPage = ({ sym, go }: any) => {
                       <div className="mono" style={{display:"flex",flexDirection:"column",gap:2,fontSize:10}}>
                         <span style={{color:"var(--fg-200)"}}>#{t.round.toLocaleString()}</span>
                         <span style={{color: t.attest==="attested"?"var(--ok)":"var(--warn)",letterSpacing:"0.06em"}}>
-                          {t.attest==="attested" ? "● attested · 11/11" : `◐ ${t.attest}`}
+                          {t.attest==="attested" ? "● attested · 11/11" : t.attest === "indexed" ? "● indexed" : `◐ ${t.attest}`}
                         </span>
                       </div>
                     </td>
@@ -549,7 +701,7 @@ const MarketPage = ({ sym, go }: any) => {
           <div className="ms-card" style={{padding:"12px 14px"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
               <h3 style={{margin:0,fontSize:13,fontWeight:500}}>Order book</h3>
-              <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.06em"}}>tick {tkn.tick}</span>
+              <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.06em"}}>tick {tick}</span>
             </div>
             <div className="mono" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",fontSize:9.5,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase",paddingBottom:6,borderBottom:"1px solid var(--fg-700)"}}>
               <span>Price</span><span style={{textAlign:"right"}}>Size</span><span style={{textAlign:"right"}}>Total</span>
@@ -569,7 +721,9 @@ const MarketPage = ({ sym, go }: any) => {
               <span className="mono num" style={{fontSize:14,color: up?"var(--ok)":"var(--err)",fontWeight:500}}>{mkFmt(mid)}</span>
               <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.06em"}}>{up?"↑":"↓"} {Math.abs(chg).toFixed(2)}%</span>
               <span style={{flex:1}}/>
-              <span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>spread {(tkn.tick*2).toFixed(3)}</span>
+              <span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+                spread {liveMarket && bestBid !== null && bestAsk !== null ? mkFmt(Math.max(0, bestAsk - bestBid)) : (tick*2).toFixed(3)}
+              </span>
             </div>
             {/* bids */}
             {bids.map((b,i)=>(
@@ -591,6 +745,8 @@ const MarketPage = ({ sym, go }: any) => {
             <h3 style={{margin:"0 0 10px",fontSize:13,fontWeight:500}}>Contract & supply</h3>
             <div className="mono" style={{fontSize:11,color:"var(--fg-400)",display:"grid",gridTemplateColumns:"auto 1fr",gap:"6px 12px"}}>
               <span>Contract</span><span style={{color:"var(--fg-200)",wordBreak:"break-all"}}>{tkn.contract}</span>
+              {marketId && <><span>Market id</span><span style={{color:"var(--fg-200)",wordBreak:"break-all"}}>{marketId}</span></>}
+              {liveMarket && <><span>Registered</span><span style={{color:"var(--fg-200)"}}>block {Number(liveMarket.registeredAtBlock).toLocaleString()}</span></>}
               <span>Supply</span><span style={{color:"var(--fg-200)"}}>{mkNum(tkn.supply)}</span>
               <span>MCAP</span><span style={{color:"var(--fg-200)"}}>{mkUsd(tkn.mcap)}</span>
               <span>Holders</span><span style={{color:"var(--fg-200)"}}>{mkNum(tkn.holders)}</span>

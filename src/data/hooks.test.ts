@@ -46,10 +46,21 @@ describe("live-SDK seam", () => {
     const proto = sdk.RpcClient.prototype as unknown as Record<string, unknown>;
     const apiProto = sdk.ApiClient.prototype as unknown as Record<string, unknown>;
     expect(typeof apiProto.block).toBe("function");
+    expect(typeof apiProto.blockTransactions).toBe("function");
     expect(typeof apiProto.transaction).toBe("function");
+    expect(typeof apiProto.transactions).toBe("function");
     expect(typeof apiProto.addressActivity).toBe("function");
+    expect(typeof apiProto.addressProfile).toBe("function");
+    expect(typeof apiProto.addressFlow).toBe("function");
     expect(typeof apiProto.clusters).toBe("function");
     expect(typeof apiProto.operator).toBe("function");
+    expect(typeof apiProto.search).toBe("function");
+    expect(typeof apiProto.stats).toBe("function");
+    expect(typeof apiProto.markets).toBe("function");
+    expect(typeof apiProto.market).toBe("function");
+    expect(typeof apiProto.marketTrades).toBe("function");
+    expect(typeof apiProto.marketOhlc).toBe("function");
+    expect(typeof apiProto.marketOrderBook).toBe("function");
     expect(typeof proto.lythCurrentRound).toBe("function");
     expect(typeof proto.lythClusterDirectory).toBe("function");
     expect(typeof proto.lythClusterStatus).toBe("function");
@@ -71,6 +82,22 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythGetBlsRoundCertificate).toBe("function");
     expect(typeof proto.lythGetLeaderCertificate).toBe("function");
     expect(typeof proto.lythGetDacCertificate).toBe("function");
+    expect(typeof proto.lythDecodeTx).toBe("function");
+    expect(typeof proto.lythGapRecords).toBe("function");
+    expect(typeof proto.lythDagParents).toBe("function");
+    expect(typeof proto.lythRichList).toBe("function");
+    expect(typeof proto.lythClobMarket).toBe("function");
+    expect(typeof proto.lythClobMarkets).toBe("function");
+    expect(typeof proto.lythClobTrades).toBe("function");
+    expect(typeof proto.lythClobOhlc).toBe("function");
+    expect(typeof proto.lythClobOrderBook).toBe("function");
+    expect(typeof proto.lythTxFeed).toBe("function");
+    expect(typeof proto.lythAddressProfile).toBe("function");
+    expect(typeof proto.lythAddressFlow).toBe("function");
+    expect(typeof proto.lythSearch).toBe("function");
+    expect(typeof proto.lythChainStats).toBe("function");
+    expect(typeof proto.lythVerticesAtRound).toBe("function");
+    expect(typeof proto.lythAddressActivityKind).toBe("function");
     // The `protocore_*` names should NOT exist on the new SDK — if they
     // re-appear it means a downstream regression dragged the v0 names
     // back. Treat as a hard fail.

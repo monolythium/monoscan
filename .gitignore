@@ -12,6 +12,7 @@ AUDIT-*.md
 RESUME.md
 STATUS.md
 TODO.md
+monoscan-todo.md
 
 # Environment + secrets
 .env

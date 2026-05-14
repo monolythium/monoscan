@@ -711,6 +711,15 @@ html[data-theme="light"] .btn--gold {
   color: #fff !important;
 }
 
+/* ---------- Dark-theme legibility pass ----------
+   The explorer has dense monospace metadata. Keep the hierarchy muted, but
+   stop helper/caption text from disappearing into the dark glass canvas. */
+html[data-theme]:not([data-theme="light"]) {
+  --fg-300: #b6bac8;
+  --fg-400: #969cac;
+  --fg-500: #788193;
+}
+
 /* =====================================================
    Subtle body gradients for the remaining dark themes.
    Two soft radial blooms at low opacity over the base ink —
@@ -786,8 +795,8 @@ html body[data-denom="private"] {
   --fg-100: #d8dde8;
   --fg-200: #a0a7b5;
   --fg-300: #737a87;
-  --fg-400: #525866;
-  --fg-500: #3a3f4a;
+  --fg-400: #7f8798;
+  --fg-500: #636b7d;
   --fg-600: #252a34;
   --fg-700: #171a22;
   --fg-800: #0d0f15;

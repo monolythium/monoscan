@@ -3,9 +3,9 @@
  *
  * Single seam through which every page reads chain data. Hooks return
  * already-typed values from `@monolythium/core-sdk`; mock fallbacks live
- * in `./mock` and stay tagged `TODO(monolythium-vision)` for the indexer
- * surfaces (markets, wallets, vertex breakdowns) that
- * mono-core has not yet shipped (per `plans/monoscan.md` Stage 3).
+ * in `./mock` and stay tagged `TODO(monolythium-vision)` for list-level
+ * aggregates and per-signer enrichment that mono-core has not yet shipped
+ * (per `plans/monoscan.md` Stage 3).
  *
  * Cache strategy:
  *   - Chain head polls every 2s (Stage 3 long-poll target). The live SDK's
@@ -27,27 +27,40 @@ import {
   type AccountPolicy,
   type AccountProofResponse,
   type AddressActivityEntry,
+  type AddressActivityKindResponse,
   type AddressLabelRecord,
   type ApiAddressActivityEntry,
   type ApiBlockHeader,
+  type ApiBlockTransactionsData,
   type ApiClusterStatus,
   type ApiTransactionReceipt,
   type ApiTransactionView,
+  type AddressFlowResponse,
+  type AddressProfileResponse,
   type BlsCertificateResponse,
   type BlockHeader,
   type CapabilitiesResponse,
+  type ChainStatsResponse,
   type CheckpointRecord,
+  type ClobMarketResponse,
+  type ClobMarketsResponse,
+  type ClobOhlcResponse,
+  type ClobOrderBookResponse,
+  type ClobTradesResponse,
   type ClusterDelegatorsResponse,
   type ClusterDirectoryEntryResponse,
   type ClusterEntityResponse,
   type ClusterResignationsResponse,
+  type DagParentsResponse,
   type ClusterStatusResponse,
   type DagSyncStatus,
+  type DecodeTxResponse,
   type DelegationCapResponse,
   type DelegationsResponse,
   type EntityRatchetResponse,
   type EncryptionKeyResponse,
   type FeeHistoryResponse,
+  type GapRecordsResponse,
   type IndexerStatus,
   type MempoolSnapshot,
   type OperatorAuthorityResponse,
@@ -58,9 +71,13 @@ import {
   type PeerSummary,
   type PrecompileDescriptor,
   type RpcClient,
+  type RichListResponse,
+  type SearchResponse,
   type TransactionReceipt,
   type TransactionView,
+  type TxFeedResponse,
   type TokenBalanceRecord,
+  type VerticesAtRoundResponse,
 } from "@monolythium/core-sdk";
 import { getApiClient, getRpcClient, isRpcConfigured, isWebSocketEnabled, QK } from "../sdk/client";
 
@@ -111,6 +128,25 @@ function decimalToHexQuantity(value: string | number | bigint | null | undefined
   return `0x${big.toString(16)}`;
 }
 
+function readNumberField(value: unknown, keys: string[]): number | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  for (const key of keys) {
+    const raw = row[key];
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    if (typeof raw === "bigint") return bigToNum(raw);
+    if (typeof raw === "string" && raw.trim() !== "") {
+      const n = Number(raw);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return null;
+}
+
+function indexerHeightFromUnknown(value: unknown): number | null {
+  return readNumberField(value, ["currentHeight", "current_height", "height"]);
+}
+
 function apiBlockToRpcHeader(block: ApiBlockHeader): BlockHeader {
   return {
     number: numToBig(block.height),
@@ -150,6 +186,48 @@ function apiReceiptToRpcReceipt(receipt: ApiTransactionReceipt): TransactionRece
     tx_index: receipt.txIndex,
     status: receipt.status,
     gas_used: numToBig(receipt.gasUsed),
+  };
+}
+
+function decodedInputHex(decoded: DecodeTxResponse): string {
+  const calldata = decoded.decodedCalldata;
+  if (calldata && typeof calldata === "object") {
+    const row = calldata as Record<string, unknown>;
+    for (const key of ["rawCalldata", "raw_calldata", "calldata", "input"]) {
+      const value = row[key];
+      if (typeof value === "string" && value.startsWith("0x")) return value;
+    }
+  }
+  return "0x";
+}
+
+function decodedTxToRpcTx(decoded: DecodeTxResponse, chainId = 0): TransactionView {
+  return {
+    hash: decoded.txHash,
+    blockHash: decoded.blockHash,
+    blockNumber: decimalToHexQuantity(decoded.blockNumber),
+    transactionIndex: decimalToHexQuantity(decoded.txIndex),
+    from: decoded.from,
+    to: decoded.to,
+    nonce: decimalToHexQuantity(decoded.nonce),
+    value: decoded.value,
+    gas: decimalToHexQuantity(decoded.gasLimit),
+    maxFeePerGas: decoded.maxFeePerGas,
+    maxPriorityFeePerGas: decoded.maxPriorityFeePerGas,
+    input: decodedInputHex(decoded),
+    type: "0x2",
+    chainId: decimalToHexQuantity(chainId),
+  };
+}
+
+function decodedTxToRpcReceipt(decoded: DecodeTxResponse): TransactionReceipt {
+  return {
+    tx_hash: decoded.txHash,
+    block_hash: decoded.blockHash,
+    block_number: numToBig(Number(decoded.blockNumber)),
+    tx_index: decoded.txIndex,
+    status: decoded.status === "success" ? 1 : decoded.status === "reverted" ? 0 : -1,
+    gas_used: numToBig(Number(decoded.gasUsed ?? 0n)),
   };
 }
 
@@ -454,17 +532,12 @@ export function useTxReceipt(hash: string | undefined) {
   });
 }
 
-/**
- * Combined live tx-detail surface. Returns the live receipt when the node
- * has it, otherwise `null` so the caller can fall back to mocked detail.
- *
- * TODO(monolythium-vision): when the indexer ships logs + decoded calldata
- * + sig timeline (mono-core OI-0070), wire that here so TxPage can render
- * the rich attestation panel without the mock fixture.
- */
+/** Combined live tx-detail surface. `lyth_decodeTx` is preferred because it
+ * carries decoded calldata, logs, and PQ-finality metadata in one RPC. */
 export interface TxLiveDigest {
   tx: TransactionView | null;
   receipt: TransactionReceipt | null;
+  decoded: DecodeTxResponse | null;
 }
 
 export function useTxByHashLive(hash: string | undefined) {
@@ -472,6 +545,15 @@ export function useTxByHashLive(hash: string | undefined) {
     queryKey: QK.txLive(hash ?? ""),
     enabled: Boolean(hash) && isRpcConfigured(),
     queryFn: async () => {
+      const rpc = getRpcClient();
+      const decoded = await rpc.lythDecodeTx(hash as string).catch(() => null);
+      if (decoded) {
+        return {
+          tx: decodedTxToRpcTx(decoded),
+          receipt: decoded.status === "unknown" ? null : decodedTxToRpcReceipt(decoded),
+          decoded,
+        };
+      }
       try {
         const response = await getApiClient().transaction(hash as string);
         return {
@@ -479,19 +561,139 @@ export function useTxByHashLive(hash: string | undefined) {
           receipt: response.data.receipt
             ? apiReceiptToRpcReceipt(response.data.receipt)
             : null,
+          decoded: null,
         };
       } catch {
         // Fall through to JSON-RPC for older nodes without `/api/v1`.
       }
-      const rpc = getRpcClient();
       const [tx, receipt] = await Promise.all([
         rpc.ethGetTransactionByHash(hash as string).catch(() => null),
         rpc.ethGetTransactionReceipt(hash as string).catch(() => null),
       ]);
-      return tx || receipt ? { tx, receipt } : null;
+      return tx || receipt ? { tx, receipt, decoded: null } : null;
     },
     // Receipts are immutable once mined — no polling needed.
     staleTime: 60_000,
+  });
+}
+
+export interface LatestTransactionRow {
+  hash: string;
+  blockNumber: number;
+  blockHash: string;
+  blockTimestamp: number | null;
+  txIndex: number;
+  from: string;
+  to: string | null;
+  value: string;
+  gasLimit: number;
+  input: string;
+}
+
+export interface LatestTransactionsDigest {
+  rows: LatestTransactionRow[];
+  latestBlock: number;
+  scannedBlocks: number;
+  scannedTransactions: number;
+  nextCursor: string | null;
+  source: "lyth_txFeed" | "block_scan";
+}
+
+function apiBlockTransactionsToRows(page: ApiBlockTransactionsData): LatestTransactionRow[] {
+  return page.transactions.map((tx) => ({
+    hash: tx.txHash,
+    blockNumber: tx.blockHeight,
+    blockHash: tx.blockHash,
+    blockTimestamp: page.block.timestamp ?? null,
+    txIndex: tx.txIndex,
+    from: tx.from,
+    to: tx.to,
+    value: tx.value,
+    gasLimit: tx.gasLimit,
+    input: tx.input,
+  }));
+}
+
+function txFeedToRows(feed: TxFeedResponse): LatestTransactionRow[] {
+  return feed.transactions.map((tx) => ({
+    hash: tx.txHash,
+    blockNumber: tx.blockNumber,
+    blockHash: tx.blockHash,
+    blockTimestamp: tx.blockTimestamp,
+    txIndex: tx.txIndex,
+    from: tx.from,
+    to: tx.to,
+    value: tx.value,
+    gasLimit: tx.gasLimit,
+    input: tx.input,
+  }));
+}
+
+/**
+ * Recent transaction index. Prefer the node API's global transaction feed and
+ * fall back to a newest-block scan for older peers.
+ */
+export function useLatestTransactions(limit = 50, blockWindow = 24) {
+  const rowLimit = Math.max(1, Math.min(Math.trunc(limit), 100));
+  const scanBlocks = Math.max(1, Math.min(Math.trunc(blockWindow), 96));
+  return useQuery<LatestTransactionsDigest | null>({
+    queryKey: QK.latestTransactions(rowLimit, scanBlocks),
+    enabled: isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        const rpc = getRpcClient();
+        const feed = await getApiClient()
+          .transactions(rowLimit, null)
+          .then((response) => response.data)
+          .catch(() => rpc.lythTxFeed(rowLimit).catch(() => null));
+        if (feed) {
+          return {
+            rows: txFeedToRows(feed),
+            latestBlock: feed.latestHeight,
+            scannedBlocks: 0,
+            scannedTransactions: feed.transactions.length,
+            nextCursor: feed.nextCursor,
+            source: "lyth_txFeed",
+          };
+        }
+        const tip = bigToNum(await rpc.ethBlockNumber());
+        const heights = Array.from({ length: scanBlocks }, (_, i) => tip - i).filter((h) => h >= 0);
+        if (heights.length === 0) {
+          return {
+            rows: [],
+            latestBlock: tip,
+            scannedBlocks: 0,
+            scannedTransactions: 0,
+            nextCursor: null,
+            source: "block_scan",
+          };
+        }
+        const api = getApiClient();
+        const pages = await Promise.all(
+          heights.map((height) =>
+            api.blockTransactions(height, 0, rowLimit).then((response) => response.data).catch(() => null),
+          ),
+        );
+        const livePages = pages.filter((page): page is ApiBlockTransactionsData => page !== null);
+        if (livePages.length === 0) return null;
+        const rows = livePages
+          .flatMap(apiBlockTransactionsToRows)
+          .sort((a, b) => b.blockNumber - a.blockNumber || a.txIndex - b.txIndex)
+          .slice(0, rowLimit);
+        return {
+          rows,
+          latestBlock: tip,
+          scannedBlocks: heights.length,
+          scannedTransactions: livePages.reduce((sum, page) => sum + page.totalTransactions, 0),
+          nextCursor: null,
+          source: "block_scan",
+        };
+      } catch {
+        return null;
+      }
+    },
+    refetchInterval: HEAD_POLL_MS,
+    staleTime: 0,
   });
 }
 
@@ -856,6 +1058,41 @@ export function useBlsRoundCertificate(round: number | undefined) {
   });
 }
 
+export function useDagParents(round: number | undefined) {
+  return useQuery<DagParentsResponse | null>({
+    queryKey: QK.dagParents(round ?? ""),
+    enabled: round !== undefined && Number.isFinite(round) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythDagParents(round as number);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useGapRecords(fromBlock: number | undefined, toBlock: number | undefined) {
+  return useQuery<GapRecordsResponse | null>({
+    queryKey: QK.gapRecords(fromBlock ?? "", toBlock ?? ""),
+    enabled:
+      fromBlock !== undefined &&
+      toBlock !== undefined &&
+      Number.isFinite(fromBlock) &&
+      Number.isFinite(toBlock) &&
+      isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythGapRecords(fromBlock as number, toBlock as number);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useEncryptionKey() {
   return useQuery<EncryptionKeyResponse | null>({
     queryKey: QK.encryptionKey(),
@@ -931,6 +1168,21 @@ export function useTokenBalances(addr: string | undefined) {
   });
 }
 
+export function useRichList(tokenId: string | undefined, limit = 30) {
+  return useQuery<RichListResponse | null>({
+    queryKey: QK.richList(tokenId ?? "", limit),
+    enabled: Boolean(tokenId) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythRichList(tokenId as string, limit);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
 export function useAddressLabel(addr: string | undefined) {
   return useQuery<AddressLabelRecord | null>({
     queryKey: QK.addressLabel(addr ?? ""),
@@ -943,6 +1195,58 @@ export function useAddressLabel(addr: string | undefined) {
       }
     },
     staleTime: 60_000,
+  });
+}
+
+export function useAddressActivityKind(addr: string | undefined) {
+  return useQuery<AddressActivityKindResponse | null>({
+    queryKey: QK.addressActivityKind(addr ?? ""),
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythAddressActivityKind(addr as string);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useAddressProfile(addr: string | undefined) {
+  return useQuery<AddressProfileResponse | null>({
+    queryKey: QK.addressProfile(addr ?? ""),
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getApiClient()
+          .addressProfile(addr as string)
+          .then((response) => response.data)
+          .catch(() => getRpcClient().lythAddressProfile(addr as string));
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useAddressFlow(addr: string | undefined, limit = 250) {
+  const rowLimit = Math.max(1, Math.min(Math.trunc(limit), 500));
+  return useQuery<AddressFlowResponse | null>({
+    queryKey: QK.addressFlow(addr ?? "", rowLimit),
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getApiClient()
+          .addressFlow(addr as string, rowLimit)
+          .then((response) => response.data)
+          .catch(() => getRpcClient().lythAddressFlow(addr as string, rowLimit));
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
   });
 }
 
@@ -1080,9 +1384,168 @@ export function useAccountHistory(addr: string | undefined) {
   });
 }
 
+export function useClobMarket(marketId: string | undefined) {
+  return useQuery<ClobMarketResponse | null>({
+    queryKey: QK.clobMarket(marketId ?? ""),
+    enabled: Boolean(marketId) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getApiClient()
+          .market(marketId as string)
+          .then((response) => response.data)
+          .catch(() => getRpcClient().lythClobMarket(marketId as string));
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useClobMarkets(limit = 100) {
+  const rowLimit = Math.max(1, Math.min(Math.trunc(limit), 500));
+  return useQuery<ClobMarketsResponse | null>({
+    queryKey: QK.clobMarkets(rowLimit),
+    enabled: isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getApiClient()
+          .markets(rowLimit)
+          .then((response) => response.data)
+          .catch(() => getRpcClient().lythClobMarkets(rowLimit));
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useClobTrades(marketId: string | undefined, limit = 50, cursor?: string | null) {
+  const rowLimit = Math.max(1, Math.min(Math.trunc(limit), 200));
+  return useQuery<ClobTradesResponse | null>({
+    queryKey: QK.clobTrades(marketId ?? "", rowLimit, cursor ?? null),
+    enabled: Boolean(marketId) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getApiClient()
+          .marketTrades(marketId as string, rowLimit, cursor ?? null)
+          .then((response) => response.data)
+          .catch(() => getRpcClient().lythClobTrades(marketId as string, rowLimit, cursor ?? null));
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 15_000,
+  });
+}
+
+export function useClobOhlc(
+  marketId: string | undefined,
+  fromBlock?: number | bigint | null,
+  toBlock?: number | bigint | null,
+  bucketBlocks?: number | bigint | null,
+) {
+  return useQuery<ClobOhlcResponse | null>({
+    queryKey: QK.clobOhlc(marketId ?? "", fromBlock ?? null, toBlock ?? null, bucketBlocks ?? null),
+    enabled: Boolean(marketId) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getApiClient()
+          .marketOhlc(marketId as string, fromBlock ?? null, toBlock ?? null, bucketBlocks ?? null)
+          .then((response) => response.data)
+          .catch(() =>
+            getRpcClient().lythClobOhlc(
+              marketId as string,
+              fromBlock ?? null,
+              toBlock ?? null,
+              bucketBlocks ?? null,
+            ),
+          );
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useClobOrderBook(marketId: string | undefined, levels = 20) {
+  const depth = Math.max(1, Math.min(Math.trunc(levels), 100));
+  return useQuery<ClobOrderBookResponse | null>({
+    queryKey: QK.clobOrderBook(marketId ?? "", depth),
+    enabled: Boolean(marketId) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getApiClient()
+          .marketOrderBook(marketId as string, depth)
+          .then((response) => response.data)
+          .catch(() => getRpcClient().lythClobOrderBook(marketId as string, depth));
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 10_000,
+  });
+}
+
+export function useSearch(query: string | undefined, limit = 10) {
+  const q = (query ?? "").trim();
+  const rowLimit = Math.max(1, Math.min(Math.trunc(limit), 50));
+  return useQuery<SearchResponse | null>({
+    queryKey: QK.search(q, rowLimit),
+    enabled: q.length > 0 && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getApiClient()
+          .search(q, rowLimit)
+          .then((response) => response.data)
+          .catch(() => getRpcClient().lythSearch(q, rowLimit));
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 15_000,
+  });
+}
+
+export function useVerticesAtRound(round: number | undefined) {
+  return useQuery<VerticesAtRoundResponse | null>({
+    queryKey: QK.verticesAtRound(round ?? ""),
+    enabled: round !== undefined && Number.isFinite(round) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythVerticesAtRound(round as number);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
 /* -------------------------------------------------------------------------- */
 /* Aggregate counters — Statistics page.                                       */
 /* -------------------------------------------------------------------------- */
+
+export function useChainStats() {
+  return useQuery<ChainStatsResponse | null>({
+    queryKey: QK.chainStats(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getApiClient()
+          .stats()
+          .then((response) => response.data)
+          .catch(() => getRpcClient().lythChainStats());
+      } catch {
+        return null;
+      }
+    },
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+}
 
 /**
  * Best-effort live network-status snapshot. Returns the bits the SDK can
@@ -1119,8 +1582,26 @@ export function useNetworkStatus() {
         }
       };
       try {
-        const [blockNumber, round, peerCount, debugPeers, clusters, healthyClusters, sync, mempool, indexer, netVersion] =
+        const [
+          chainStats,
+          blockNumber,
+          round,
+          peerCount,
+          debugPeers,
+          clusters,
+          healthyClusters,
+          sync,
+          mempool,
+          indexer,
+          netVersion,
+        ] =
           await Promise.all([
+            settle(
+              getApiClient()
+                .stats()
+                .then((response) => response.data)
+                .catch(() => rpc.lythChainStats()),
+            ),
             settle(rpc.ethBlockNumber().then((b) => bigToNum(b))),
             settle(rpc.lythCurrentRound().then((r) => bigToNum(r.height))),
             settle(rpc.netPeerCount().then((p) => bigToNum(p))),
@@ -1132,24 +1613,25 @@ export function useNetworkStatus() {
             settle(rpc.lythIndexerStatus()),
             settle(rpc.netVersion()),
           ]);
+        const stats = chainStats as ChainStatsResponse | null;
         return {
-          blockNumber,
+          blockNumber: stats?.latestHeight ?? blockNumber,
           round,
-          peerCount: peerCount ?? debugPeers,
-          clusterCount: clusters,
+          peerCount: stats?.peerCount ?? peerCount ?? debugPeers,
+          clusterCount: stats?.clusters.total ?? clusters,
           healthyClusterCount: healthyClusters,
           syncLag: sync ? bigToNum((sync as DagSyncStatus).lag) : null,
           syncState: sync ? (sync as DagSyncStatus).state : null,
-          mempoolReady: mempool ? bigToNum((mempool as MempoolSnapshot).count_ready) : null,
-          mempoolPending: mempool
+          mempoolReady: stats?.mempool.ready ?? (mempool ? bigToNum((mempool as MempoolSnapshot).count_ready) : null),
+          mempoolPending: stats?.mempool.pending ?? (mempool
             ? bigToNum((mempool as MempoolSnapshot).count_pending)
-            : null,
-          indexerHeight: indexer
+            : null),
+          indexerHeight: indexerHeightFromUnknown(stats?.indexer) ?? (indexer
             ? bigToNum((indexer as IndexerStatus).currentHeight)
-            : null,
-          indexerLatestKnown: indexer
+            : null),
+          indexerLatestKnown: readNumberField(stats?.indexer, ["latestHeight", "latest_height"]) ?? (indexer
             ? bigToNumOpt((indexer as IndexerStatus).latestHeight ?? null)
-            : null,
+            : null),
           netVersion,
         };
       } catch {

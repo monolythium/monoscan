@@ -36,8 +36,54 @@ const RPC_URL: string =
   (import.meta.env.DEV ? "/rpc" : undefined) ??
   REGISTRY_RPC_URL;
 
+const HASH32_RE = /^0x[0-9a-fA-F]{64}$/;
+const DEFAULT_LYTH_TOKEN_ID = `0x${"00".repeat(32)}`;
+
 export function isRpcConfigured(): boolean {
   return RPC_URL.trim().length > 0;
+}
+
+/**
+ * Token id used for the public LYTH rich list. Override this when a
+ * deployment has a non-zero canonical token id in the indexer.
+ */
+export function getLythTokenId(): string {
+  const configured = import.meta.env.VITE_MONOSCAN_LYTH_TOKEN_ID as string | undefined;
+  return configured && HASH32_RE.test(configured) ? configured : DEFAULT_LYTH_TOKEN_ID;
+}
+
+let _marketIds: Record<string, string> | null = null;
+
+function parseMarketIds(): Record<string, string> {
+  if (_marketIds !== null) return _marketIds;
+  const raw = import.meta.env.VITE_MONOSCAN_MARKET_IDS as string | undefined;
+  const out: Record<string, string> = {};
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      for (const [sym, id] of Object.entries(parsed)) {
+        if (HASH32_RE.test(id)) out[sym.toUpperCase()] = id;
+      }
+    } catch {
+      for (const entry of raw.split(/[;,]/)) {
+        const [sym, id] = entry.split("=").map((s) => s.trim());
+        if (sym && id && HASH32_RE.test(id)) out[sym.toUpperCase()] = id;
+      }
+    }
+  }
+  _marketIds = out;
+  return out;
+}
+
+/**
+ * Resolve a route token (`LYTH`, `USDC`, or a direct 32-byte id) to a CLOB
+ * market id. Configure named markets with `VITE_MONOSCAN_MARKET_IDS`, either
+ * as JSON (`{"LYTH":"0x..."}`) or `LYTH=0x...,USDC=0x...`.
+ */
+export function getMarketIdForSymbol(sym: string | undefined): string | undefined {
+  if (!sym) return undefined;
+  if (HASH32_RE.test(sym)) return sym;
+  return parseMarketIds()[sym.toUpperCase()];
 }
 
 /**
@@ -73,6 +119,7 @@ export function resetRpcClient(): void {
   _rpc = null;
   _api = null;
   _indexer = null;
+  _marketIds = null;
 }
 
 /**
@@ -134,6 +181,10 @@ export const QK = {
   blocksLatest: (n: number) => ["mono", "blocks", "latest", n] as const,
   txReceipt: (h: string) => ["mono", "tx", h] as const,
   txLive: (h: string) => ["mono", "tx", h, "live"] as const,
+  txFeed: (limit: number, cursor: string | null = null) =>
+    ["mono", "transactions", "feed", limit, cursor ?? "head"] as const,
+  latestTransactions: (limit: number, blockWindow: number) =>
+    ["mono", "transactions", "latest", limit, blockWindow] as const,
   mempool: () => ["mono", "mempool"] as const,
   clusterSet: () => ["mono", "clusters"] as const,
   activeClusters: () => ["mono", "clusters", "active"] as const,
@@ -165,14 +216,41 @@ export const QK = {
   addressLabel: (addr: string) => ["mono", "address", addr, "label"] as const,
   accountCode: (addr: string) => ["mono", "address", addr, "code"] as const,
   networkStatus: () => ["mono", "stats", "network"] as const,
+  chainStats: () => ["mono", "stats", "chain"] as const,
   addressActivity: (addr: string) => ["mono", "address", addr] as const,
+  addressProfile: (addr: string) => ["mono", "address", addr, "profile"] as const,
+  addressFlow: (addr: string, limit: number) => ["mono", "address", addr, "flow", limit] as const,
   accountBalance: (addr: string) => ["mono", "address", addr, "balance"] as const,
   accountPolicy: (addr: string) => ["mono", "address", addr, "policy"] as const,
-  // TODO(monolythium-vision): no SDK exposure yet for markets / DAG vertices /
-  // rich operator aggregates. Stays mock
-  // until mono-core OI-0070 indexer + a `lyth_clob_*` namespace land.
+  addressActivityKind: (addr: string) => ["mono", "address", addr, "activity-kind"] as const,
+  richList: (tokenId: string, limit: number) => ["mono", "rich-list", tokenId, limit] as const,
+  search: (query: string, limit: number) => ["mono", "search", query, limit] as const,
   markets: () => ["mono", "markets"] as const,
   marketBySym: (sym: string) => ["mono", "markets", sym] as const,
+  clobMarket: (marketId: string) => ["mono", "markets", "clob", marketId] as const,
+  clobMarkets: (limit: number) => ["mono", "markets", "clob", "list", limit] as const,
+  clobTrades: (marketId: string, limit: number, cursor: string | null = null) =>
+    ["mono", "markets", "clob", marketId, "trades", limit, cursor ?? "head"] as const,
+  clobOhlc: (
+    marketId: string,
+    fromBlock: number | bigint | string | null = null,
+    toBlock: number | bigint | string | null = null,
+    bucketBlocks: number | bigint | string | null = null,
+  ) =>
+    [
+      "mono",
+      "markets",
+      "clob",
+      marketId,
+      "ohlc",
+      fromBlock?.toString() ?? "auto",
+      toBlock?.toString() ?? "auto",
+      bucketBlocks?.toString() ?? "auto",
+    ] as const,
+  clobOrderBook: (marketId: string, levels: number | null = null) =>
+    ["mono", "markets", "clob", marketId, "order-book", levels ?? "default"] as const,
   dagRecent: () => ["mono", "dag", "recent"] as const,
-  gapRecords: (range: string) => ["mono", "gaps", range] as const,
+  verticesAtRound: (round: number | string) => ["mono", "dag", "vertices", round] as const,
+  dagParents: (round: number | string) => ["mono", "dag", "parents", round] as const,
+  gapRecords: (from: number | string, to: number | string) => ["mono", "gaps", from, to] as const,
 } as const;
