@@ -1358,20 +1358,101 @@ const tagFor = (addr) => {
   return w?.tag || null;
 };
 
-const GET_LYTH_TIERS = [
-  { id: "instant", label: "Instant", months: 0, bonus: 0, genesisPct: 100, note: "Liquid at genesis" },
-  { id: "six", label: "6 months", months: 6, bonus: 0, genesisPct: 0, note: "Base allocation" },
-  { id: "nine", label: "9 months", months: 9, bonus: 0.15, genesisPct: 0, note: "+15% allocation" },
-  { id: "twelve", label: "12 months", months: 12, bonus: 0.30, genesisPct: 0, note: "+30% allocation" },
+type GetLythTierId = "instant" | "6m" | "9m" | "12m";
+
+type GetLythPoolStatus = {
+  totalPool: number;
+  allocated: number;
+  remaining: number;
+  totalRaisedUsdc: number;
+  totalRaisedAtom: number;
+  participantCount: number;
+  verifiedCount: number;
+  reservedCount: number;
+  percentFilled: number;
+};
+
+type GetLythAllocation = {
+  lythAmount: number;
+  bonusMultiplier: number;
+  tier: GetLythTierId;
+  amountUsdc: number;
+};
+
+type GetLythPayment = {
+  paymentId: number;
+  payAddress: string;
+  payAmount: number;
+  payCurrency: string;
+  priceAmount: number;
+  expiresAt: string;
+  status: string;
+};
+
+type GetLythCheckout = {
+  token: string;
+  reservation: any;
+  payment: GetLythPayment;
+};
+
+type GetLythParticipant = {
+  wallet: string;
+  amount_usdc: string | number;
+  asset_type: string;
+  vesting_tier: GetLythTierId;
+  lyth_allocated: string | number;
+  confirmed_at: string | null;
+};
+
+class GetLythApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "GetLythApiError";
+    this.status = status;
+  }
+}
+
+const GET_LYTH_TIERS: Array<{
+  id: GetLythTierId;
+  label: string;
+  months: number;
+  multiplier: number;
+  genesisPct: number;
+  note: string;
+  details: string;
+}> = [
+  { id: "instant", label: "Instant", months: 0, multiplier: 0.7, genesisPct: 100, note: "Liquid at genesis", details: "No lockup. Allocation is fully liquid at genesis with the instant-access rate." },
+  { id: "6m", label: "6 months", months: 6, multiplier: 1, genesisPct: 0, note: "Base allocation", details: "No genesis liquid tranche. Month 1 is the cliff, then the allocation unlocks linearly through month 6." },
+  { id: "9m", label: "9 months", months: 9, multiplier: 1.15, genesisPct: 0, note: "+15% allocation", details: "No genesis liquid tranche. Month 1 is the cliff, then the allocation unlocks linearly through month 9." },
+  { id: "12m", label: "12 months", months: 12, multiplier: 1.3, genesisPct: 0, note: "+30% allocation", details: "No genesis liquid tranche. Month 1 is the cliff, then the allocation unlocks linearly through month 12." },
 ];
 
-const GET_LYTH_ASSETS = ["USDC", "USDT", "ETH", "BTC", "SOL"];
+const GET_LYTH_ASSETS = [
+  { id: "usdterc20", label: "USDT", sub: "ERC-20" },
+  { id: "usdttrc20", label: "USDT", sub: "TRC-20" },
+  { id: "usdc", label: "USDC", sub: "crypto" },
+  { id: "btc", label: "BTC", sub: "Bitcoin" },
+  { id: "eth", label: "ETH", sub: "Ethereum" },
+  { id: "trx", label: "TRX", sub: "Tron" },
+  { id: "ton", label: "TON", sub: "TON" },
+  { id: "atom", label: "ATOM", sub: "Cosmos" },
+];
 const GET_LYTH_MIN_USD = 500;
-const GET_LYTH_MAX_USD = 25_000;
-const GET_LYTH_CAP_USD = 12_000_000;
-const GET_LYTH_FILLED_USD = 8_740_000;
-const GET_LYTH_PARTICIPANTS = 1847;
-const GET_LYTH_CHECKOUT_URL = "https://monohub.xyz/get-monolythium";
+const GET_LYTH_MAX_USD = 100_000;
+const GET_LYTH_API_URL = (import.meta.env.VITE_GENESIS_LIQUIDITY_API_URL || "https://genesis-liquidity-api-production.up.railway.app").replace(/\/$/, "");
+const GET_LYTH_FALLBACK_POOL: GetLythPoolStatus = {
+  totalPool: 8_000_000,
+  allocated: 0,
+  remaining: 8_000_000,
+  totalRaisedUsdc: 0,
+  totalRaisedAtom: 0,
+  participantCount: 0,
+  verifiedCount: 0,
+  reservedCount: 0,
+  percentFilled: 0,
+};
 
 const _usd = (n: number) => n.toLocaleString(undefined, {
   style: "currency",
@@ -1384,15 +1465,38 @@ const _amountInput = (value: string) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const getLythJson = async <T,>(path: string, init: RequestInit = {}, token?: string): Promise<T> => {
+  const headers = new Headers(init.headers);
+  headers.set("Content-Type", "application/json");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const res = await fetch(`${GET_LYTH_API_URL}${path}`, {
+    ...init,
+    headers,
+  });
+
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new GetLythApiError(body?.error || `Request failed with ${res.status}`, res.status);
+  }
+  return body as T;
+};
+
 const GetMonolythiumPage = ({ go }: any) => {
-  const lythMarket = MARKETS.find((m: any) => m.sym === "LYTH");
-  const referencePrice = lythMarket?.price ?? 8.42;
   const [amount, setAmount] = useStateX("2500");
   const [address, setAddress] = useStateX("");
   const [email, setEmail] = useStateX("");
-  const [tierId, setTierId] = useStateX("twelve");
-  const [asset, setAsset] = useStateX("USDC");
+  const [tierId, setTierId] = useStateX<GetLythTierId>("12m");
+  const [asset, setAsset] = useStateX("usdterc20");
   const [reviewed, setReviewed] = useStateX(false);
+  const [pool, setPool] = useStateX<GetLythPoolStatus>(GET_LYTH_FALLBACK_POOL);
+  const [participants, setParticipants] = useStateX<GetLythParticipant[]>([]);
+  const [allocation, setAllocation] = useStateX<GetLythAllocation | null>(null);
+  const [checkout, setCheckout] = useStateX<GetLythCheckout | null>(null);
+  const [paymentStatus, setPaymentStatus] = useStateX("");
+  const [loadingPool, setLoadingPool] = useStateX(true);
+  const [busy, setBusy] = useStateX(false);
+  const [error, setError] = useStateX("");
 
   const tier = GET_LYTH_TIERS.find(t => t.id === tierId) ?? GET_LYTH_TIERS[3];
   const amountUsd = useMemoX(() => _amountInput(amount), [amount]);
@@ -1400,20 +1504,121 @@ const GetMonolythiumPage = ({ go }: any) => {
   const validAddress = /^(0x[a-fA-F0-9]{40}|mono1[:a-zA-Z0-9]{8,}|lyth1[0-9a-z]{20,})$/.test(address.trim());
   const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
   const canPrepare = validAmount && validAddress && validEmail;
-  const baseLyth = amountUsd > 0 ? amountUsd / referencePrice : 0;
-  const bonusLyth = baseLyth * tier.bonus;
-  const totalLyth = baseLyth + bonusLyth;
-  const capFilledPct = Math.min(100, (GET_LYTH_FILLED_USD / GET_LYTH_CAP_USD) * 100);
-  const remainingUsd = GET_LYTH_CAP_USD - GET_LYTH_FILLED_USD;
+  const baseLyth = amountUsd > 0 ? amountUsd * 40 : 0;
+  const totalLyth = allocation?.lythAmount ?? baseLyth * tier.multiplier;
+  const bonusLyth = Math.max(0, totalLyth - baseLyth);
+  const capFilledPct = Math.max(0, Math.min(100, pool.percentFilled || (pool.allocated / Math.max(pool.totalPool, 1)) * 100));
   const monthlyUnlock = tier.months > 0 ? totalLyth / tier.months : totalLyth;
+  const paymentAsset = GET_LYTH_ASSETS.find(option => option.id === asset) ?? GET_LYTH_ASSETS[0];
 
-  const prepare = () => {
+  const loadPool = async () => {
+    setLoadingPool(true);
+    try {
+      const [poolStatus, buyerRows] = await Promise.all([
+        getLythJson<GetLythPoolStatus>("/pool/status"),
+        getLythJson<GetLythParticipant[]>("/pool/participants"),
+      ]);
+      setPool(poolStatus);
+      setParticipants(buyerRows);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load live pool status.");
+    } finally {
+      setLoadingPool(false);
+    }
+  };
+
+  useEffectX(() => {
+    loadPool();
+    const id = window.setInterval(loadPool, 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffectX(() => {
+    if (!validAmount) {
+      setAllocation(null);
+      return;
+    }
+
+    let cancelled = false;
+    const id = window.setTimeout(async () => {
+      try {
+        const preview = await getLythJson<GetLythAllocation>(`/pool/calculate?amount=${Math.round(amountUsd)}&tier=${encodeURIComponent(tier.id)}`);
+        if (!cancelled) setAllocation(preview);
+      } catch {
+        if (!cancelled) setAllocation(null);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(id);
+    };
+  }, [amountUsd, tier.id, validAmount]);
+
+  useEffectX(() => {
+    if (!checkout?.payment.paymentId || !checkout.token) return;
+
+    const poll = async () => {
+      try {
+        const status = await getLythJson<GetLythPayment>(`/reservation/pay-crypto/status/${checkout.payment.paymentId}`, {}, checkout.token);
+        setPaymentStatus(status.status);
+        if (["finished", "confirmed", "sending", "partially_paid"].includes(status.status)) {
+          loadPool();
+        }
+      } catch {
+        /* Polling is best-effort; the checkout card keeps the last known payment details. */
+      }
+    };
+
+    poll();
+    const id = window.setInterval(poll, 15_000);
+    return () => window.clearInterval(id);
+  }, [checkout?.payment.paymentId, checkout?.token]);
+
+  const startCheckout = async () => {
     if (!canPrepare) {
       window.__msToast?.("Enter a valid amount, wallet address, and email before checkout.");
       return;
     }
+    setBusy(true);
+    setError("");
     setReviewed(true);
-    window.__msToast?.("Reservation preview prepared. Official checkout opens on MonoHub.");
+    try {
+      const auth = await getLythJson<{ token: string }>("/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ email: email.trim(), walletAddress: address.trim() }),
+      });
+
+      let reservation: any;
+      try {
+        const created = await getLythJson<{ reservation: any }>("/reservation/create", {
+          method: "POST",
+          body: JSON.stringify({ amount: Math.round(amountUsd), tier: tier.id, assetType: "USDC" }),
+        }, auth.token);
+        reservation = created.reservation;
+      } catch (err) {
+        if (!(err instanceof GetLythApiError) || err.status !== 409) throw err;
+        const status = await getLythJson<{ reservation: any }>("/reservation/status", {}, auth.token);
+        if (!status.reservation?.id) throw err;
+        reservation = status.reservation;
+      }
+
+      const payment = await getLythJson<GetLythPayment>("/reservation/pay-crypto", {
+        method: "POST",
+        body: JSON.stringify({ reservationId: reservation.id, payCurrency: asset }),
+      }, auth.token);
+
+      setCheckout({ token: auth.token, reservation, payment });
+      setPaymentStatus(payment.status);
+      window.__msToast?.("Payment details created on Monoscan.");
+      loadPool();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not create checkout.";
+      setError(message);
+      window.__msToast?.(message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -1428,37 +1633,39 @@ const GetMonolythiumPage = ({ go }: any) => {
             Get <span style={{color:"var(--gold)"}}>Monolythium</span>
           </h1>
           <p className="ov-hero__desc">
-            Build a LYTH allocation, compare vesting bonuses, and move to the official checkout when the reservation looks right.
+            Build a LYTH allocation, compare vesting bonuses, and create payment details directly through the live Genesis Liquidity API.
           </p>
           <div className="ov-hero__ctas">
             <button className="ov-cta ov-cta--primary" onClick={()=>document.getElementById("get-builder")?.scrollIntoView({block:"start", behavior:"smooth"})}>
               Build allocation
             </button>
-            <a className="ov-cta" href={GET_LYTH_CHECKOUT_URL} target="_blank" rel="noreferrer">
-              Official checkout
-            </a>
+            <button className="ov-cta" onClick={loadPool}>{loadingPool ? "Refreshing…" : "Refresh live status"}</button>
             <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/markets")}>View LYTH market</button>
           </div>
         </div>
         <div className="get-hero__panel">
-          <div className="mono get-hero__label">PROGRAM FILL</div>
+          <div className="mono get-hero__label">LIVE PROGRAM FILL</div>
           <div className="get-hero__big mono num">{capFilledPct.toFixed(1)}%</div>
           <div className="get-meter" aria-label="Genesis allocation program fill">
             <span style={{width:`${capFilledPct}%`}}/>
           </div>
           <div className="get-hero__stats">
             <div>
-              <span className="cap">Filled</span>
-              <b className="mono num">{_usd(GET_LYTH_FILLED_USD)}</b>
+              <span className="cap">Allocated</span>
+              <b className="mono num">{_fmt(pool.allocated)} LYTH</b>
             </div>
             <div>
               <span className="cap">Remaining</span>
-              <b className="mono num">{_usd(remainingUsd)}</b>
+              <b className="mono num">{_fmt(pool.remaining)} LYTH</b>
             </div>
             <div>
-              <span className="cap">Participants</span>
-              <b className="mono num">{_fmtI(GET_LYTH_PARTICIPANTS)}</b>
+              <span className="cap">Buyers</span>
+              <b className="mono num">{_fmtI(pool.participantCount)}</b>
             </div>
+          </div>
+          <div className="get-live">
+            <span className={`pill ${loadingPool ? "warn" : "ok"}`}>{loadingPool ? "syncing" : "live"}</span>
+            <span>paid {_fmtI(pool.verifiedCount)} · reserved {_fmtI(pool.reservedCount)} · raised {_usd(pool.totalRaisedUsdc)}</span>
           </div>
         </div>
       </section>
@@ -1506,27 +1713,39 @@ const GetMonolythiumPage = ({ go }: any) => {
               </div>
             </div>
 
+            <details className="get-disclosure">
+              <summary>Unlock schedule details</summary>
+              <div>
+                <p>{tier.details}</p>
+                <p>Staking is allowed from day 1 for the full allocation, including locked allocations.</p>
+              </div>
+            </details>
+
             <div className="get-field">
               <span>Payment asset</span>
               <div className="get-pay-grid">
                 {GET_LYTH_ASSETS.map(option => (
                   <button
-                    key={option}
+                    key={option.id}
                     type="button"
-                    className={`get-pay ${option === asset ? "is-active" : ""}`}
-                    onClick={()=>setAsset(option)}
+                    className={`get-pay ${option.id === asset ? "is-active" : ""}`}
+                    onClick={()=>setAsset(option.id)}
                   >
-                    <span className="get-pay__coin">{option.slice(0, 1)}</span>
-                    <b>{option}</b>
+                    <span className="get-pay__coin">{option.label.slice(0, 1)}</span>
+                    <b>{option.label}</b>
+                    <small>{option.sub}</small>
                   </button>
                 ))}
               </div>
             </div>
 
             <div className="get-actions">
-              <button className="ov-cta ov-cta--primary" onClick={prepare}>Prepare reservation</button>
-              <a className="ov-cta" href={GET_LYTH_CHECKOUT_URL} target="_blank" rel="noreferrer">Continue on MonoHub</a>
+              <button className="ov-cta ov-cta--primary" onClick={startCheckout} disabled={busy}>
+                {busy ? "Creating payment…" : "Create payment"}
+              </button>
+              <button className="ov-cta" onClick={loadPool} type="button">Refresh pool</button>
             </div>
+            {error ? <div className="get-error">{error}</div> : null}
           </div>
         </Card>
 
@@ -1537,28 +1756,55 @@ const GetMonolythiumPage = ({ go }: any) => {
                 {_fmt(totalLyth)} <span>LYTH</span>
               </div>
               <div className="get-preview__sub mono">
-                Estimated from {_usd(referencePrice)} LYTH market reference. Official checkout finalizes the rate.
+                Estimated from the live Genesis Liquidity rate. Payment details are created by the API.
               </div>
               <div className="get-kv">
                 <span>Base allocation</span><b className="mono num">{_fmt(baseLyth)} LYTH</b>
                 <span>Vesting bonus</span><b className="mono num">+{_fmt(bonusLyth)} LYTH</b>
-                <span>Paid with</span><b className="mono">{asset}</b>
+                <span>Paid with</span><b className="mono">{paymentAsset.label}</b>
                 <span>Genesis liquid</span><b className="mono">{tier.genesisPct}%</b>
                 <span>Monthly unlock</span><b className="mono num">{_fmt(monthlyUnlock)} LYTH</b>
               </div>
               {reviewed ? (
                 <div className="get-review is-ready">
                   <span className="pill ok">Ready</span>
-                  <p>Open the official checkout to confirm payment details. Do not send funds to addresses shown outside the checkout.</p>
+                  <p>Payment details are generated here. Send funds only to the address returned in the payment card.</p>
                 </div>
               ) : (
                 <div className="get-review">
                   <span className="pill warn">Draft</span>
-                  <p>Complete the builder to prepare a reservation preview before leaving Monoscan.</p>
+                  <p>Complete the builder to create a reservation and payment address on Monoscan.</p>
                 </div>
               )}
             </div>
           </Card>
+
+          {checkout ? (
+            <Card title="Payment details" right={<span className="pill gold">ID {checkout.payment.paymentId}</span>}>
+              <div className="get-payment">
+                <div className="get-payment__amount mono num">
+                  {checkout.payment.payAmount} <span>{checkout.payment.payCurrency.toUpperCase()}</span>
+                </div>
+                <div className="get-pay-status">
+                  <span className={`pill ${["finished", "confirmed", "sending", "partially_paid"].includes(paymentStatus) ? "ok" : "warn"}`}>
+                    {paymentStatus || checkout.payment.status}
+                  </span>
+                  <span>expires {checkout.payment.expiresAt ? new Date(checkout.payment.expiresAt).toLocaleString() : "soon"}</span>
+                </div>
+                <label className="get-field">
+                  <span>Payment address</span>
+                  <input value={checkout.payment.payAddress} readOnly onFocus={e=>e.currentTarget.select()}/>
+                </label>
+                <button
+                  className="ov-cta"
+                  type="button"
+                  onClick={()=>{ navigator.clipboard?.writeText(checkout.payment.payAddress); window.__msToast?.("Payment address copied"); }}
+                >
+                  Copy address
+                </button>
+              </div>
+            </Card>
+          ) : null}
 
           <Card title="Unlock schedule">
             <div className="get-timeline">
@@ -1566,6 +1812,20 @@ const GetMonolythiumPage = ({ go }: any) => {
               <Step label="Day 30" value={tier.months ? "cliff clears" : "fully liquid"}/>
               <Step label={tier.months ? `${tier.months} months` : "No vesting"} value={tier.months ? "linear unlock complete" : "no lockup"}/>
               <Step label="Staking" value="full allocation can be staked from day 1"/>
+            </div>
+          </Card>
+
+          <Card title="Recent buyers">
+            <div className="get-buyers">
+              {participants.length ? participants.slice(0, 6).map((row, index) => (
+                <div key={`${row.wallet}-${index}`} className="get-buyer">
+                  <span className="mono">{row.wallet}</span>
+                  <b className="mono num">{_fmt(Number(row.lyth_allocated))} LYTH</b>
+                  <small>{_usd(Number(row.amount_usdc))} · {row.vesting_tier}</small>
+                </div>
+              )) : (
+                <p className="get-empty">No confirmed buyer feed yet. Live totals above include active reservations.</p>
+              )}
             </div>
           </Card>
         </aside>
