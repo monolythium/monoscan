@@ -1,0 +1,22 @@
+{
+  "name": "Monoscan",
+  "short_name": "Monoscan",
+  "description": "Public explorer for Monolythium.",
+  "icons": [
+    {
+      "src": "/brand/monolythium.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/brand/monolythium.png",
+      "sizes": "1000x1000",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "theme_color": "#090a11",
+  "background_color": "#090a11",
+  "display": "standalone"
+}

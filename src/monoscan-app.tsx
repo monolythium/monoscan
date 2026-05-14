@@ -128,7 +128,7 @@ const Header = ({ go, route }: any) => {
   return (
     <header className="ms-header">
       <a href="#/" onClick={()=>go("#/")} className="ms-brand">
-        <span className="ms-brand__mark"/>
+        <img className="ms-brand__mark" src="/brand/monolythium.svg" alt="" width="32" height="32"/>
         <div>
           <b>Monoscan</b>
           <small>monolythium v4.0 explorer</small>
