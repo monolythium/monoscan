@@ -23,8 +23,26 @@ a { color: inherit; text-decoration: none; }
 
 .mono { font-family: var(--f-mono); font-feature-settings: "ss01","zero","tnum"; }
 .num  { font-variant-numeric: tabular-nums; }
-.cap  { font-family: var(--f-mono); font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-400); font-weight: 500; }
+.cap  { font-family: var(--f-mono); font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fg-400); font-weight: 600; }
 .dot  { display:inline-block; width:6px; height:6px; border-radius:50%; background: currentColor; box-shadow: 0 0 10px currentColor, 0 0 20px currentColor; }
+
+/* Readability floor for metadata-heavy explorer surfaces. Many labels are
+   emitted via inline React styles; these selectors keep them legible without
+   changing primary hierarchy. */
+[style*="color: var(--fg-500)"],
+[style*="color:var(--fg-500)"] { color: var(--fg-400) !important; }
+[style*="color: var(--fg-400)"],
+[style*="color:var(--fg-400)"] { color: var(--fg-300) !important; }
+:is(
+  [style*="font-size: 8.5px"],
+  [style*="font-size:8.5px"],
+  [style*="font-size: 9.5px"],
+  [style*="font-size:9.5px"],
+  [style*="font-size: 10px"],
+  [style*="font-size:10px"],
+  [style*="font-size: 10.5px"],
+  [style*="font-size:10.5px"]
+) { font-size: 11.5px !important; }
 
 /* ============ AMBIENT BACKGROUND ============
    Ported verbatim from Monarch Desktop v2. */
@@ -119,7 +137,7 @@ body::after {
 
 /* ============ HEADER ============ */
 .ms-header {
-  display: flex; align-items: center; gap: 24px;
+  display: flex; align-items: center; gap: 14px 20px;
   padding: 16px 24px;
   width: 100%;
   max-width: 1440px;
@@ -156,11 +174,12 @@ body::after {
 .ms-search:focus-within { background: rgba(255,255,255,0.07); border-color: var(--fg-500); color: var(--fg-100); }
 .ms-search input { font-size: 12.5px; }
 .ms-search input::placeholder { color: var(--fg-400); }
-.ms-search__hint { font-family: var(--f-mono); font-size: 10.5px; color: var(--fg-400); letter-spacing: 0.05em; flex-shrink: 0; }
+.ms-search__hint { font-family: var(--f-mono); font-size: 11.5px; color: var(--fg-400); letter-spacing: 0.05em; flex-shrink: 0; }
 
-.ms-nav { display: flex; gap: 2px; }
+.ms-nav { display: flex; flex-wrap: wrap; gap: 2px; }
 .ms-nav__item {
-  padding: 8px 14px; border-radius: 10px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 12px; border-radius: 10px;
   font-size: 13px; color: var(--fg-300); font-weight: 450;
   transition: all 180ms var(--e-out);
   position: relative;
@@ -178,6 +197,40 @@ body::after {
   background: var(--gold);
   box-shadow: 0 0 10px rgba(var(--gold-glow), 0.8);
   border-radius: 2px;
+}
+.ms-nav__more { position: relative; }
+.ms-nav__more-btn { height: 34px; }
+.ms-nav__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 190px;
+  padding: 6px;
+  border: 1px solid var(--glass-stroke-hi);
+  border-radius: 8px;
+  background: var(--ink-100);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 24px 50px -28px rgba(0,0,0,0.75), inset 0 1px 0 var(--glass-inner);
+  z-index: 50;
+}
+.ms-nav__menu-item {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--fg-200);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.ms-nav__menu-item:hover,
+.ms-nav__menu-item.is-active {
+  color: var(--fg-100);
+  background: rgba(255,255,255,0.10);
+}
+.ms-nav__menu-item.is-active {
+  box-shadow: inset 2px 0 0 var(--gold);
 }
 
 /* ============ MAIN + PAGE ============ */
@@ -245,11 +298,11 @@ body::after {
 .ms-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 
 /* ============ TABLES ============ */
-.ms-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ms-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .ms-table thead th {
   padding: 10px 12px; text-align: left;
-  font-family: var(--f-mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--fg-400); font-weight: 500;
+  font-family: var(--f-mono); font-size: 11.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--fg-400); font-weight: 600;
   background: rgba(255,255,255,0.02);
   border-bottom: 1px solid var(--fg-700);
   white-space: nowrap;
@@ -258,7 +311,7 @@ body::after {
 .ms-table tbody tr { cursor: pointer; transition: background 140ms; }
 .ms-table tbody tr:hover td { background: rgba(255,255,255,0.025); }
 /* tight density for markets list */
-.ms-table.ms-table--tight thead th { padding: 8px 10px; font-size: 9.5px; }
+.ms-table.ms-table--tight thead th { padding: 8px 10px; font-size: 11px; }
 .ms-table.ms-table--tight tbody td { padding: 8px 10px; }
 .ms-table tbody tr:last-child td { border-bottom: none; }
 

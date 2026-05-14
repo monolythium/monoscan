@@ -10,11 +10,13 @@ import {
   Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
 import { MONOSCAN_DATA, MARKETS } from "./data/mock";
-import { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage, ProtocolPage, GetMonolythiumPage } from "./monoscan-extras";
+import { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, GetMonolythiumPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
 import {
   useChainHead,
   useChainStrip,
+  useChainStats,
+  useClobMarkets,
   useLatestBlocks,
   useClusterSet,
   useClusterStatus,
@@ -116,12 +118,50 @@ const Field = ({label, value, accent}: any) => (
 /* ============== HEADER NAV ============== */
 const Header = ({ go, route }: any) => {
   const [q, setQ] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const primaryNav = [
+    ["#/", "Overview"],
+    ["#/transactions", "Transactions"],
+    ["#/markets", "Markets"],
+  ];
+  const moreNav = [
+    ["#/get-monolythium", "Get LYTH"],
+    ["#/wallets", "Wallets"],
+    ["#/clusters", "Clusters"],
+    ["#/operators", "Operators"],
+    ["#/stats", "Statistics"],
+    ["#/protocol", "Protocol"],
+  ];
+  const routeMatches = (h: string) =>
+    route === h ||
+    (h === "#/transactions" && route.startsWith("#/tx")) ||
+    (h === "#/markets" && route.startsWith("#/market")) ||
+    (h === "#/wallets" && route.startsWith("#/wallet")) ||
+    (h === "#/clusters" && route.startsWith("#/cluster")) ||
+    (h === "#/operators" && route.startsWith("#/operator"));
+  const moreActive = moreNav.some(([h]) => routeMatches(h));
+  useEffect(() => {
+    if (!moreOpen) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMoreOpen(false);
+    };
+    const onPointer = (e: MouseEvent) => {
+      const target = e.target instanceof Element ? e.target : null;
+      if (!target?.closest(".ms-nav__more")) setMoreOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer);
+    };
+  }, [moreOpen]);
   const submit = (e) => {
     e.preventDefault();
     const v = q.trim();
     if (!v) return;
     if (/^\d+$/.test(v)) go(`#/round/${v}`);
-    else if (v.startsWith("0x")) go(`#/operator/${v}`);
+    else if (v.startsWith("0x")) go(`#/search/${encodeURIComponent(v)}`);
     else if (/^c-\d+/i.test(v)) go(`#/cluster/${v.slice(2)}`);
     else go(`#/search/${encodeURIComponent(v)}`);
   };
@@ -155,19 +195,37 @@ const Header = ({ go, route }: any) => {
         <span className="ms-ask-btn__hint mono">NL</span>
       </button>
       <nav className="ms-nav">
-        {[
-          ["#/",            "Overview"],
-          ["#/markets",     "Markets"],
-          ["#/get-monolythium", "Get LYTH"],
-          ["#/clusters",    "Clusters"],
-          ["#/operators",   "Operators"],
-          ["#/wallets",     "Wallets"],
-          ["#/stats",       "Statistics"],
-          ["#/protocol",    "Protocol"],
-        ].map(([h, l]) => (
-          <a key={h} href={h} onClick={()=>go(h)}
-            className={`ms-nav__item ${route===h ? "is-active" : ""}`}>{l}</a>
+        {primaryNav.map(([h, l]) => (
+          <a key={h} href={h} onClick={()=>{ setMoreOpen(false); go(h); }}
+            className={`ms-nav__item ${routeMatches(h) ? "is-active" : ""}`}>{l}</a>
         ))}
+        <div className="ms-nav__more">
+          <button
+            type="button"
+            className={`ms-nav__item ms-nav__more-btn ${moreActive ? "is-active" : ""}`}
+            onClick={()=>setMoreOpen(v=>!v)}
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+          >
+            <span>More</span>
+            <Icon name="chevron" size={13} style={{transform: moreOpen ? "rotate(-90deg)" : "rotate(90deg)"}}/>
+          </button>
+          {moreOpen && (
+            <div className="ms-nav__menu" role="menu">
+              {moreNav.map(([h, l]) => (
+                <a
+                  key={h}
+                  href={h}
+                  role="menuitem"
+                  className={`ms-nav__menu-item ${routeMatches(h) ? "is-active" : ""}`}
+                  onClick={()=>{ setMoreOpen(false); go(h); }}
+                >
+                  {l}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
       </nav>
       <MsThemeSwitcher/>
     </header>
@@ -192,6 +250,14 @@ const Landing = ({ go }: any) => {
   // attribution), swap these block headers for the richer vertex shape the
   // designs demand.
   const liveBlocks = useLatestBlocks(8);
+  const chainStats = useChainStats();
+  const liveClobMarkets = useClobMarkets(25);
+  const liveMarketCount = liveClobMarkets.data?.markets.length ?? 0;
+  const liveClobVolume = (liveClobMarkets.data?.markets ?? []).reduce((sum: number, row: any) => {
+    const price = Number(row.lastPrice);
+    const volume = Number(row.totalVolumeBase);
+    return sum + (Number.isFinite(price) && Number.isFinite(volume) ? price * volume : 0);
+  }, 0);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -215,6 +281,7 @@ const Landing = ({ go }: any) => {
   const privPct   = 100 - pubPct;
   const totalSupply = pubSupply / (pubPct/100);     // implied total (M)
   const privSupply  = totalSupply - pubSupply;      // M LYTH shielded
+  const displayedVol24h = liveMarketCount > 0 ? liveClobVolume : vol24h;
 
   return (
     <div className="ms-page ms-overview">
@@ -266,9 +333,9 @@ const Landing = ({ go }: any) => {
           />
           <HeadlineStat
             label="24h volume"
-            value={fmtUsd(vol24h)}
-            sub={`across ${markets.length} markets`}
-            delta="+12.4% vs 7d avg"
+            value={fmtUsd(displayedVol24h)}
+            sub={liveMarketCount > 0 ? `indexed across ${liveMarketCount} CLOB markets` : `across ${markets.length} markets`}
+            delta={liveMarketCount > 0 ? "lyth_clobMarkets" : "+12.4% vs 7d avg"}
             tone="ok"
             onClick={()=>go("#/markets")}
           />
@@ -287,7 +354,11 @@ const Landing = ({ go }: any) => {
         <div className="ov-conf__item">
           <div className="ov-conf__label">Round</div>
           <div className="ov-conf__num mono num">{fmt(round)}</div>
-          <div className="ov-conf__hint mono">committed ~340ms ago</div>
+          <div className="ov-conf__hint mono">
+            {chainStats.data?.latestHeight !== undefined
+              ? `block ${fmt(chainStats.data.latestHeight)} · ${chainStats.data.peerCount} peers`
+              : "committed ~340ms ago"}
+          </div>
         </div>
         <div className="ov-conf__item">
           <div className="ov-conf__label">Commit latency</div>
@@ -408,6 +479,9 @@ const Landing = ({ go }: any) => {
             ["Cluster directory", "lyth_clusterDirectory"],
             ["Cluster status", "lyth_clusterStatus"],
             ["Operator risk", "lyth_operatorRisk"],
+            ["Transaction feed", "lyth_txFeed"],
+            ["Search index", "lyth_search"],
+            ["CLOB markets", "lyth_clobMarkets"],
           ].map(([label, method]) => (
             <div key={method} className="ms-prop">
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:14}}>
@@ -1405,6 +1479,7 @@ const App = () => {
   else if (parts[0]==="stats")      page = <StatsPage go={go}/>;
   else if (parts[0]==="get-monolythium") page = <GetMonolythiumPage go={go}/>;
   else if (parts[0]==="protocol")   page = <ProtocolPage go={go}/>;
+  else if (parts[0]==="transactions") page = <TransactionsPage go={go}/>;
   else if (parts[0]==="wallets")    page = <WalletsPage go={go}/>;
   else if (parts[0]==="wallet")     page = <WalletPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
   else if (parts[0]==="tx")         page = <TxPage hash={decodeURIComponent(parts[1]||"")} go={go}/>;

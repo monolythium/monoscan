@@ -10,7 +10,7 @@ monoscan.xyz — public blockchain explorer for Monolythium v4.0.
 
 Monoscan is the public web explorer for **Monolythium v4.0** — a Rust-native L1 running **LythiumDAG-BFT (Starfish-C)** consensus on testnet `chain_id 69420`. It surfaces blocks, transactions, clusters/operators, protocol capability gates, and the explorer shell for markets, gap records, and natural-language chain search.
 
-Built as a Vite + React 19 + TypeScript SPA, served as a static `dist/` bundle behind Caddy. The current build is partially live against any Monolythium v4.0 node's JSON-RPC surface: head/block data, fee history, mempool, clusters, account basics, delegation views, capability gates, checkpoints, certificate lookups, and operator-exit ledgers route through `@monolythium/core-sdk`. Indexer-only views such as market feeds, rich wallet aggregates, decoded transaction traces, gap records, and natural-language enrichment remain fixture-backed until the mono-core indexer APIs are live.
+Built as a Vite + React 19 + TypeScript SPA, served as a static `dist/` bundle behind Caddy. The current build is live-first against any Monolythium v4.0 node's JSON-RPC and `/api/v1` surfaces: head/block data, global transaction feed, fee history, mempool, clusters, account basics, address profile/flow, delegation views, capability gates, checkpoints, certificate lookups, operator-exit ledgers, CLOB markets/trades/OHLC/order books, gap records, and search route through `@monolythium/core-sdk`. Fixture data remains only for enrichment that the node does not expose yet, such as token metadata, USD market aggregates, operator reputation history, reward charts, and the deterministic natural-language mock router.
 
 ## Who this is for
 

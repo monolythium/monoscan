@@ -359,11 +359,10 @@ const _mkTrades = (mid: number, count: number, seedN: number) => {
 };
 
 /**
- * TODO(monolythium-vision): markets surface needs a real CLOB feed —
- * Stage 3 keeps this as a mock fallback. The native CLOB precompile lives
- * under `mono-core/crates/precompile-clob` but does not yet expose a
- * `lyth_clob_*` JSON-RPC namespace; once it does the MarketsPage +
- * MarketPage swap to live order books and decoded trades.
+ * TODO(monolythium-vision): market list/search still needs an aggregate CLOB
+ * feed. MarketPage now probes `lyth_clobMarket` when
+ * `VITE_MONOSCAN_MARKET_IDS` maps a symbol to a market id; this fixture stays
+ * as the list and unconfigured-detail fallback.
  */
 export const MARKETS: any[] = MARKET_DEFS.map(([rank, sym, name, kind, tier]) => {
   const t = _mkToken(sym, name, rank, kind, tier);
@@ -549,8 +548,9 @@ const _mkFlow = (seed: number) => {
 };
 
 /**
- * TODO(monolythium-vision): rich list + per-wallet detail need the
- * indexer (`get_address_activity` per the whitepaper v4.0 explorer surface).
+ * TODO(monolythium-vision): WalletsPage now probes `lyth_richList` for the
+ * configured LYTH token id. These rows remain the distribution chart and
+ * fallback list until token metadata + percentage supply aggregates are live.
  */
 const _wallets: any = WALLET_TAGS.map((w: any, i: number) => {
   const seed = parseInt(w.addr.replace(/[^0-9a-f]/gi, "").slice(-4) || (i + 1).toString(), 16) || i + 1;
@@ -608,10 +608,10 @@ const TX_KINDS: Record<string, { label: string; icon: string }> = {
 
 /**
  * TODO(monolythium-vision): partially superseded by Stage 3 — `TxPage` now
- * reads `eth_getTransactionReceipt` live via `useTxByHashLive` and overrides
- * status / block / gas with live values. The attestation panel (BLS sig
- * timeline, DAC coverage, decoded calldata, log topics) still falls back to
- * this fixture until mono-core OI-0070 ships indexer-side enrichment.
+ * reads `lyth_decodeTx` live via `useTxByHashLive` and overrides status,
+ * block, gas, decoded calldata, logs, and PQ-finality fields. Signature timing
+ * and DAC coverage still fall back to this fixture until the chain exposes
+ * per-signer timing.
  */
 export const TXS: Record<string, any> = {};
 WALLETS.forEach((w: any) => {

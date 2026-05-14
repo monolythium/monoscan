@@ -12,22 +12,33 @@ import { MONOSCAN_DATA, MARKETS, NETWORK_STATS, WALLETS, TXS } from "./data/mock
 import {
   useAccountCode,
   useAccountHistory,
+  useAddressFlow,
+  useAddressActivityKind,
   useAddressLabel,
+  useAddressProfile,
   useActivePrecompiles,
   useBlsRoundCertificate,
   useBlockByHash,
   useBlockByNumber,
   useCapabilities,
+  useChainStats,
   useClusterResignations,
+  useDagParents,
   useEncryptionKey,
   useFeeStats,
+  useGapRecords,
   useLatestCheckpoint,
+  useLatestTransactions,
   useNetworkStatus,
+  useRichList,
+  useSearch,
   useTokenBalances,
   useTxByHashLive,
+  useVerticesAtRound,
   useWalletDelegations,
   useWalletDelegationHistory,
 } from "./data/hooks";
+import { getLythTokenId } from "./sdk/client";
 
 /* Light helpers — keep local so this file is self-contained */
 const _fmt  = (n: any) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -39,6 +50,55 @@ const _fmtLyth = (wei: bigint | null | undefined) => {
   const whole = wei / 1_000_000_000_000_000_000n;
   const frac = (wei % 1_000_000_000_000_000_000n) / 1_000_000_000_000_000n;
   return `${whole.toLocaleString()}.${frac.toString().padStart(3, "0")} LYTH`;
+};
+const _fmtLythRaw = (value: string | bigint | number | null | undefined) => {
+  if (value === null || value === undefined || value === "") return null;
+  try {
+    return _fmtLyth(BigInt(value));
+  } catch {
+    return `${_fmtRawToken(value)} LYTH`;
+  }
+};
+const _fmtRawToken = (value: string | bigint | number | null | undefined) => {
+  if (value === null || value === undefined || value === "") return "—";
+  try {
+    const big = BigInt(value);
+    const whole = big / 1_000_000_000_000_000_000n;
+    const frac = (big % 1_000_000_000_000_000_000n) / 1_000_000_000_000_000n;
+    if (whole > 0n) return `${whole.toLocaleString()}.${frac.toString().padStart(3, "0")}`;
+    return big.toLocaleString();
+  } catch {
+    return String(value);
+  }
+};
+const _rawToLythNumber = (value: string | bigint | number | null | undefined) => {
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  try {
+    const text = String(value);
+    if (text.includes(".")) {
+      const n = Number(text);
+      return Number.isFinite(n) ? n : 0;
+    }
+    const big = BigInt(value);
+    const whole = Number(big / 1_000_000_000_000_000_000n);
+    const frac = Number((big % 1_000_000_000_000_000_000n) / 1_000_000_000_000_000n) / 1000;
+    return whole + frac;
+  } catch {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+};
+const _ageFromTs = (timestamp: number | null | undefined) => {
+  if (!timestamp) return "—";
+  const ms = timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000;
+  const diff = Math.max(0, Date.now() - ms);
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 };
 
 /* Tiny sparkline for stat cards */
@@ -85,6 +145,7 @@ const StatsPage = ({ go }: any) => {
   // TODO(monolythium-vision): swap mocked aggregate counters for indexer
   // aggregates the moment the indexer surface lands.
   const live = useNetworkStatus();
+  const chainStats = useChainStats();
   const feeStats = useFeeStats();
   const precompiles = useActivePrecompiles();
   const [round, setRound] = useStateX(t.vertices);
@@ -104,6 +165,11 @@ const StatsPage = ({ go }: any) => {
   const liveSyncState = live.data?.syncState ?? null;
   const liveSyncLag = live.data?.syncLag ?? null;
   const liveMempoolReady = live.data?.mempoolReady ?? null;
+  const liveMempoolPending = live.data?.mempoolPending ?? null;
+  const liveLatestBlock = chainStats.data?.latestHeight ?? live.data?.blockNumber ?? null;
+  const liveChainId = chainStats.data?.chainId ?? null;
+  const liveClusterTotal = chainStats.data?.clusters.total ?? liveClusters;
+  const livePeerTotal = chainStats.data?.peerCount ?? livePeers;
   const headRound = liveRound ?? round;
   const activePrecompiles = precompiles.data?.filter(p => (p as any).active ?? (p as any).enabled).length ?? null;
   const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
@@ -147,21 +213,33 @@ const StatsPage = ({ go }: any) => {
         <StatCounter label="Active wallets" value={_fmt(t.walletsTotal)} sub={`${_fmt(t.walletsActive24h)} active in 24h`} tone="neutral" onClick={()=>go("#/wallets")} clickable/>
         <StatCounter
           label="Clusters"
-          value={liveClusters !== null ? `${liveClusters}` : `${t.clustersActive}/${t.clustersTotal}`}
+          value={liveClusterTotal !== null ? `${liveClusterTotal}` : `${t.clustersActive}/${t.clustersTotal}`}
           sub={
             liveHealthyClusters !== null
               ? `${liveHealthyClusters} healthy · sync ${liveSyncState ?? "unknown"}${liveSyncLag !== null ? ` · lag ${liveSyncLag}` : ""}`
-              : livePeers !== null
-              ? `${livePeers} peers · ${liveMempoolReady ?? 0} ready in mempool`
+              : livePeerTotal !== null
+              ? `${livePeerTotal} peers · ${liveMempoolReady ?? 0} ready in mempool`
               : `${t.operators} unique operators`
           }
           tone="neutral"
           onClick={()=>go("#/clusters")}
           clickable
         />
+        <StatCounter
+          label="Latest block"
+          value={liveLatestBlock !== null ? _fmtI(liveLatestBlock) : "—"}
+          sub={liveChainId !== null ? `chain ${liveChainId} · lyth_chainStats` : "lyth_chainStats"}
+          tone="neutral"
+        />
         <StatCounter label="Smart contracts deployed" value={_fmt(t.contracts)} sub={`${t.tokensListed} listed tokens`} tone="neutral"/>
         <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub={feeStats.data?.baseFeePerGas.length ? `${gasPriceSub} · ${feeStats.data.baseFeePerGas.length} samples` : gasPriceSub} tone="neutral"/>
         <StatCounter label="Protocol surfaces" value={activePrecompiles !== null ? `${activePrecompiles}` : "—"} sub={precompiles.data ? `${precompiles.data.length} precompiles reported` : "live precompile registry"} tone="neutral"/>
+        <StatCounter
+          label="Mempool"
+          value={liveMempoolReady !== null ? _fmtI(liveMempoolReady) : "—"}
+          sub={liveMempoolPending !== null ? `${_fmtI(liveMempoolPending)} pending · ${chainStats.data ? "chain stats" : "mempool RPC"}` : "ready queue"}
+          tone="neutral"
+        />
         <StatCounter label="Private vs public txs" value={`${((t.privateTxs/t.txTotal)*100).toFixed(1)}%`} sub={`${_abbr(t.privateTxs)} private · ${_abbr(t.publicTxs)} public`} tone="neutral"/>
         <StatCounter label="Chain age" value={S.network.chainAge} sub={`genesis ${S.network.genesisDate}`} tone="neutral"/>
       </section>
@@ -299,9 +377,12 @@ const HealthRow = ({ label, value, tone }: any) => (
    WALLETS PAGE — rich list + pie
 ===================================================== */
 const WalletsPage = ({ go }: any) => {
+  const richList = useRichList(getLythTokenId(), 30);
+  const liveHolders = richList.data?.holders ?? [];
   const wallets = WALLETS;
   const [hover, setHover] = useStateX(null);
   const topSum = wallets.slice(0, 30).reduce((a,w)=>a+w.bal, 0);
+  const usingLiveRichList = liveHolders.length > 0;
 
   return (
     <div className="ms-page ms-wallets">
@@ -313,8 +394,10 @@ const WalletsPage = ({ go }: any) => {
           </p>
         </div>
         <div className="mono" style={{fontSize:11,color:"var(--fg-500)",textAlign:"right"}}>
-          <div>{_fmt(NETWORK_STATS.totals.walletsTotal)} total wallets</div>
-          <div style={{color:"var(--fg-400)"}}>top 30 hold {_abbr(topSum)} LYTH</div>
+          <div>{usingLiveRichList ? `${liveHolders.length} live holders` : `${_fmt(NETWORK_STATS.totals.walletsTotal)} total wallets`}</div>
+          <div style={{color:"var(--fg-400)"}}>
+            {usingLiveRichList ? `token ${_short(richList.data?.tokenId, 12)}` : `top 30 hold ${_abbr(topSum)} LYTH`}
+          </div>
         </div>
       </div>
 
@@ -346,7 +429,18 @@ const WalletsPage = ({ go }: any) => {
               <th style={{textAlign:"right"}}>Tx count</th>
             </tr></thead>
             <tbody>
-              {wallets.map((w)=>(
+              {usingLiveRichList ? liveHolders.map((h:any)=>(
+                <tr key={h.address} onClick={()=>go(`#/wallet/${encodeURIComponent(h.address)}`)}>
+                  <td className="mono" style={{color:h.rank<=3?"var(--gold)":"var(--fg-400)",fontWeight:h.rank<=3?600:400}}>#{h.rank}</td>
+                  <td>
+                    <div style={{fontWeight:500,fontSize:13,color:"var(--fg-200)",fontFamily:"var(--f-mono)"}}>{_short(h.address,14)}</div>
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>live rich list · updated block {Number(h.updatedAtBlock).toLocaleString()}</div>
+                  </td>
+                  <td className="mono num" style={{textAlign:"right"}}>{_fmtRawToken(h.balance)} <span style={{color:"var(--fg-500)",fontSize:10}}>LYTH</span></td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                </tr>
+              )) : wallets.map((w)=>(
                 <tr key={w.addr} onClick={()=>go(`#/wallet/${encodeURIComponent(w.addr)}`)}>
                   <td className="mono" style={{color:w.rank<=3?"var(--gold)":"var(--fg-400)",fontWeight:w.rank<=3?600:400}}>#{w.rank}</td>
                   <td>
@@ -439,33 +533,61 @@ const SupplyPie = ({ slices, hover, setHover }: any) => {
 ===================================================== */
 const WalletPage = ({ addr, go }: any) => {
   const live = useAccountHistory(addr);
+  const profile = useAddressProfile(addr);
+  const addressFlow = useAddressFlow(addr, 250);
+  const activityKind = useAddressActivityKind(addr);
   const delegations = useWalletDelegations(addr);
   const delegationHistory = useWalletDelegationHistory(addr, 20);
   const tokenBalances = useTokenBalances(addr);
   const addressLabel = useAddressLabel(addr);
   const code = useAccountCode(addr);
-  const w = WALLETS.find(w => w.addr === addr);
-  if (!w) return (
-    <div className="ms-page">
-      <h1 className="ms-h1">Wallet not found</h1>
-      <p className="mono" style={{color:"var(--fg-400)"}}>No such address: <code>{addr}</code></p>
-      <button className="ov-cta" onClick={()=>go("#/wallets")}>← Back to rich list</button>
-    </div>
-  );
+  const fixtureWallet = WALLETS.find(w => w.addr === addr);
+  const profileAccount = profile.data?.account ?? null;
+  const profileBalance = profileAccount?.nativeBalance ?? null;
+  const liveBalanceNumber = profileBalance
+    ? _rawToLythNumber(profileBalance)
+    : live.data?.balance
+      ? Number(live.data.balance / 1_000_000_000_000_000_000n)
+      : 0;
+  const zeroFlow = Array.from({ length: 30 }, (_, day) => ({ day, in: 0, out: 0, stake: 0, reward: 0 }));
+  const w = fixtureWallet ?? {
+    rank: "live",
+    addr,
+    tag: null,
+    bal: liveBalanceNumber,
+    pct: 0,
+    extras: [],
+    txs: [],
+    flow30d: zeroFlow,
+    firstSeenAgo: "live RPC",
+    stakedTo: null,
+    txCount: live.data?.nonce ?? 0,
+  };
   const totalIn  = w.flow30d.reduce((a,d)=>a+d.in, 0);
   const totalOut = w.flow30d.reduce((a,d)=>a+d.out, 0);
   const totalRw  = w.flow30d.reduce((a,d)=>a+d.reward, 0);
-  const net      = totalIn - totalOut;
-  const liveBalance = _fmtLyth(live.data?.balance);
-  const liveNonce = live.data?.nonce ?? null;
+  const flowTotals = addressFlow.data?.totals ?? null;
+  const flowIn = flowTotals ? _rawToLythNumber(flowTotals.inbound) : totalIn;
+  const flowOut = flowTotals ? _rawToLythNumber(flowTotals.outbound) : totalOut;
+  const flowStake = flowTotals ? _rawToLythNumber(flowTotals.stake) : w.flow30d.reduce((a,d)=>a+d.stake,0);
+  const flowRewards = totalRw;
+  const displayedNet = flowIn - flowOut;
+  const liveBalance = _fmtLythRaw(profileBalance) ?? _fmtLyth(live.data?.balance);
+  const liveNonce = profileAccount?.nonce ?? live.data?.nonce ?? null;
   const livePolicy = live.data?.policy ?? null;
   const liveActivity = live.data?.activity ?? [];
   const liveDelegations = delegations.data?.rows ?? [];
   const liveDelegationHistory = delegationHistory.data ?? [];
-  const liveTokenBalances = tokenBalances.data ?? [];
-  const liveLabel = addressLabel.data ?? null;
+  const liveTokenBalances = profile.data?.tokenBalances?.length ? profile.data.tokenBalances : (tokenBalances.data ?? []);
+  const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
+  const profileActivityKind = profile.data?.activity?.kind ?? null;
+  const liveActivityKind = profileActivityKind ? { kind: profileActivityKind, retention: profile.data?.activity?.retention ?? null } : (activityKind.data ?? null);
+  const liveRetention = liveActivityKind?.retention && typeof liveActivityKind.retention === "object"
+    ? liveActivityKind.retention as Record<string, unknown>
+    : null;
+  const earliestRetained = liveRetention?.earliestRetained;
   const codeValue = code.data ?? null;
-  const isContract = Boolean(codeValue && codeValue !== "0x");
+  const isContract = profileAccount?.isContract ?? Boolean(codeValue && codeValue !== "0x");
 
   return (
     <div className="ms-page ms-wallet-detail">
@@ -479,9 +601,10 @@ const WalletPage = ({ addr, go }: any) => {
             <span>First seen · {w.firstSeenAgo}</span>
             <span className="sep"/>
             <span>{liveNonce !== null ? `${liveNonce} confirmed sends` : `${_fmt(w.txCount)} transactions`}</span>
+            {liveActivityKind && <><span className="sep"/><span>Activity · {liveActivityKind.kind}</span></>}
             {liveLabel && <><span className="sep"/><span>{liveLabel.category}</span></>}
             {livePolicy && <><span className="sep"/><span>Policy · {livePolicy.mode}{livePolicy.explicit ? " explicit" : ""}</span></>}
-            {codeValue !== null && <><span className="sep"/><span>{isContract ? "Contract account" : "Externally-owned account"}</span></>}
+            {(codeValue !== null || profileAccount) && <><span className="sep"/><span>{isContract ? "Contract account" : "Externally-owned account"}</span></>}
             {w.stakedTo && <><span className="sep"/><span>Delegating to <a onClick={()=>go(`#/cluster/${w.stakedTo.replace("C-","").replace(/^0+/,"")}`)} style={{color:"var(--gold)",cursor:"pointer"}}>{w.stakedTo}</a></span></>}
           </div>
         </div>
@@ -500,12 +623,13 @@ const WalletPage = ({ addr, go }: any) => {
         </div>
       </section>
 
-      {(livePolicy || liveDelegations.length > 0 || codeValue !== null) && (
+      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || codeValue !== null || profileAccount) && (
         <section className="tx-split">
           <Card title="Live account">
             <div className="tx-kv">
               <KV label="Balance" value={liveBalance ?? "—"} mono/>
               <KV label="Nonce" value={liveNonce !== null ? `${liveNonce}` : "—"} mono/>
+              <KV label="Activity index" value={liveActivityKind ? `${liveActivityKind.kind}${earliestRetained ? ` · retained from block ${Number(earliestRetained).toLocaleString()}` : ""}` : "—"}/>
               <KV label="Policy" value={livePolicy ? `${livePolicy.mode}${livePolicy.explicit ? " · explicit" : ""}` : "—"}/>
               <KV label="Label" value={liveLabel ? `${liveLabel.category}${liveLabel.displayName ? ` · ${liveLabel.displayName}` : ""}` : "—"}/>
               <KV label="Code" value={codeValue === null ? "—" : isContract ? `${codeValue.length} chars` : "0x"} mono/>
@@ -581,15 +705,39 @@ const WalletPage = ({ addr, go }: any) => {
       {/* Flow diagram */}
       <section>
         <h3 className="ov-section-title">30-day flow</h3>
-        <p className="ov-section-desc">Inflow, outflow, staking delegations, and rewards earned. Net position {net >= 0 ? "grew" : "shrank"} by {_fmt(Math.abs(net))} LYTH over the period.</p>
+        <p className="ov-section-desc">
+          {flowTotals ? `Indexed sample flow from ${addressFlow.data?.sampleSize ?? 0} retained rows.` : "Inflow, outflow, staking delegations, and rewards earned."}
+          {" "}Net position {displayedNet >= 0 ? "grew" : "shrank"} by {_fmt(Math.abs(displayedNet))} LYTH over the period.
+        </p>
         <div className="wd-flow-grid">
-          <FlowCard label="In" value={totalIn} unit="LYTH" tone="ok" series={w.flow30d.map(d=>d.in)}/>
-          <FlowCard label="Out" value={totalOut} unit="LYTH" tone="err" series={w.flow30d.map(d=>d.out)}/>
-          <FlowCard label="Staked" value={w.flow30d.reduce((a,d)=>a+d.stake,0)} unit="LYTH" tone="neutral" series={w.flow30d.map(d=>d.stake)}/>
-          <FlowCard label="Rewards" value={totalRw} unit="LYTH" tone="gold" series={w.flow30d.map(d=>d.reward)}/>
+          <FlowCard label="In" value={flowIn} unit="LYTH" tone="ok" series={w.flow30d.map(d=>d.in)}/>
+          <FlowCard label="Out" value={flowOut} unit="LYTH" tone="err" series={w.flow30d.map(d=>d.out)}/>
+          <FlowCard label="Staked" value={flowStake} unit="LYTH" tone="neutral" series={w.flow30d.map(d=>d.stake)}/>
+          <FlowCard label="Rewards" value={flowRewards} unit="LYTH" tone="gold" series={w.flow30d.map(d=>d.reward)}/>
         </div>
-        <FlowDiagram wallet={w} totalIn={totalIn} totalOut={totalOut} totalRw={totalRw}/>
+        <FlowDiagram wallet={w} totalIn={flowIn} totalOut={flowOut} totalRw={flowRewards}/>
       </section>
+
+      {(addressFlow.data?.topCounterparties?.length ?? 0) > 0 && (
+        <section>
+          <h3 className="ov-section-title">Indexed counterparties</h3>
+          <Card title="">
+            <table className="ms-table">
+              <thead><tr><th>Address</th><th style={{textAlign:"right"}}>Events</th><th style={{textAlign:"right"}}>Inbound</th><th style={{textAlign:"right"}}>Outbound</th></tr></thead>
+              <tbody>
+                {addressFlow.data?.topCounterparties.map((row:any)=>(
+                  <tr key={row.address} onClick={()=>go(`#/wallet/${encodeURIComponent(row.address)}`)}>
+                    <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(row.address, 16)}</td>
+                    <td className="mono num" style={{textAlign:"right"}}>{Number(row.eventCount).toLocaleString()}</td>
+                    <td className="mono num" style={{textAlign:"right",color:"var(--ok)"}}>{_fmtRawToken(row.inbound)}</td>
+                    <td className="mono num" style={{textAlign:"right",color:"var(--err)"}}>{_fmtRawToken(row.outbound)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </section>
+      )}
 
       {/* Recent transactions */}
       <section>
@@ -752,6 +900,191 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
 };
 
 /* =====================================================
+   TRANSACTIONS INDEX
+   Live recent transactions via `lyth_txFeed`, with block-window scanning
+   as the compatibility fallback for older nodes.
+===================================================== */
+const TransactionsPage = ({ go }: any) => {
+  const [query, setQuery] = useStateX("");
+  const live = useLatestTransactions(60, 32);
+  const hasLiveDigest = live.data !== undefined && live.data !== null;
+  const fixtureRows = useMemoX(() =>
+    Object.values(TXS)
+      .sort((a: any, b: any) => (b.round ?? 0) - (a.round ?? 0))
+      .slice(0, 80)
+      .map((tx: any) => ({
+        hash: tx.hash,
+        blockNumber: tx.round,
+        blockLabel: `round ${Number(tx.round ?? 0).toLocaleString()}`,
+        when: tx.when,
+        from: tx.from,
+        to: tx.to,
+        valueLabel: `${_fmt(tx.amount)} ${tx.denom}`,
+        gasLabel: tx.gasUsed ? _fmt(tx.gasUsed) : "—",
+        methodLabel: tx.kindLabel ?? tx.kind ?? "transaction",
+        status: tx.status ?? "ok",
+        source: "fixture",
+      })),
+    [],
+  );
+  const liveRows = (live.data?.rows ?? []).map((tx: any) => {
+    const input = tx.input ?? "0x";
+    return {
+      hash: tx.hash,
+      blockNumber: tx.blockNumber,
+      blockLabel: `block ${Number(tx.blockNumber).toLocaleString()}`,
+      when: _ageFromTs(tx.blockTimestamp),
+      from: tx.from,
+      to: tx.to ?? "contract creation",
+      valueLabel: `${_fmtRawToken(tx.value)} LYTH`,
+      gasLabel: _fmt(tx.gasLimit),
+      methodLabel: input && input !== "0x" ? `${input.slice(0, 10)} call` : "transfer",
+      status: "ok",
+      source: "live",
+    };
+  });
+  const rows = hasLiveDigest ? liveRows : fixtureRows;
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? rows.filter((row: any) =>
+        `${row.hash} ${row.from} ${row.to} ${row.methodLabel} ${row.blockLabel}`.toLowerCase().includes(q),
+      )
+    : rows;
+  const sourceText = hasLiveDigest
+    ? live.data?.source === "lyth_txFeed"
+      ? `lyth_txFeed · cursor ${live.data.nextCursor ? "available" : "head"}`
+      : `live API · scanned ${live.data?.scannedBlocks ?? 0} blocks`
+    : live.isLoading
+      ? "checking live API"
+      : "fixture fallback";
+
+  return (
+    <div className="ms-page ms-transactions">
+      <section style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:18,flexWrap:"wrap"}}>
+        <div>
+          <div className="cap" style={{color:"var(--gold)"}}>Transactions</div>
+          <h1 className="ms-h1" style={{margin:"4px 0 0"}}>Latest transactions</h1>
+          <p className="mono" style={{color:"var(--fg-400)",margin:"8px 0 0",fontSize:13,maxWidth:720,lineHeight:1.55}}>
+            Recent public transactions flattened from the newest block window. Private transfer amounts remain hidden by protocol rules.
+          </p>
+        </div>
+        <button className="ov-cta ov-cta--ghost" onClick={()=>live.refetch()}>
+          {live.isFetching ? "Refreshing…" : "Refresh"}
+        </button>
+      </section>
+
+      <section className="stats-counters">
+        <StatCounter
+          label="Rows shown"
+          value={_fmtI(filtered.length)}
+          sub={`${rows.length.toLocaleString()} loaded`}
+          tone="gold"
+        />
+        <StatCounter
+          label="Latest block"
+          value={hasLiveDigest ? _fmtI(live.data?.latestBlock ?? 0) : "—"}
+          sub={sourceText}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Scanned txs"
+          value={hasLiveDigest ? _fmtI(live.data?.scannedTransactions ?? 0) : _fmtI(Object.keys(TXS).length)}
+          sub={hasLiveDigest ? (live.data?.source === "lyth_txFeed" ? "reported by transaction feed" : "reported by block pages") : "fixture rows"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Filter"
+          value={q ? "active" : "all"}
+          sub={q ? _short(q, 18) : "hash, address, method, block"}
+          tone="neutral"
+        />
+      </section>
+
+      <Card
+        title="Transaction feed"
+        right={
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span className={`pill ${hasLiveDigest ? "ok" : "warn"}`} style={{fontSize:10}}>
+              {hasLiveDigest ? "live" : live.isLoading ? "loading" : "fallback"}
+            </span>
+            <input
+              value={query}
+              onChange={(e)=>setQuery(e.target.value)}
+              placeholder="Filter hash, address, method"
+              style={{
+                width:240,
+                padding:"6px 10px",
+                border:"1px solid var(--fg-700)",
+                borderRadius:8,
+                background:"rgba(255,255,255,0.03)",
+                color:"var(--fg-100)",
+                fontSize:12,
+              }}
+            />
+          </div>
+        }
+      >
+        {filtered.length === 0 ? (
+          <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+            {hasLiveDigest ? "No transactions found in the scanned block window." : "No fixture transactions matched the filter."}
+          </p>
+        ) : (
+          <div style={{overflowX:"auto"}}>
+          <table className="ms-table ms-table--tight">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Hash · method</th>
+                <th>Block</th>
+                <th>From</th>
+                <th>To</th>
+                <th style={{textAlign:"right"}}>Value</th>
+                <th style={{textAlign:"right"}}>Gas limit</th>
+                <th style={{textAlign:"right"}}>Age</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((tx: any) => (
+                <tr key={`${tx.source}-${tx.hash}`} onClick={()=>go(`#/tx/${encodeURIComponent(tx.hash)}`)}>
+                  <td>
+                    <span className={`pill ${tx.status === "failed" ? "err" : "ok"}`} style={{fontSize:9.5,padding:"2px 7px"}}>
+                      {tx.status === "failed" ? "failed" : "ok"}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="mono" style={{fontSize:12,color:"var(--fg-100)"}}>{_short(tx.hash, 14)}</div>
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{tx.methodLabel}</div>
+                  </td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
+                    <a onClick={(e)=>{ e.stopPropagation(); go(`#/round/${tx.blockNumber}`); }} style={{color:"var(--gold)",cursor:"pointer"}}>
+                      {tx.blockLabel}
+                    </a>
+                  </td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
+                    <a onClick={(e)=>{ e.stopPropagation(); go(`#/wallet/${encodeURIComponent(tx.from)}`); }} style={{cursor:"pointer"}}>
+                      {_short(tx.from, 13)}
+                    </a>
+                  </td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
+                    <a onClick={(e)=>{ e.stopPropagation(); go(`#/wallet/${encodeURIComponent(tx.to)}`); }} style={{cursor:"pointer"}}>
+                      {_short(tx.to, 13)}
+                    </a>
+                  </td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)"}}>{tx.valueLabel}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>{tx.gasLabel}</td>
+                  <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>{tx.when}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+};
+
+/* =====================================================
    TRANSACTION DETAIL PAGE
    Tries `eth_getTransactionByHash` + receipt for live sender, recipient,
    status, block, value, and gas first; falls back to the mock fixture for
@@ -761,12 +1094,32 @@ const TxPage = ({ hash, go }: any) => {
   const live = useTxByHashLive(hash);
   const liveTx = live.data?.tx ?? null;
   const liveReceipt = live.data?.receipt ?? null;
+  const liveDecoded: any = live.data?.decoded ?? null;
   const fixture = TXS[hash];
+  const decodedCalldata = liveDecoded?.decodedCalldata && typeof liveDecoded.decodedCalldata === "object"
+    ? liveDecoded.decodedCalldata as Record<string, any>
+    : null;
+  const decodedMethod = decodedCalldata?.method ?? decodedCalldata?.methodName ?? decodedCalldata?.signature ?? null;
+  const decodedInputText = decodedCalldata
+    ? JSON.stringify(decodedCalldata, null, 2)
+    : liveDecoded?.memo
+      ? liveDecoded.memo
+      : null;
+  const liveLogs = Array.isArray(liveDecoded?.logs)
+    ? liveDecoded.logs.map((log:any, i:number) => ({
+        topic: log.topics?.[0] ?? `log ${i + 1}`,
+        args: {
+          address: log.address,
+          topics: (log.topics ?? []).join(", "),
+          data: log.data,
+        },
+      }))
+    : [];
 
   // Merge live receipt over the fixture so the UI always renders a complete
-  // shape. When the live node is reachable and returns a real receipt the
-  // status / block / gas fields are authoritative; the rest comes from the
-  // mocked fixture until OI-0070 ships indexer-side enrichment.
+  // shape. `lyth_decodeTx` now provides decoded calldata, logs, status, gas,
+  // and PQ-finality metadata; the signature timing chart remains fixture-only
+  // until the chain exposes per-signer timing.
   const tx = liveTx || liveReceipt
     ? {
         ...(fixture ?? {
@@ -803,10 +1156,15 @@ const TxPage = ({ hash, go }: any) => {
         amount: liveTx?.value ? Number(BigInt(liveTx.value)) / 1e18 : (fixture?.amount ?? 0),
         gasLimit: liveTx?.gas ? Number(BigInt(liveTx.gas)) : (fixture?.gasLimit ?? 0),
         nonce: liveTx?.nonce ? Number(BigInt(liveTx.nonce)) : (fixture?.nonce ?? 0),
-        contractInput: liveTx?.input && liveTx.input !== "0x" ? liveTx.input : (fixture?.contractInput ?? null),
+        kindLabel: decodedMethod ?? fixture?.kindLabel ?? "Transfer",
+        inputNote: liveDecoded?.memo ?? fixture?.inputNote ?? "",
+        contractInput: decodedInputText ?? (liveTx?.input && liveTx.input !== "0x" ? liveTx.input : (fixture?.contractInput ?? null)),
+        logs: liveLogs.length ? liveLogs : (fixture?.logs ?? []),
         status:
-          (typeof liveReceipt?.status === "number"
-            ? (liveReceipt.status === 1 ? "ok" : "failed")
+          (liveDecoded?.status
+            ? (liveDecoded.status === "success" ? "ok" : liveDecoded.status === "unknown" ? "pending" : "failed")
+            : typeof liveReceipt?.status === "number"
+            ? (liveReceipt.status === 1 ? "ok" : liveReceipt.status === -1 ? "pending" : "failed")
             : (fixture?.status ?? "ok")),
         gasUsed: Number(
           liveReceipt?.gas_used ?? fixture?.gasUsed ?? 0,
@@ -851,7 +1209,7 @@ const TxPage = ({ hash, go }: any) => {
           </div>
           <div className="tx-hero__status">
             <span className={`tx-status tx-status--${tx.status}`}>
-              {tx.status === "ok" ? "✓ Confirmed" : "✗ Failed"}
+              {tx.status === "ok" ? "✓ Confirmed" : tx.status === "pending" ? "◐ Receipt pending" : "✗ Failed"}
             </span>
           </div>
         </div>
@@ -892,7 +1250,7 @@ const TxPage = ({ hash, go }: any) => {
         <Card title="Transaction">
           <div className="tx-kv">
             <KV label="Hash" value={tx.hash} mono/>
-            <KV label="Status" value={tx.status === "ok" ? "Confirmed" : "Failed"}/>
+            <KV label="Status" value={tx.status === "ok" ? "Confirmed" : tx.status === "pending" ? "Receipt pending" : "Failed"}/>
             <KV label="Kind" value={tx.kindLabel}/>
             <KV label="Round" value={tx.roundLabel} link={()=>{}} linkLabel="view round →"/>
             <KV label="Timestamp" value={tx.when}/>
@@ -905,11 +1263,34 @@ const TxPage = ({ hash, go }: any) => {
           <div className="tx-kv">
             <KV label="Fee" value={`${tx.fee.toFixed(4)} ${tx.feeDenom}`} mono/>
             <KV label="Gas used" value={`${_fmt(tx.gasUsed)} / ${_fmt(tx.gasLimit)}`}/>
-            <KV label="Gas efficiency" value={`${((tx.gasUsed/tx.gasLimit)*100).toFixed(1)}%`}/>
-            <KV label="Effective rate" value={`${((tx.fee/tx.amount)*10000).toFixed(2)} bp`} />
+            <KV label="Gas efficiency" value={tx.gasLimit > 0 ? `${((tx.gasUsed/tx.gasLimit)*100).toFixed(1)}%` : "—"}/>
+            <KV label="Effective rate" value={tx.amount > 0 ? `${((tx.fee/tx.amount)*10000).toFixed(2)} bp` : "—"} />
+            {liveDecoded?.errorCode && <KV label="Error code" value={liveDecoded.errorCode} mono/>}
           </div>
         </Card>
       </section>
+
+      {liveDecoded && (
+        <section className="tx-split">
+          <Card title="Decoded by RPC">
+            <div className="tx-kv">
+              <KV label="Method" value={decodedMethod ?? "raw transfer / memo"} mono/>
+              <KV label="Memo" value={liveDecoded.memo ?? "—"}/>
+              <KV label="Round" value={liveDecoded.round !== null ? Number(liveDecoded.round).toLocaleString() : "—"} mono/>
+              <KV label="Cluster" value={liveDecoded.clusterId !== null ? `C-${String(Number(liveDecoded.clusterId)+1).padStart(3,"0")}` : "—"} mono/>
+              <KV label="Logs" value={`${liveDecoded.logs?.length ?? 0}`} mono/>
+            </div>
+          </Card>
+          <Card title="Finality">
+            <div className="tx-kv">
+              <KV label="BLS attestation" value={liveDecoded.blsAttestation ? "present" : "—"}/>
+              <KV label="PQ checkpoint" value={liveDecoded.pqAttestation ? `#${Number(liveDecoded.pqAttestation.checkpointHeight).toLocaleString()}` : "—"} mono/>
+              <KV label="PQ signer" value={liveDecoded.pqAttestation?.signerId ? _short(liveDecoded.pqAttestation.signerId, 18) : "—"} mono/>
+              <KV label="Finality proof" value={liveDecoded.finalityProof ? "present" : "—"}/>
+            </div>
+          </Card>
+        </section>
+      )}
 
       {/* Attestation */}
       <section>
@@ -992,13 +1373,17 @@ const RoundPage = ({ round, go }: any) => {
   const roundNumber = Number.isFinite(r) ? r : undefined;
   const liveBlock = useBlockByNumber(roundNumber);
   const roundCert = useBlsRoundCertificate(roundNumber);
+  const dagParents = useDagParents(roundNumber);
+  const verticesAtRound = useVerticesAtRound(roundNumber);
   const cur = MONOSCAN_DATA?.consensus?.round || 0;
   const verts = (MONOSCAN_DATA?.recentVertices || []).filter(v => v.round === r);
   const liveHeader: any = liveBlock.data ?? null;
   const liveCert: any = roundCert.data ?? null;
+  const liveParents = dagParents.data?.parents ?? null;
+  const liveVertices = verticesAtRound.data?.vertices ?? [];
   const signerIndices = liveCert?.signer_indices ?? liveCert?.signerIndices ?? [];
   const signerCount = Number(liveCert?.signer_count ?? liveCert?.signerCount ?? signerIndices.length ?? 0);
-  const found = liveHeader || verts.length > 0 || (r > 0 && r <= cur);
+  const found = liveHeader || liveVertices.length > 0 || (liveParents?.length ?? 0) > 0 || verts.length > 0 || (r > 0 && r <= cur);
   return (
     <div className="ms-page">
       <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/")} style={{marginBottom:16}}>← Overview</button>
@@ -1067,13 +1452,54 @@ const RoundPage = ({ round, go }: any) => {
               )}
             </div>
           )}
-          {/*
-            Per-vertex breakdown (tx payloads, BLS agg, DAC) is still mock — the
-            indexer view that maps round → cluster vertices ships with
-            mono-core OI-0070.
-            TODO(monolythium-vision): replace this table with the indexer's
-            cluster-vertex feed for the requested round.
-          */}
+          {(liveParents || dagParents.isLoading || dagParents.isFetched) && (
+            <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
+              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>
+                DAG parents · lyth_dagParents
+              </div>
+              {liveParents && liveParents.length > 0 ? (
+                <table className="ms-table">
+                  <thead><tr><th>Parent vertex</th><th style={{textAlign:"right"}}>Round</th></tr></thead>
+                  <tbody>
+                    {liveParents.map((p:any)=>(
+                      <tr key={p.vertexHash}>
+                        <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(p.vertexHash, 24)}</td>
+                        <td className="mono num" style={{textAlign:"right"}}>{Number(p.round).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+                  {dagParents.isLoading ? "checking DAG parents…" : "No retained parent vertices reported for this round."}
+                </p>
+              )}
+            </div>
+          )}
+          {(liveVertices.length > 0 || verticesAtRound.isLoading || verticesAtRound.isFetched) && (
+            <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
+              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>
+                Vertices · lyth_verticesAtRound
+              </div>
+              {liveVertices.length > 0 ? (
+                <table className="ms-table">
+                  <thead><tr><th>Author</th><th>Vertex hash</th></tr></thead>
+                  <tbody>
+                    {liveVertices.map((v:any)=>(
+                      <tr key={v.vertexHash}>
+                        <td className="mono">operator {Number(v.author).toLocaleString()}</td>
+                        <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(v.vertexHash, 24)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+                  {verticesAtRound.isLoading ? "checking live vertices…" : "No retained vertices reported for this round."}
+                </p>
+              )}
+            </div>
+          )}
           <div className="ms-card" style={{padding:0}}>
             <table className="ms-table">
               <thead><tr><th>Cluster</th><th>Txs</th><th>BLS agg</th><th>DAC</th><th></th></tr></thead>
@@ -1107,6 +1533,7 @@ const SearchPage = ({ q, go }: any) => {
   const looksLikeRound = /^\d+$/.test(q || "");
   const liveBlockByHash = useBlockByHash(looksLikeHash ? q : undefined);
   const liveTx = useTxByHashLive(looksLikeHash ? q : undefined);
+  const liveSearch = useSearch(q, 12);
   const D: any = MONOSCAN_DATA || {};
   const markets = (MARKETS || []).filter(m =>
     m.sym.toLowerCase().includes(ql) || (m.name||"").toLowerCase().includes(ql)
@@ -1121,8 +1548,14 @@ const SearchPage = ({ q, go }: any) => {
   const wallets = (D.richList || []).filter(w =>
     (w.addr||"").toLowerCase().includes(ql) || (w.tag||"").toLowerCase().includes(ql)
   );
+  const rpcHits = liveSearch.data?.hits ?? [];
   const liveHits = (liveBlockByHash.data ? 1 : 0) + (liveTx.data ? 1 : 0) + (looksLikeAddress ? 1 : 0) + (looksLikeRound ? 1 : 0);
-  const total = liveHits + markets.length + clusters.length + operators.length + wallets.length;
+  const total = rpcHits.length + liveHits + markets.length + clusters.length + operators.length + wallets.length;
+  const hitRoute = (route: string | null | undefined) => {
+    if (!route) return "#/";
+    if (route.startsWith("#")) return route;
+    return `#${route.startsWith("/") ? route : `/${route}`}`;
+  };
 
   const Section = ({ title, items, render }: any) =>
     items.length === 0 ? null : (
@@ -1139,8 +1572,31 @@ const SearchPage = ({ q, go }: any) => {
       <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/")} style={{marginBottom:16}}>← Overview</button>
       <h1 className="ms-h1" style={{marginBottom:6}}>Search · <span style={{color:"var(--gold)"}}>"{q}"</span></h1>
       <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
-        {total === 0 ? "No matches. Try a round number, C-NNN cluster id, 0x… operator address, tx hash, or ticker." : `${total} result${total===1?"":"s"}`}
+        {total === 0
+          ? liveSearch.isLoading
+            ? "Checking live search index…"
+            : "No matches. Try a round number, C-NNN cluster id, 0x… operator address, tx hash, or ticker."
+          : `${total} result${total===1?"":"s"}`}
       </p>
+
+      {(rpcHits.length > 0 || liveSearch.isLoading) && (
+        <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
+          <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>Live search · lyth_search</div>
+          {rpcHits.length > 0 ? (
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {rpcHits.map((hit:any)=>(
+                <div key={`${hit.type}-${hit.id}`} className="ov-moverow" onClick={()=>go(hitRoute(hit.route))}>
+                  <span className="mono" style={{color:"var(--gold)",minWidth:100}}>{hit.type}</span>
+                  <span className="mono" style={{flex:1}}>{_short(hit.id, 18)}</span>
+                  <span style={{color:"var(--fg-400)"}}>{hit.label}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mono" style={{fontSize:11,color:"var(--fg-500)"}}>checking indexed search…</div>
+          )}
+        </div>
+      )}
 
       {(looksLikeRound || looksLikeAddress || liveBlockByHash.data || liveTx.data || liveBlockByHash.isLoading || liveTx.isLoading) && (
         <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
@@ -1218,6 +1674,9 @@ const ProtocolPage = ({ go }: any) => {
   const feeStats = useFeeStats();
   const encryptionKey = useEncryptionKey();
   const network = useNetworkStatus();
+  const gapTo = network.data?.blockNumber ?? undefined;
+  const gapFrom = gapTo !== undefined ? Math.max(0, gapTo - 64) : undefined;
+  const gapRecords = useGapRecords(gapFrom, gapTo);
   const rows = precompiles.data ?? [];
   const capabilityRows = Object.values(capabilities.data?.capabilities ?? {}).filter(Boolean) as any[];
   const registryRows = capabilityRows.length
@@ -1234,6 +1693,7 @@ const ProtocolPage = ({ go }: any) => {
   const checkpointRows = checkpoint.data ?? [];
   const checkpointHeight = checkpointRows[0]?.blockHeight ?? null;
   const resignationRows = resignations.data?.rows ?? [];
+  const recentGaps = gapRecords.data?.gapRecords ?? [];
   const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
     ? Number(feeStats.data.gasPrice) / 1e9
     : null;
@@ -1269,6 +1729,12 @@ const ProtocolPage = ({ go }: any) => {
           label="Operator exits"
           value={`${resignationRows.length}`}
           sub={resignations.data ? "cluster resignation ledger" : "lyth_getClusterResignations"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Gap windows"
+          value={`${recentGaps.length}`}
+          sub={gapRecords.data ? `last ${Number(gapRecords.data.range.fromBlock).toLocaleString()}-${Number(gapRecords.data.range.toBlock).toLocaleString()}` : "lyth_gapRecords"}
           tone="neutral"
         />
         <StatCounter
@@ -1326,6 +1792,27 @@ const ProtocolPage = ({ go }: any) => {
             ))}
           </tbody>
         </table>
+      </Card>
+      <Card title="Recent gap records">
+        {recentGaps.length ? (
+          <table className="ms-table">
+            <thead><tr><th>Blocks</th><th style={{textAlign:"right"}}>Count</th><th style={{textAlign:"right"}}>Duration</th><th>Reason</th></tr></thead>
+            <tbody>
+              {recentGaps.map((row:any)=>(
+                <tr key={`${row.startBlock}-${row.endBlock}`}>
+                  <td className="mono">{Number(row.startBlock).toLocaleString()} → {Number(row.endBlock).toLocaleString()}</td>
+                  <td className="mono num" style={{textAlign:"right"}}>{Number(row.blockCount).toLocaleString()}</td>
+                  <td className="mono num" style={{textAlign:"right"}}>{Number(row.durationSeconds).toLocaleString()}s</td>
+                  <td>{row.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+            {gapRecords.isLoading ? "checking recent block window…" : "No gaps reported in the most recent sampled block window."}
+          </p>
+        )}
       </Card>
       <Card title="Operator exit ledger">
         {resignationRows.length ? (
@@ -1849,4 +2336,4 @@ const Step = ({ label, value, active }: any) => (
 );
 
 /* Named exports — replaces the legacy window-attach pattern. */
-export { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage, ProtocolPage, GetMonolythiumPage };
+export { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, GetMonolythiumPage };
