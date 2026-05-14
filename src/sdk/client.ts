@@ -7,7 +7,13 @@
  * contract at ../../../CLAUDE.md section 6.
  */
 
-import { RpcClient, getRpcEndpoints, type RpcClientOptions } from "@monolythium/core-sdk";
+import {
+  ApiClient,
+  RpcClient,
+  getRpcEndpoints,
+  type ApiClientOptions,
+  type RpcClientOptions,
+} from "@monolythium/core-sdk";
 
 /**
  * Default RPC endpoint resolution.
@@ -39,6 +45,7 @@ export function isRpcConfigured(): boolean {
  * without paying the network-config cost on import.
  */
 let _rpc: RpcClient | null = null;
+let _api: ApiClient | null = null;
 
 export function getRpcClient(opts: RpcClientOptions = {}): RpcClient {
   if (!isRpcConfigured()) {
@@ -50,9 +57,22 @@ export function getRpcClient(opts: RpcClientOptions = {}): RpcClient {
   return _rpc;
 }
 
+/** Singleton `/api/v1` client derived from the configured RPC endpoint. */
+export function getApiClient(opts: ApiClientOptions = {}): ApiClient {
+  if (!isRpcConfigured()) {
+    throw new Error("Monoscan API URL is not configured");
+  }
+  if (_api === null) {
+    _api = new ApiClient(RPC_URL, opts);
+  }
+  return _api;
+}
+
 /** Reset the singleton — only for tests / hot reload. */
 export function resetRpcClient(): void {
   _rpc = null;
+  _api = null;
+  _indexer = null;
 }
 
 /**
@@ -81,13 +101,13 @@ export function isWebSocketEnabled(): boolean {
  * point but currently returns `not-implemented` over HTTP transport
  * (mono-core OI-0069 — until that lands monoscan long-polls instead).
  *
- * For now we expose the RPC as the indexer too so call sites can already
- * import the right symbol; the moment a real `IndexerClient` lands the swap
- * is one-line.
+ * For now we expose the node API as the indexer too so call sites can already
+ * import the right symbol; the moment a dedicated streaming `IndexerClient`
+ * lands the swap is one-line.
  */
 export interface IndexerClient {
-  /** Same wire-shape as RpcClient.call — kept for forward compat. */
-  call<T>(method: string, params?: unknown): Promise<T>;
+  /** Same relative-path shape as ApiClient.get — kept for forward compat. */
+  get<T>(path: string, query?: Record<string, string | number | bigint | boolean | null | undefined>): Promise<T>;
 }
 
 let _indexer: IndexerClient | null = null;
@@ -97,11 +117,10 @@ export function getIndexerClient(): IndexerClient {
     throw new Error("Monoscan indexer URL is not configured");
   }
   if (_indexer === null) {
-    // TODO(monolythium-vision): swap in a typed IndexerClient once mono-core
-    // ships the indexer API surface (see plans/monoscan.md Stage 3 +
-    // mono-core OI-0070 / OI-0069). Reusing RpcClient.call keeps the seam
-    // honest without forcing every page to know which client to import from.
-    _indexer = getRpcClient();
+    // TODO(monolythium-vision): swap in a streaming IndexerClient once
+    // mono-core ships OI-0069. The HTTP `/api/v1` client is enough for the
+    // current block, tx, address, cluster, and operator reads.
+    _indexer = getApiClient();
   }
   return _indexer;
 }
