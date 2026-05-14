@@ -223,7 +223,7 @@ const Landing = ({ go }: any) => {
           <div className="ov-hero__tag">
             <span className="ov-livedot"/>
             <span className="mono" style={{fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--fg-300)"}}>
-              Monarch · network live · {c.ratePerSec.toFixed(1)} rounds/s
+              Monolythium · network live · {c.ratePerSec.toFixed(1)} rounds/s
             </span>
           </div>
           <h1 className="ov-hero__title">
@@ -231,7 +231,7 @@ const Landing = ({ go }: any) => {
             <span style={{color:"var(--fg-300)"}}>in plain sight.</span>
           </h1>
           <p className="ov-hero__desc">
-            Monoscan is the public explorer for Monarch — every transfer, every trade, every stake
+            Monoscan is the public explorer for Monolythium — every transfer, every trade, every stake
             reward, reconciled against {c.signers.total} live clusters.
             Search anything, or dig into the data below.
           </p>
