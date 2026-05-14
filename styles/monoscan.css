@@ -121,10 +121,15 @@ body::after {
 .ms-header {
   display: flex; align-items: center; gap: 24px;
   padding: 16px 24px;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--fg-700);
   background: rgba(10,10,20,0.35); backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   position: relative;
+  z-index: 20;
 }
 .ms-brand { display: flex; align-items: center; gap: 12px; }
 .ms-brand__mark {
@@ -1616,7 +1621,7 @@ html[data-theme="light"] .ms-strip {
   border-bottom: 1px solid var(--fg-700);
 }
 
-.ms-theme { position: relative; flex-shrink: 0; }
+.ms-theme { position: relative; flex-shrink: 0; z-index: 30; }
 .ms-theme__btn {
   display: inline-flex;
   align-items: center;
@@ -1663,7 +1668,8 @@ html[data-theme="light"] .ms-strip {
   border-radius: 14px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 2px 0 rgba(255, 255, 255, 0.04) inset;
   padding: 10px;
-  z-index: 120;
+  z-index: 40;
+  pointer-events: auto;
 }
 html[data-theme="glass"] .ms-theme__pop {
   background: rgba(12, 18, 32, 0.96);
