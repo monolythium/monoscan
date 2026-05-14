@@ -10,7 +10,7 @@ import {
   Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
 import { MONOSCAN_DATA, MARKETS } from "./data/mock";
-import { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
+import { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage, ProtocolPage, GetMonolythiumPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
 import {
   useChainHead,
@@ -158,6 +158,7 @@ const Header = ({ go, route }: any) => {
         {[
           ["#/",            "Overview"],
           ["#/markets",     "Markets"],
+          ["#/get-monolythium", "Get LYTH"],
           ["#/clusters",    "Clusters"],
           ["#/operators",   "Operators"],
           ["#/wallets",     "Wallets"],
@@ -237,6 +238,7 @@ const Landing = ({ go }: any) => {
           </p>
           <div className="ov-hero__ctas">
             <button onClick={()=>go("#/markets")} className="ov-cta ov-cta--primary">Browse markets</button>
+            <button onClick={()=>go("#/get-monolythium")} className="ov-cta">Get Monolythium</button>
             <button onClick={()=>go("#/clusters")} className="ov-cta">Stake with a cluster</button>
             <button onClick={()=>document.getElementById("ov-feed")?.scrollIntoView({block:"center",behavior:"smooth"})} className="ov-cta ov-cta--ghost">See it live ↓</button>
           </div>
@@ -1401,6 +1403,7 @@ const App = () => {
   else if (parts[0]==="operator")   page = <OperatorPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
   else if (parts[0]==="operators")  page = <OperatorsPage go={go}/>;
   else if (parts[0]==="stats")      page = <StatsPage go={go}/>;
+  else if (parts[0]==="get-monolythium") page = <GetMonolythiumPage go={go}/>;
   else if (parts[0]==="protocol")   page = <ProtocolPage go={go}/>;
   else if (parts[0]==="wallets")    page = <WalletsPage go={go}/>;
   else if (parts[0]==="wallet")     page = <WalletPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;

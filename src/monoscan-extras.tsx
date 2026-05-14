@@ -1358,5 +1358,231 @@ const tagFor = (addr) => {
   return w?.tag || null;
 };
 
+const GET_LYTH_TIERS = [
+  { id: "instant", label: "Instant", months: 0, bonus: 0, genesisPct: 100, note: "Liquid at genesis" },
+  { id: "six", label: "6 months", months: 6, bonus: 0, genesisPct: 0, note: "Base allocation" },
+  { id: "nine", label: "9 months", months: 9, bonus: 0.15, genesisPct: 0, note: "+15% allocation" },
+  { id: "twelve", label: "12 months", months: 12, bonus: 0.30, genesisPct: 0, note: "+30% allocation" },
+];
+
+const GET_LYTH_ASSETS = ["USDC", "USDT", "ETH", "BTC", "SOL"];
+const GET_LYTH_MIN_USD = 500;
+const GET_LYTH_MAX_USD = 25_000;
+const GET_LYTH_CAP_USD = 12_000_000;
+const GET_LYTH_FILLED_USD = 8_740_000;
+const GET_LYTH_PARTICIPANTS = 1847;
+const GET_LYTH_CHECKOUT_URL = "https://monohub.xyz/get-monolythium";
+
+const _usd = (n: number) => n.toLocaleString(undefined, {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: n >= 1000 ? 0 : 2,
+});
+
+const _amountInput = (value: string) => {
+  const parsed = Number(value.replace(/[^\d.]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const GetMonolythiumPage = ({ go }: any) => {
+  const lythMarket = MARKETS.find((m: any) => m.sym === "LYTH");
+  const referencePrice = lythMarket?.price ?? 8.42;
+  const [amount, setAmount] = useStateX("2500");
+  const [address, setAddress] = useStateX("");
+  const [email, setEmail] = useStateX("");
+  const [tierId, setTierId] = useStateX("twelve");
+  const [asset, setAsset] = useStateX("USDC");
+  const [reviewed, setReviewed] = useStateX(false);
+
+  const tier = GET_LYTH_TIERS.find(t => t.id === tierId) ?? GET_LYTH_TIERS[3];
+  const amountUsd = useMemoX(() => _amountInput(amount), [amount]);
+  const validAmount = amountUsd >= GET_LYTH_MIN_USD && amountUsd <= GET_LYTH_MAX_USD;
+  const validAddress = /^(0x[a-fA-F0-9]{40}|mono1[:a-zA-Z0-9]{8,}|lyth1[0-9a-z]{20,})$/.test(address.trim());
+  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+  const canPrepare = validAmount && validAddress && validEmail;
+  const baseLyth = amountUsd > 0 ? amountUsd / referencePrice : 0;
+  const bonusLyth = baseLyth * tier.bonus;
+  const totalLyth = baseLyth + bonusLyth;
+  const capFilledPct = Math.min(100, (GET_LYTH_FILLED_USD / GET_LYTH_CAP_USD) * 100);
+  const remainingUsd = GET_LYTH_CAP_USD - GET_LYTH_FILLED_USD;
+  const monthlyUnlock = tier.months > 0 ? totalLyth / tier.months : totalLyth;
+
+  const prepare = () => {
+    if (!canPrepare) {
+      window.__msToast?.("Enter a valid amount, wallet address, and email before checkout.");
+      return;
+    }
+    setReviewed(true);
+    window.__msToast?.("Reservation preview prepared. Official checkout opens on MonoHub.");
+  };
+
+  return (
+    <div className="ms-page ms-get">
+      <section className="get-hero">
+        <div className="get-hero__body">
+          <div className="ov-hero__tag get-hero__tag">
+            <span className="ov-livedot"/>
+            <span className="mono">GENESIS ACCESS · LYTH ALLOCATION</span>
+          </div>
+          <h1 className="ov-hero__title">
+            Get <span style={{color:"var(--gold)"}}>Monolythium</span>
+          </h1>
+          <p className="ov-hero__desc">
+            Build a LYTH allocation, compare vesting bonuses, and move to the official checkout when the reservation looks right.
+          </p>
+          <div className="ov-hero__ctas">
+            <button className="ov-cta ov-cta--primary" onClick={()=>document.getElementById("get-builder")?.scrollIntoView({block:"start", behavior:"smooth"})}>
+              Build allocation
+            </button>
+            <a className="ov-cta" href={GET_LYTH_CHECKOUT_URL} target="_blank" rel="noreferrer">
+              Official checkout
+            </a>
+            <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/markets")}>View LYTH market</button>
+          </div>
+        </div>
+        <div className="get-hero__panel">
+          <div className="mono get-hero__label">PROGRAM FILL</div>
+          <div className="get-hero__big mono num">{capFilledPct.toFixed(1)}%</div>
+          <div className="get-meter" aria-label="Genesis allocation program fill">
+            <span style={{width:`${capFilledPct}%`}}/>
+          </div>
+          <div className="get-hero__stats">
+            <div>
+              <span className="cap">Filled</span>
+              <b className="mono num">{_usd(GET_LYTH_FILLED_USD)}</b>
+            </div>
+            <div>
+              <span className="cap">Remaining</span>
+              <b className="mono num">{_usd(remainingUsd)}</b>
+            </div>
+            <div>
+              <span className="cap">Participants</span>
+              <b className="mono num">{_fmtI(GET_LYTH_PARTICIPANTS)}</b>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="get-grid" id="get-builder">
+        <Card title="Allocation builder" right={<span className="pill gold">Preview</span>}>
+          <div className="get-form">
+            <label className="get-field">
+              <span>Monolythium address</span>
+              <input value={address} onChange={e=>setAddress(e.target.value)} placeholder="0x... or mono1..." spellCheck={false}/>
+              <small className={address && !validAddress ? "is-warn" : ""}>
+                Destination wallet for the allocation.
+              </small>
+            </label>
+            <label className="get-field">
+              <span>Email</span>
+              <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" type="email"/>
+              <small className={email && !validEmail ? "is-warn" : ""}>Used for reservation receipts and checkout recovery.</small>
+            </label>
+            <label className="get-field">
+              <span>Amount</span>
+              <div className="get-money">
+                <span className="mono">$</span>
+                <input value={amount} onChange={e=>setAmount(e.target.value)} inputMode="decimal" aria-label="Allocation amount in USD"/>
+              </div>
+              <small className={amount && !validAmount ? "is-warn" : ""}>
+                Minimum {_usd(GET_LYTH_MIN_USD)} · maximum {_usd(GET_LYTH_MAX_USD)} per reservation.
+              </small>
+            </label>
+
+            <div className="get-field">
+              <span>Vesting</span>
+              <div className="get-tier-grid">
+                {GET_LYTH_TIERS.map(option => (
+                  <button
+                    key={option.id}
+                    type="button"
+                    className={`get-tier ${option.id === tier.id ? "is-active" : ""}`}
+                    onClick={()=>setTierId(option.id)}
+                  >
+                    <b>{option.label}</b>
+                    <span className="mono">{option.note}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="get-field">
+              <span>Payment asset</span>
+              <div className="get-pay-grid">
+                {GET_LYTH_ASSETS.map(option => (
+                  <button
+                    key={option}
+                    type="button"
+                    className={`get-pay ${option === asset ? "is-active" : ""}`}
+                    onClick={()=>setAsset(option)}
+                  >
+                    <span className="get-pay__coin">{option.slice(0, 1)}</span>
+                    <b>{option}</b>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="get-actions">
+              <button className="ov-cta ov-cta--primary" onClick={prepare}>Prepare reservation</button>
+              <a className="ov-cta" href={GET_LYTH_CHECKOUT_URL} target="_blank" rel="noreferrer">Continue on MonoHub</a>
+            </div>
+          </div>
+        </Card>
+
+        <aside className="get-side">
+          <Card title="Allocation preview">
+            <div className="get-preview">
+              <div className="get-preview__amount mono num">
+                {_fmt(totalLyth)} <span>LYTH</span>
+              </div>
+              <div className="get-preview__sub mono">
+                Estimated from {_usd(referencePrice)} LYTH market reference. Official checkout finalizes the rate.
+              </div>
+              <div className="get-kv">
+                <span>Base allocation</span><b className="mono num">{_fmt(baseLyth)} LYTH</b>
+                <span>Vesting bonus</span><b className="mono num">+{_fmt(bonusLyth)} LYTH</b>
+                <span>Paid with</span><b className="mono">{asset}</b>
+                <span>Genesis liquid</span><b className="mono">{tier.genesisPct}%</b>
+                <span>Monthly unlock</span><b className="mono num">{_fmt(monthlyUnlock)} LYTH</b>
+              </div>
+              {reviewed ? (
+                <div className="get-review is-ready">
+                  <span className="pill ok">Ready</span>
+                  <p>Open the official checkout to confirm payment details. Do not send funds to addresses shown outside the checkout.</p>
+                </div>
+              ) : (
+                <div className="get-review">
+                  <span className="pill warn">Draft</span>
+                  <p>Complete the builder to prepare a reservation preview before leaving Monoscan.</p>
+                </div>
+              )}
+            </div>
+          </Card>
+
+          <Card title="Unlock schedule">
+            <div className="get-timeline">
+              <Step label="Genesis" value={tier.genesisPct ? `${tier.genesisPct}% liquid` : "allocation recorded"} active/>
+              <Step label="Day 30" value={tier.months ? "cliff clears" : "fully liquid"}/>
+              <Step label={tier.months ? `${tier.months} months` : "No vesting"} value={tier.months ? "linear unlock complete" : "no lockup"}/>
+              <Step label="Staking" value="full allocation can be staked from day 1"/>
+            </div>
+          </Card>
+        </aside>
+      </section>
+    </div>
+  );
+};
+
+const Step = ({ label, value, active }: any) => (
+  <div className={`get-step ${active ? "is-active" : ""}`}>
+    <span/>
+    <div>
+      <b>{label}</b>
+      <small>{value}</small>
+    </div>
+  </div>
+);
+
 /* Named exports — replaces the legacy window-attach pattern. */
-export { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage, ProtocolPage };
+export { StatsPage, WalletsPage, WalletPage, TxPage, RoundPage, SearchPage, ProtocolPage, GetMonolythiumPage };
