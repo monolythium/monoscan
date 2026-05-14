@@ -1430,14 +1430,14 @@ const GET_LYTH_TIERS: Array<{
 ];
 
 const GET_LYTH_ASSETS = [
-  { id: "usdterc20", label: "USDT", sub: "ERC-20" },
-  { id: "usdttrc20", label: "USDT", sub: "TRC-20" },
-  { id: "usdc", label: "USDC", sub: "crypto" },
-  { id: "btc", label: "BTC", sub: "Bitcoin" },
-  { id: "eth", label: "ETH", sub: "Ethereum" },
-  { id: "trx", label: "TRX", sub: "Tron" },
-  { id: "ton", label: "TON", sub: "TON" },
-  { id: "atom", label: "ATOM", sub: "Cosmos" },
+  { id: "usdterc20", label: "USDT", sub: "ERC-20", logo: "https://cryptologos.cc/logos/tether-usdt-logo.svg" },
+  { id: "usdttrc20", label: "USDT", sub: "TRC-20", logo: "https://cryptologos.cc/logos/tether-usdt-logo.svg" },
+  { id: "usdc", label: "USDC", sub: "USD Coin", logo: "https://cryptologos.cc/logos/usd-coin-usdc-logo.svg" },
+  { id: "btc", label: "BTC", sub: "Bitcoin", logo: "https://cryptologos.cc/logos/bitcoin-btc-logo.svg" },
+  { id: "eth", label: "ETH", sub: "Ethereum", logo: "https://cryptologos.cc/logos/ethereum-eth-logo.svg" },
+  { id: "trx", label: "TRX", sub: "Tron", logo: "https://cryptologos.cc/logos/tron-trx-logo.svg" },
+  { id: "ton", label: "TON", sub: "Toncoin", logo: "https://cryptologos.cc/logos/toncoin-ton-logo.svg" },
+  { id: "atom", label: "ATOM", sub: "Cosmos", logo: "https://cryptologos.cc/logos/cosmos-atom-logo.svg" },
 ];
 const GET_LYTH_MIN_USD = 500;
 const GET_LYTH_MAX_USD = 100_000;
@@ -1731,9 +1731,13 @@ const GetMonolythiumPage = ({ go }: any) => {
                     className={`get-pay ${option.id === asset ? "is-active" : ""}`}
                     onClick={()=>setAsset(option.id)}
                   >
-                    <span className="get-pay__coin">{option.label.slice(0, 1)}</span>
-                    <b>{option.label}</b>
-                    <small>{option.sub}</small>
+                    <span className="get-pay__coin" aria-hidden="true">
+                      <img src={option.logo} alt="" loading="lazy"/>
+                    </span>
+                    <span className="get-pay__text">
+                      <b>{option.label}</b>
+                      <small>{option.sub}</small>
+                    </span>
                   </button>
                 ))}
               </div>
