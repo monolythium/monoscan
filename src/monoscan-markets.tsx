@@ -108,7 +108,8 @@ const MarketsPage = ({ go }: any) => {
     });
   }, [liveMarkets.data]);
 
-  const marketRows = liveRows.length ? liveRows : MARKETS;
+  const hasLiveMarketResponse = liveMarkets.data !== undefined && liveMarkets.data !== null;
+  const marketRows = hasLiveMarketResponse ? liveRows : MARKETS;
 
   const tabs = [
     { k:"all",    label:"All markets" },
@@ -146,7 +147,7 @@ const MarketsPage = ({ go }: any) => {
   const totalMCAP = marketRows.reduce((a,t)=>a+(t.mcap || 0),0);
   const totalVOL  = marketRows.reduce((a,t)=>a+(t.vol24h || 0),0);
   const totalLIQ  = marketRows.reduce((a,t)=>a+(t.liquidity || 0),0);
-  const usingLiveMarkets = liveRows.length > 0;
+  const usingLiveMarkets = hasLiveMarketResponse;
 
   return (
     <div className="ms-page ms-markets">
@@ -203,7 +204,9 @@ const MarketsPage = ({ go }: any) => {
           <input value={q} onChange={e=>setQ(e.target.value)}
             placeholder="Filter by symbol or name…"
             style={{fontSize:12.5,color:"var(--fg-200)"}}/>
-          <span className="mono" style={{color:"var(--fg-500)",fontSize:10,letterSpacing:"0.08em"}}>{filtered.length} / 100</span>
+          <span className="mono" style={{color:"var(--fg-500)",fontSize:10,letterSpacing:"0.08em"}}>
+            {filtered.length} / {usingLiveMarkets ? liveRows.length : 100}
+          </span>
         </div>
       </div>
 
@@ -224,46 +227,60 @@ const MarketsPage = ({ go }: any) => {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(t => (
-              <tr key={t.marketId ?? t.sym} onClick={()=>go(`#/market/${encodeURIComponent(t.live && !t.hasFixture ? t.marketId : t.sym)}`)}>
-                <td className="mono num" style={{color:"var(--fg-500)",fontSize:11.5}}>{t.rank}</td>
-                <td>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <TokenMark sym={t.sym} size={26}/>
-                    <div style={{minWidth:0}}>
-                      <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <span style={{fontWeight:500,color:"var(--fg-100)",fontSize:13}}>{t.sym}</span>
-                        {t.verified && <span title="verified" style={{color:"var(--gold)",fontSize:11,lineHeight:1}}>✓</span>}
-                      </div>
-                      <div className="mono" style={{fontSize:10.5,color:"var(--fg-500)",marginTop:1,letterSpacing:"0.02em"}}>
-                        {t.live && !t.hasFixture ? `market ${_shortMarketId(t.marketId)}` : t.name}
-                      </div>
-                    </div>
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={10}>
+                  <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
+                    {usingLiveMarkets
+                      ? "The live CLOB index responded, but it has no indexed markets matching this view yet."
+                      : "No fixture markets matched this filter."}
                   </div>
                 </td>
-                <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)",fontSize:12.5}}>{mkMoney(t.price)}</td>
-                <td className="mono num" style={{textAlign:"right",color: t.chg24h>=0?"var(--ok)":"var(--err)", fontSize:12}}>{t.chg24h>=0?"+":""}{t.chg24h.toFixed(2)}%</td>
-                <td style={{textAlign:"center"}}>
-                  <span style={{display:"inline-block"}}><Spark data={t.sparkline} up={t.chg24h>=0} w={96} h={24}/></span>
-                </td>
-                <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:12}}>{mkUsd(t.vol24h)}</td>
-                <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkUsd(t.liquidity)}</td>
-                <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkUsd(t.mcap)}</td>
-                <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkNum(t.holders)}</td>
-                <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>
-                  <span style={{display:"inline-flex",alignItems:"center",gap:5}}>
-                    <span className="dot" style={{color:"var(--ok)",width:5,height:5}}/>
-                    round {Number(t.trades[0]?.round ?? t.lastBlockHeight ?? 0).toLocaleString()}
-                  </span>
-                </td>
               </tr>
-            ))}
+            ) : (
+              filtered.map(t => (
+                <tr key={t.marketId ?? t.sym} onClick={()=>go(`#/market/${encodeURIComponent(t.live && !t.hasFixture ? t.marketId : t.sym)}`)}>
+                  <td className="mono num" style={{color:"var(--fg-500)",fontSize:11.5}}>{t.rank}</td>
+                  <td>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <TokenMark sym={t.sym} size={26}/>
+                      <div style={{minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{fontWeight:500,color:"var(--fg-100)",fontSize:13}}>{t.sym}</span>
+                          {t.verified && <span title="verified" style={{color:"var(--gold)",fontSize:11,lineHeight:1}}>✓</span>}
+                        </div>
+                        <div className="mono" style={{fontSize:10.5,color:"var(--fg-500)",marginTop:1,letterSpacing:"0.02em"}}>
+                          {t.live && !t.hasFixture ? `market ${_shortMarketId(t.marketId)}` : t.name}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)",fontSize:12.5}}>{mkMoney(t.price)}</td>
+                  <td className="mono num" style={{textAlign:"right",color: t.chg24h>=0?"var(--ok)":"var(--err)", fontSize:12}}>{t.chg24h>=0?"+":""}{t.chg24h.toFixed(2)}%</td>
+                  <td style={{textAlign:"center"}}>
+                    <span style={{display:"inline-block"}}><Spark data={t.sparkline} up={t.chg24h>=0} w={96} h={24}/></span>
+                  </td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:12}}>{mkUsd(t.vol24h)}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkUsd(t.liquidity)}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkUsd(t.mcap)}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkNum(t.holders)}</td>
+                  <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:5}}>
+                      <span className="dot" style={{color:"var(--ok)",width:5,height:5}}/>
+                      round {Number(t.trades[0]?.round ?? t.lastBlockHeight ?? 0).toLocaleString()}
+                    </span>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
 
       <div className="mono" style={{color:"var(--fg-500)",fontSize:11,textAlign:"center",letterSpacing:"0.04em",padding:"6px 0"}}>
-        Listing policy: top 100 markets by rolling 24h volume · re-ranked every 240 rounds · full list on the Monoscan API
+        {usingLiveMarkets
+          ? "Live CLOB index. Empty rows mean the node has no indexed markets yet, not that demo fixtures are hidden by filters."
+          : "Listing policy: top 100 markets by rolling 24h volume · re-ranked every 240 rounds · full list on the Monoscan API"}
       </div>
     </div>
   );

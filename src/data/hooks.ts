@@ -62,12 +62,16 @@ import {
   type FeeHistoryResponse,
   type GapRecordsResponse,
   type IndexerStatus,
+  type LythUpgradeStatusResponse,
   type MempoolSnapshot,
+  type MetricsRangeResponse,
+  type OperatorCapabilitiesResponse,
   type OperatorAuthorityResponse,
   type OperatorInfoResponse,
   type OperatorRiskResponse,
   type OperatorSigningActivityResponse,
   type UpcomingDutiesResponse,
+  type PeerSummaryAggregate,
   type PeerSummary,
   type PrecompileDescriptor,
   type RpcClient,
@@ -76,6 +80,7 @@ import {
   type TransactionReceipt,
   type TransactionView,
   type TxFeedResponse,
+  type TxStatusResponse,
   type TokenBalanceRecord,
   type VerticesAtRoundResponse,
 } from "@monolythium/core-sdk";
@@ -361,10 +366,11 @@ export function useChainStrip() {
         }
       };
       try {
-        const [round, blockNumber, peerCount, debugPeers, sync, netVersion, clientVersion, mempool, indexer] =
+        const [round, blockNumber, peerSummary, peerCount, debugPeers, sync, netVersion, clientVersion, mempool, indexer] =
           await Promise.all([
             settle(rpc.lythCurrentRound().then((r) => bigToNum(r.height))),
             settle(rpc.ethBlockNumber().then((b) => bigToNum(b))),
+            settle(rpc.lythPeerSummary()),
             settle(rpc.netPeerCount().then((p) => bigToNum(p))),
             settle(rpc.debugP2pPeers().then((p) => p.length)),
             settle(rpc.lythSyncStatus()),
@@ -376,7 +382,7 @@ export function useChainStrip() {
         return {
           round,
           blockNumber,
-          peerCount: peerCount ?? debugPeers,
+          peerCount: (peerSummary as PeerSummaryAggregate | null)?.peerCount ?? peerCount ?? debugPeers,
           syncLag: sync ? bigToNum((sync as DagSyncStatus).lag) : null,
           syncState: sync ? (sync as DagSyncStatus).state : null,
           netVersion,
@@ -574,6 +580,21 @@ export function useTxByHashLive(hash: string | undefined) {
     },
     // Receipts are immutable once mined — no polling needed.
     staleTime: 60_000,
+  });
+}
+
+export function useTxStatus(hash: string | undefined) {
+  return useQuery<TxStatusResponse | null>({
+    queryKey: QK.txStatus(hash ?? ""),
+    enabled: Boolean(hash) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythTxStatus(hash as string);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
   });
 }
 
@@ -935,6 +956,22 @@ export function useP2pPeers() {
   });
 }
 
+export function usePeerSummary() {
+  return useQuery<PeerSummaryAggregate | null>({
+    queryKey: QK.peerSummary(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythPeerSummary();
+      } catch {
+        return null;
+      }
+    },
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  });
+}
+
 export interface FeeStatsLive {
   gasPrice: bigint | null;
   gasPriceSource: "eth_gasPrice" | "eth_feeHistory" | null;
@@ -1005,6 +1042,55 @@ export function useCapabilities() {
       }
     },
     staleTime: 60_000,
+  });
+}
+
+export function useOperatorCapabilities() {
+  return useQuery<OperatorCapabilitiesResponse | null>({
+    queryKey: QK.operatorCapabilities(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythOperatorCapabilities();
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useUpgradeStatus(block?: number | bigint | string | null) {
+  return useQuery<LythUpgradeStatusResponse | null>({
+    queryKey: QK.upgradeStatus(block ?? null),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythUpgradeStatus(block ?? undefined);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useMetricsRange(
+  selectors: readonly string[],
+  range?: readonly [number | bigint | string, number | bigint | string] | null,
+) {
+  return useQuery<MetricsRangeResponse | null>({
+    queryKey: QK.metricsRange(selectors, range ?? null),
+    enabled: selectors.length > 0 && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getRpcClient().lythMetricsRange([...selectors], range ?? undefined);
+      } catch {
+        return null;
+      }
+    },
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 }
 
@@ -1586,6 +1672,7 @@ export function useNetworkStatus() {
           chainStats,
           blockNumber,
           round,
+          peerSummary,
           peerCount,
           debugPeers,
           clusters,
@@ -1604,6 +1691,7 @@ export function useNetworkStatus() {
             ),
             settle(rpc.ethBlockNumber().then((b) => bigToNum(b))),
             settle(rpc.lythCurrentRound().then((r) => bigToNum(r.height))),
+            settle(rpc.lythPeerSummary()),
             settle(rpc.netPeerCount().then((p) => bigToNum(p))),
             settle(rpc.debugP2pPeers().then((p) => p.length)),
             settle(readClusterSet("active").then((v) => v?.length ?? null)),
@@ -1614,10 +1702,11 @@ export function useNetworkStatus() {
             settle(rpc.netVersion()),
           ]);
         const stats = chainStats as ChainStatsResponse | null;
+        const peers = peerSummary as PeerSummaryAggregate | null;
         return {
           blockNumber: stats?.latestHeight ?? blockNumber,
           round,
-          peerCount: stats?.peerCount ?? peerCount ?? debugPeers,
+          peerCount: peers?.peerCount ?? stats?.peerCount ?? peerCount ?? debugPeers,
           clusterCount: stats?.clusters.total ?? clusters,
           healthyClusterCount: healthyClusters,
           syncLag: sync ? bigToNum((sync as DagSyncStatus).lag) : null,

@@ -31,6 +31,8 @@ import {
   useClusterEntity,
   useDelegationCap,
   useEntityRatchet,
+  useMetricsRange,
+  useOperatorCapabilities,
 } from "./data/hooks";
 import { AskPage } from "./nl/AskPage";
 import { MsThemeSwitcher } from "./monoscan-theme";
@@ -234,6 +236,13 @@ const Header = ({ go, route }: any) => {
 
 /* ============== LANDING (rebuilt — calm, human-first) ============== */
 const fmtUsd = (n) => n>=1e9 ? `$${(n/1e9).toFixed(2)}B` : n>=1e6 ? `$${(n/1e6).toFixed(1)}M` : n>=1e3 ? `$${(n/1e3).toFixed(1)}K` : `$${n.toFixed(0)}`;
+const surfaceLabel = (method = "") =>
+  method
+    .replace(/^lyth_/, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+const LANDING_METRIC_SELECTORS = ["committed_round", "mempool_depth", "proposer_latency", "attestation_rate"] as const;
 
 const Landing = ({ go }: any) => {
   const c = SCAN.consensus;
@@ -252,6 +261,12 @@ const Landing = ({ go }: any) => {
   const liveBlocks = useLatestBlocks(8);
   const chainStats = useChainStats();
   const liveClobMarkets = useClobMarkets(25);
+  const liveClusters = useClusterSet();
+  const liveMetrics = useMetricsRange(LANDING_METRIC_SELECTORS);
+  const operatorCapabilities = useOperatorCapabilities();
+  const liveStats = chainStats.data ?? null;
+  const hasLiveStats = liveStats !== null;
+  const hasLiveMarketResponse = liveClobMarkets.data !== undefined && liveClobMarkets.data !== null;
   const liveMarketCount = liveClobMarkets.data?.markets.length ?? 0;
   const liveClobVolume = (liveClobMarkets.data?.markets ?? []).reduce((sum: number, row: any) => {
     const price = Number(row.lastPrice);
@@ -281,7 +296,47 @@ const Landing = ({ go }: any) => {
   const privPct   = 100 - pubPct;
   const totalSupply = pubSupply / (pubPct/100);     // implied total (M)
   const privSupply  = totalSupply - pubSupply;      // M LYTH shielded
-  const displayedVol24h = liveMarketCount > 0 ? liveClobVolume : vol24h;
+  const displayedVol24h = hasLiveMarketResponse ? liveClobVolume : vol24h;
+  const displayedRound = liveStats?.latestHeight ?? round;
+  const liveClusterCount = liveStats?.clusters.total ?? liveClusters.data?.length ?? null;
+  const livePeerCount = liveStats?.peerCount ?? null;
+  const liveMempoolDepth = liveStats
+    ? liveStats.mempool.ready + liveStats.mempool.pending
+    : null;
+  const metricSeries = liveMetrics.data?.series ?? [];
+  const latestMetricValue = (selector: string) => {
+    const series = metricSeries.find((s: any) => s.selector === selector);
+    const sample = series?.samples?.at(-1) ?? null;
+    if (!sample) return null;
+    return {
+      value: Number(sample.value),
+      unit: series?.unit ?? null,
+      blockNumber: Number(sample.blockNumber),
+    };
+  };
+  const proposerLatency = latestMetricValue("proposer_latency");
+  const attestationRate = latestMetricValue("attestation_rate");
+  const reportedSurfaces = Object.entries(operatorCapabilities.data?.surfaces ?? {});
+  const operatorSurfaces = reportedSurfaces.length
+    ? reportedSurfaces.slice(0, 6).map(([method, cap]: any) => ({
+        label: surfaceLabel(method),
+        method,
+        status: cap.status,
+        tracking: cap.tracking ?? "reported by operator capabilities",
+      }))
+    : [
+        ["Cluster directory", "lyth_clusterDirectory"],
+        ["Cluster status", "lyth_clusterStatus"],
+        ["Operator risk", "lyth_operatorRisk"],
+        ["Transaction feed", "lyth_txFeed"],
+        ["Search index", "lyth_search"],
+        ["CLOB markets", "lyth_clobMarkets"],
+      ].map(([label, method]) => ({
+        label,
+        method,
+        status: operatorCapabilities.isLoading ? "loading" : "wired",
+        tracking: "typed SDK method with null-safe page handling",
+      }));
 
   return (
     <div className="ms-page ms-overview">
@@ -291,7 +346,9 @@ const Landing = ({ go }: any) => {
           <div className="ov-hero__tag">
             <span className="ov-livedot"/>
             <span className="mono" style={{fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--fg-300)"}}>
-              Monolythium · network live · {c.ratePerSec.toFixed(1)} rounds/s
+              {hasLiveStats
+                ? `Monolythium · block ${fmt(liveStats.latestHeight)} · ${liveStats.peerCount} peers`
+                : `Monolythium · demo feed · ${c.ratePerSec.toFixed(1)} rounds/s`}
             </span>
           </div>
           <h1 className="ov-hero__title">
@@ -300,7 +357,7 @@ const Landing = ({ go }: any) => {
           </h1>
           <p className="ov-hero__desc">
             Monoscan is the public explorer for Monolythium — every transfer, every trade, every stake
-            reward, reconciled against {c.signers.total} live clusters.
+            reward, reconciled against {liveClusterCount ?? c.signers.total} live clusters.
             Search anything, or dig into the data below.
           </p>
           <div className="ov-hero__ctas">
@@ -315,37 +372,47 @@ const Landing = ({ go }: any) => {
         <div className="ov-hero__stats">
           <HeadlineStat
             label="LYTH"
-            value={`$${mono.price.toFixed(3)}`}
-            sub={`mcap ${fmtUsd(mcap)}`}
-            delta={`${mono.chg24h>=0?"+":""}${mono.chg24h.toFixed(2)}% · 24h`}
-            tone={mono.chg24h>=0?"ok":"err"}
-            spark={mono.sparkline||[]}
+            value={hasLiveMarketResponse ? (liveMarketCount > 0 ? "live" : "not listed") : `$${mono.price.toFixed(3)}`}
+            sub={hasLiveMarketResponse ? `${liveMarketCount} indexed CLOB markets` : `mcap ${fmtUsd(mcap)}`}
+            delta={hasLiveMarketResponse ? "lyth_clobMarkets" : `${mono.chg24h>=0?"+":""}${mono.chg24h.toFixed(2)}% · 24h`}
+            tone={hasLiveMarketResponse ? (liveMarketCount > 0 ? "ok" : "neutral") : mono.chg24h>=0?"ok":"err"}
+            spark={hasLiveMarketResponse ? [] : mono.sparkline||[]}
             onClick={()=>go("#/market/LYTH")}
             accent
           />
           <HeadlineStat
-            label="Value staked"
-            value={`${tvs.toFixed(0)}M LYTH`}
-            sub={`≈ ${fmtUsd(tvs*1_000_000 * mono.price)} · secures the chain`}
-            delta={`+${avgApy.toFixed(1)}% APY · average`}
-            tone="gold"
+            label={hasLiveStats ? "Cluster set" : "Value staked"}
+            value={hasLiveStats ? `${liveClusterCount ?? 0}` : `${tvs.toFixed(0)}M LYTH`}
+            sub={hasLiveStats ? "live cluster descriptors; TVS aggregate pending" : `≈ ${fmtUsd(tvs*1_000_000 * mono.price)} · secures the chain`}
+            delta={hasLiveStats ? `${livePeerCount ?? 0} peers` : `+${avgApy.toFixed(1)}% APY · average`}
+            tone={hasLiveStats ? "neutral" : "gold"}
             onClick={()=>go("#/clusters")}
           />
           <HeadlineStat
             label="24h volume"
             value={fmtUsd(displayedVol24h)}
-            sub={liveMarketCount > 0 ? `indexed across ${liveMarketCount} CLOB markets` : `across ${markets.length} markets`}
-            delta={liveMarketCount > 0 ? "lyth_clobMarkets" : "+12.4% vs 7d avg"}
-            tone="ok"
+            sub={hasLiveMarketResponse ? `indexed across ${liveMarketCount} CLOB markets` : `across ${markets.length} markets`}
+            delta={hasLiveMarketResponse ? "live CLOB index" : "+12.4% vs 7d avg"}
+            tone={hasLiveMarketResponse && liveMarketCount === 0 ? "neutral" : "ok"}
             onClick={()=>go("#/markets")}
           />
-          <SupplySplitStat
-            publicM={pubSupply}
-            privateM={privSupply}
-            totalM={totalSupply}
-            pubPct={pubPct}
-            privTxs30d={SCAN.supply.privateTxs30d}
-          />
+          {hasLiveStats ? (
+            <HeadlineStat
+              label="Supply split"
+              value="pending"
+              sub="no live supply/privacy aggregate yet"
+              delta="fixture hidden in live mode"
+              tone="neutral"
+            />
+          ) : (
+            <SupplySplitStat
+              publicM={pubSupply}
+              privateM={privSupply}
+              totalM={totalSupply}
+              pubPct={pubPct}
+              privTxs30d={SCAN.supply.privateTxs30d}
+            />
+          )}
         </div>
       </section>
 
@@ -353,7 +420,7 @@ const Landing = ({ go }: any) => {
       <section className="ov-conf">
         <div className="ov-conf__item">
           <div className="ov-conf__label">Round</div>
-          <div className="ov-conf__num mono num">{fmt(round)}</div>
+          <div className="ov-conf__num mono num">{fmt(displayedRound)}</div>
           <div className="ov-conf__hint mono">
             {chainStats.data?.latestHeight !== undefined
               ? `block ${fmt(chainStats.data.latestHeight)} · ${chainStats.data.peerCount} peers`
@@ -363,24 +430,35 @@ const Landing = ({ go }: any) => {
         <div className="ov-conf__item">
           <div className="ov-conf__label">Commit latency</div>
           <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-            <div className="ov-conf__num mono num" style={{fontSize:24}}>{c.commitLatencyP95Ms}ms</div>
-            <span className="mono" style={{fontSize:10,color:"var(--ok)"}}>p95 · healthy</span>
+            <div className="ov-conf__num mono num" style={{fontSize:24}}>
+              {proposerLatency ? `${proposerLatency.value.toFixed(0)}${proposerLatency.unit ? ` ${proposerLatency.unit}` : ""}` : hasLiveStats ? "—" : `${c.commitLatencyP95Ms}ms`}
+            </div>
+            <span className="mono" style={{fontSize:10,color:"var(--ok)"}}>{proposerLatency ? "retained metric" : hasLiveStats ? "not retained" : "p95 · healthy"}</span>
           </div>
-          <MiniSeries data={latencySeries} color="var(--ok)" height={28}/>
+          {hasLiveStats ? null : <MiniSeries data={latencySeries} color="var(--ok)" height={28}/>}
         </div>
         <div className="ov-conf__item">
-          <div className="ov-conf__label">Throughput</div>
+          <div className="ov-conf__label">{hasLiveStats ? "Mempool depth" : "Throughput"}</div>
           <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-            <div className="ov-conf__num mono num" style={{fontSize:24}}>{c.ratePerSec.toFixed(2)}<span style={{fontSize:14,color:"var(--fg-400)"}}>/s</span></div>
-            <span className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>rounds</span>
+            <div className="ov-conf__num mono num" style={{fontSize:24}}>
+              {hasLiveStats ? fmt(liveMempoolDepth ?? 0) : c.ratePerSec.toFixed(2)}
+              {!hasLiveStats && <span style={{fontSize:14,color:"var(--fg-400)"}}>/s</span>}
+            </div>
+            <span className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>{hasLiveStats ? "ready + pending" : "rounds"}</span>
           </div>
-          <MiniSeries data={rateSeries} color="var(--gold)" height={28}/>
+          {hasLiveStats ? null : <MiniSeries data={rateSeries} color="var(--gold)" height={28}/>}
         </div>
         <div className="ov-conf__item">
-          <div className="ov-conf__label">Operator quorum · last 100 rounds</div>
-          <SignersHist data={c.signersHist}/>
+          <div className="ov-conf__label">{hasLiveStats ? "Attestation rate" : "Operator quorum · last 100 rounds"}</div>
+          {hasLiveStats ? (
+            <div className="ov-conf__num mono num" style={{fontSize:24}}>
+              {attestationRate ? `${(attestationRate.value / 100).toFixed(2)}%` : "—"}
+            </div>
+          ) : (
+            <SignersHist data={c.signersHist}/>
+          )}
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:6,letterSpacing:"0.04em"}}>
-            100 clusters · 7 or 10 operators per cluster
+            {hasLiveStats ? "lyth_metricsRange · node-local retention" : "100 clusters · 7 or 10 operators per cluster"}
           </div>
         </div>
         <button className="ov-conf__toggle mono" onClick={()=>setShowDeep(s=>!s)}>
@@ -390,21 +468,43 @@ const Landing = ({ go }: any) => {
 
       {showDeep && (
         <section className="ov-deep">
-          <Vital label="Vertex inclusion"     value={pct(c.vertexInclude,2)}     delta="-0.2pp" tone="ok"/>
-          <Vital label="DAC coverage"         value={pct(c.dacCoverage,2)}       delta="+0.1pp" tone="ok"/>
-          <Vital label="Reed-Solomon shards"  value={`${(c.shards/1000).toFixed(1)}k/s`} delta="+380" tone="ok"/>
-          <Vital label="BLS aggregation p95"  value={`${c.blsAggMs}ms`}          delta="-0.3ms" tone="ok"/>
-          <Vital label="Mempool depth"        value={fmt(c.mempool)}             delta="+112"   tone="warn"/>
-          <Vital label="Private throughput"   value="0.91k/s"                    delta="steady" tone="ok"/>
+          {hasLiveStats ? (
+            <>
+              <Vital label="Latest block" value={fmt(liveStats.latestHeight)} delta="lyth_chainStats" tone="ok"/>
+              <Vital label="Peers" value={fmt(liveStats.peerCount)} delta="net peer aggregate" tone="ok"/>
+              <Vital label="Mempool depth" value={fmt(liveMempoolDepth ?? 0)} delta="ready + pending" tone="neutral"/>
+              <Vital label="CLOB markets" value={fmt(liveMarketCount)} delta={hasLiveMarketResponse ? "lyth_clobMarkets" : "checking"} tone={liveMarketCount > 0 ? "ok" : "neutral"}/>
+              <Vital label="Proposer latency" value={proposerLatency ? `${proposerLatency.value.toFixed(0)}${proposerLatency.unit ? ` ${proposerLatency.unit}` : ""}` : "—"} delta="retained metric" tone="neutral"/>
+              <Vital label="Attestation rate" value={attestationRate ? `${(attestationRate.value / 100).toFixed(2)}%` : "—"} delta="retained metric" tone="neutral"/>
+            </>
+          ) : (
+            <>
+              <Vital label="Vertex inclusion"     value={pct(c.vertexInclude,2)}     delta="-0.2pp" tone="ok"/>
+              <Vital label="DAC coverage"         value={pct(c.dacCoverage,2)}       delta="+0.1pp" tone="ok"/>
+              <Vital label="Reed-Solomon shards"  value={`${(c.shards/1000).toFixed(1)}k/s`} delta="+380" tone="ok"/>
+              <Vital label="BLS aggregation p95"  value={`${c.blsAggMs}ms`}          delta="-0.3ms" tone="ok"/>
+              <Vital label="Mempool depth"        value={fmt(c.mempool)}             delta="+112"   tone="warn"/>
+              <Vital label="Private throughput"   value="0.91k/s"                    delta="steady" tone="ok"/>
+            </>
+          )}
         </section>
       )}
 
       {/* ---------- WHAT'S MOVING ---------- */}
-      <section className="ov-moving">
-        <MoveCard title="Top gainers · 24h" rows={gainers} kind="gain" go={go}/>
-        <MoveCard title="Top losers · 24h"  rows={losers}  kind="loss" go={go}/>
-        <MoveCard title="Most traded · 24h" rows={byVol}   kind="vol"  go={go}/>
-      </section>
+      {hasLiveMarketResponse && liveMarketCount === 0 ? (
+        <section className="ms-card" style={{padding:"18px 20px"}}>
+          <div className="cap" style={{color:"var(--gold)",marginBottom:8}}>Markets</div>
+          <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
+            The live CLOB index responded, but it has no indexed markets yet. Demo gainers, losers, and most-traded rows are hidden while the node is live.
+          </div>
+        </section>
+      ) : (
+        <section className="ov-moving">
+          <MoveCard title="Top gainers · 24h" rows={gainers} kind="gain" go={go}/>
+          <MoveCard title="Top losers · 24h"  rows={losers}  kind="loss" go={go}/>
+          <MoveCard title="Most traded · 24h" rows={byVol}   kind="vol"  go={go}/>
+        </section>
+      )}
 
       {/* ---------- LIVE FEED ---------- */}
       <section id="ov-feed" className="ov-feed">
@@ -454,19 +554,32 @@ const Landing = ({ go }: any) => {
                 ))}
           </div>
           <aside className="ov-feed__side">
-            <div className="cap" style={{marginBottom:8}}>Top staking clusters</div>
-            {SCAN.clusters.slice(0,5).map(cl=>(
-              <div key={cl.slot} className="ov-cluster-row" onClick={()=>go(`#/cluster/${cl.slot}`)}>
-                <div>
-                  <div className="mono" style={{fontSize:12.5,color:"var(--fg-100)",fontWeight:500}}>C-{String(cl.slot).padStart(3,"0")}</div>
-                  <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{cl.members}/{cl.size} live · {cl.tvs}M TVS</div>
+            <div className="cap" style={{marginBottom:8}}>{hasLiveStats ? "Live cluster descriptors" : "Top staking clusters"}</div>
+            {hasLiveStats && liveClusters.data ? (
+              liveClusters.data.slice(0,5).map((cl: any) => (
+                <div key={cl.id} className="ov-cluster-row" onClick={()=>go(`#/cluster/${Number(cl.id) + 1}`)}>
+                  <div>
+                    <div className="mono" style={{fontSize:12.5,color:"var(--fg-100)",fontWeight:500}}>C-{String(Number(cl.id) + 1).padStart(3,"0")}</div>
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{cl.threshold}-of-{cl.size} · {cl.aggregateHealth}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div className="mono num" style={{fontSize:12.5,color:"var(--gold)"}}>{cl.active ? "active" : "inactive"}</div>
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>RPC</div>
+                  </div>
                 </div>
-                <div style={{textAlign:"right"}}>
-                  <div className="mono num" style={{fontSize:12.5,color:"var(--gold)"}}>{(5.8+Math.random()*1.4).toFixed(2)}%</div>
-                  <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>APY</div>
+              ))
+            ) : SCAN.clusters.slice(0,5).map(cl=>(
+                <div key={cl.slot} className="ov-cluster-row" onClick={()=>go(`#/cluster/${cl.slot}`)}>
+                  <div>
+                    <div className="mono" style={{fontSize:12.5,color:"var(--fg-100)",fontWeight:500}}>C-{String(cl.slot).padStart(3,"0")}</div>
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{cl.members}/{cl.size} live · {cl.tvs}M TVS</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div className="mono num" style={{fontSize:12.5,color:"var(--gold)"}}>{(5.8+Math.random()*1.4).toFixed(2)}%</div>
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>APY</div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
             <a href="#/clusters" onClick={()=>go("#/clusters")} className="mono ov-seeall">See all clusters →</a>
           </aside>
         </div>
@@ -475,21 +588,17 @@ const Landing = ({ go }: any) => {
       {/* ---------- OPERATOR SURFACES + DENOMINATIONS ---------- */}
       <section className="ms-grid-2">
         <Card title="Live operator surfaces" right={<a className="ms-link" href="#/operators" onClick={()=>go("#/operators")}>Open →</a>}>
-          {[
-            ["Cluster directory", "lyth_clusterDirectory"],
-            ["Cluster status", "lyth_clusterStatus"],
-            ["Operator risk", "lyth_operatorRisk"],
-            ["Transaction feed", "lyth_txFeed"],
-            ["Search index", "lyth_search"],
-            ["CLOB markets", "lyth_clobMarkets"],
-          ].map(([label, method]) => (
-            <div key={method} className="ms-prop">
+          {operatorSurfaces.map((row) => (
+            <div key={row.method} className="ms-prop">
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:14}}>
-                <span style={{fontSize:13}}>{label}</span>
-                <span className="mono" style={{fontSize:11,color:"var(--gold)"}}>{method}</span>
+                <span style={{fontSize:13}}>{row.label}</span>
+                <span className="mono" style={{fontSize:11,color:"var(--gold)"}}>{row.method}</span>
               </div>
-              <div className="mono" style={{fontSize:10.5,color:"var(--fg-500)",marginTop:5}}>
-                wired through the TypeScript SDK with typed failure/null handling
+              <div className="mono" style={{display:"flex",alignItems:"center",gap:8,fontSize:10.5,color:"var(--fg-400)",marginTop:5}}>
+                <span className={`pill ${row.status === "available" || row.status === "wired" ? "ok" : "warn"}`} style={{fontSize:9.5,padding:"2px 7px"}}>
+                  {row.status}
+                </span>
+                <span>{row.tracking}</span>
               </div>
             </div>
           ))}

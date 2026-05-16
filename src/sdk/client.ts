@@ -181,6 +181,7 @@ export const QK = {
   blocksLatest: (n: number) => ["mono", "blocks", "latest", n] as const,
   txReceipt: (h: string) => ["mono", "tx", h] as const,
   txLive: (h: string) => ["mono", "tx", h, "live"] as const,
+  txStatus: (h: string) => ["mono", "tx", h, "status"] as const,
   txFeed: (limit: number, cursor: string | null = null) =>
     ["mono", "transactions", "feed", limit, cursor ?? "head"] as const,
   latestTransactions: (limit: number, blockWindow: number) =>
@@ -199,9 +200,24 @@ export const QK = {
   delegationCap: () => ["mono", "clusters", "delegation-cap"] as const,
   entityRatchet: () => ["mono", "clusters", "entity-ratchet"] as const,
   syncStatus: () => ["mono", "sync"] as const,
+  peerSummary: () => ["mono", "peers", "summary"] as const,
   p2pPeers: () => ["mono", "peers"] as const,
   precompiles: () => ["mono", "protocol", "precompiles"] as const,
   capabilities: () => ["mono", "protocol", "capabilities"] as const,
+  operatorCapabilities: () => ["mono", "protocol", "operator-capabilities"] as const,
+  upgradeStatus: (block: number | bigint | string | null = null) =>
+    ["mono", "protocol", "upgrade-status", block?.toString() ?? "latest"] as const,
+  metricsRange: (
+    selectors: readonly string[],
+    range: readonly [number | bigint | string, number | bigint | string] | null = null,
+  ) =>
+    [
+      "mono",
+      "protocol",
+      "metrics-range",
+      selectors.join(","),
+      range ? `${range[0].toString()}-${range[1].toString()}` : "latest",
+    ] as const,
   latestCheckpoint: (belowHeight: number | string | null = null) =>
     ["mono", "protocol", "latest-checkpoint", belowHeight ?? "latest"] as const,
   clusterResignations: (operator: string | null = null, status: string | null = null) =>
