@@ -29,11 +29,16 @@ import {
   useGapRecords,
   useLatestCheckpoint,
   useLatestTransactions,
+  useMetricsRange,
   useNetworkStatus,
+  useOperatorCapabilities,
+  usePeerSummary,
   useRichList,
   useSearch,
   useTokenBalances,
   useTxByHashLive,
+  useTxStatus,
+  useUpgradeStatus,
   useVerticesAtRound,
   useWalletDelegations,
   useWalletDelegationHistory,
@@ -135,6 +140,17 @@ const MiniBars = ({ data, w=120, h=32, fill="var(--err, #ff6b6b)" }: any) => {
 /* =====================================================
    STATISTICS PAGE
 ===================================================== */
+const LIVE_METRIC_SELECTORS = [
+  "committed_round",
+  "mempool_depth",
+  "gas_used_per_block",
+  "p2p_bandwidth_in",
+  "p2p_bandwidth_out",
+  "finality_lag",
+  "proposer_latency",
+  "attestation_rate",
+] as const;
+
 const StatsPage = ({ go }: any) => {
   const S = NETWORK_STATS;
   const t = S.totals;
@@ -148,6 +164,8 @@ const StatsPage = ({ go }: any) => {
   const chainStats = useChainStats();
   const feeStats = useFeeStats();
   const precompiles = useActivePrecompiles();
+  const peerSummary = usePeerSummary();
+  const metrics = useMetricsRange(LIVE_METRIC_SELECTORS);
   const [round, setRound] = useStateX(t.vertices);
   const [txLast24, setTxLast24] = useStateX(t.txLast24);
   useEffectX(() => {
@@ -172,6 +190,22 @@ const StatsPage = ({ go }: any) => {
   const livePeerTotal = chainStats.data?.peerCount ?? livePeers;
   const headRound = liveRound ?? round;
   const activePrecompiles = precompiles.data?.filter(p => (p as any).active ?? (p as any).enabled).length ?? null;
+  const peerData = peerSummary.data;
+  const peerHealth = peerData?.healthSummary ?? null;
+  const peerTotal = peerData?.peerCount ?? livePeerTotal;
+  const metricSeries = metrics.data?.series ?? [];
+  const availableMetricCount = metricSeries.filter((s:any) => s.status === "available").length;
+  const sampledMetricCount = metricSeries.filter((s:any) => Array.isArray(s.samples) && s.samples.length > 0).length;
+  const latestMetricSample = (selector: string) => {
+    const series = metricSeries.find((s:any) => s.selector === selector);
+    const sample = series?.samples?.at(-1) ?? null;
+    return sample ? { ...sample, unit: series?.unit ?? null } : null;
+  };
+  const finalityLag = latestMetricSample("finality_lag");
+  const attestationRate = latestMetricSample("attestation_rate");
+  const formatMetricValue = (sample: any) => sample
+    ? `${Number(sample.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}${sample.unit ? ` ${sample.unit}` : ""}`
+    : "—";
   const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
     ? Number(feeStats.data.gasPrice) / 1e9
     : null;
@@ -234,6 +268,30 @@ const StatsPage = ({ go }: any) => {
         <StatCounter label="Smart contracts deployed" value={_fmt(t.contracts)} sub={`${t.tokensListed} listed tokens`} tone="neutral"/>
         <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub={feeStats.data?.baseFeePerGas.length ? `${gasPriceSub} · ${feeStats.data.baseFeePerGas.length} samples` : gasPriceSub} tone="neutral"/>
         <StatCounter label="Protocol surfaces" value={activePrecompiles !== null ? `${activePrecompiles}` : "—"} sub={precompiles.data ? `${precompiles.data.length} precompiles reported` : "live precompile registry"} tone="neutral"/>
+        <StatCounter
+          label="Peer health"
+          value={peerHealth ? `${peerHealth.synced}/${peerTotal ?? peerData?.peerCount ?? 0}` : peerTotal !== null ? _fmtI(peerTotal) : "—"}
+          sub={peerData ? `${peerData.inboundCount ?? 0} inbound · ${peerData.outboundCount ?? 0} outbound · block ${_fmtI(peerData.asOfBlock)}` : "lyth_peerSummary"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Retained metrics"
+          value={metricSeries.length ? `${availableMetricCount}/${metricSeries.length}` : "—"}
+          sub={metrics.data ? `${sampledMetricCount} sampled · ${metrics.data.tracking}` : "lyth_metricsRange"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Finality lag"
+          value={formatMetricValue(finalityLag)}
+          sub={finalityLag ? `sampled at block ${_fmtI(finalityLag.blockNumber)}` : "finality_lag metric"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Attestation rate"
+          value={formatMetricValue(attestationRate)}
+          sub={attestationRate ? `sampled at block ${_fmtI(attestationRate.blockNumber)}` : "attestation_rate metric"}
+          tone="neutral"
+        />
         <StatCounter
           label="Mempool"
           value={liveMempoolReady !== null ? _fmtI(liveMempoolReady) : "—"}
@@ -1092,9 +1150,11 @@ const TransactionsPage = ({ go }: any) => {
 ===================================================== */
 const TxPage = ({ hash, go }: any) => {
   const live = useTxByHashLive(hash);
+  const txStatus = useTxStatus(hash);
   const liveTx = live.data?.tx ?? null;
   const liveReceipt = live.data?.receipt ?? null;
   const liveDecoded: any = live.data?.decoded ?? null;
+  const indexedStatus = txStatus.data ?? null;
   const fixture = TXS[hash];
   const decodedCalldata = liveDecoded?.decodedCalldata && typeof liveDecoded.decodedCalldata === "object"
     ? liveDecoded.decodedCalldata as Record<string, any>
@@ -1194,6 +1254,23 @@ const TxPage = ({ hash, go }: any) => {
           checking live receipt…
         </p>
       )}
+      {indexedStatus?.status === "not_found" && (
+        <p className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,maxWidth:680}}>
+          Indexer searched through block #{indexedStatus.latestHeight.toLocaleString()} on {indexedStatus.providerKind};
+          indexer is {indexedStatus.indexerEnabled ? "enabled" : "disabled"}.
+        </p>
+      )}
+      {indexedStatus?.status === "found" && (
+        <p className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,maxWidth:680}}>
+          The indexer sees this transaction in block #{indexedStatus.blockNumber.toLocaleString()} at index {indexedStatus.txIndex},
+          but the receipt/detail RPC did not return a full payload.
+        </p>
+      )}
+      {!indexedStatus && txStatus.isLoading && (
+        <p className="mono" style={{color:"var(--fg-500)",fontSize:12,marginTop:6}}>
+          checking transaction index…
+        </p>
+      )}
       <button className="ov-cta" onClick={()=>go("#/")}>← Back to overview</button>
     </div>
   );
@@ -1251,6 +1328,19 @@ const TxPage = ({ hash, go }: any) => {
           <div className="tx-kv">
             <KV label="Hash" value={tx.hash} mono/>
             <KV label="Status" value={tx.status === "ok" ? "Confirmed" : tx.status === "pending" ? "Receipt pending" : "Failed"}/>
+            <KV
+              label="Indexer status"
+              value={
+                indexedStatus?.status === "found"
+                  ? `found · block ${indexedStatus.blockNumber.toLocaleString()} · index ${indexedStatus.txIndex}`
+                  : indexedStatus?.status === "not_found"
+                    ? `not found · latest ${indexedStatus.latestHeight.toLocaleString()} · ${indexedStatus.providerKind}`
+                    : txStatus.isLoading
+                      ? "checking…"
+                      : "—"
+              }
+              mono
+            />
             <KV label="Kind" value={tx.kindLabel}/>
             <KV label="Round" value={tx.roundLabel} link={()=>{}} linkLabel="view round →"/>
             <KV label="Timestamp" value={tx.when}/>
@@ -1674,6 +1764,8 @@ const ProtocolPage = ({ go }: any) => {
   const feeStats = useFeeStats();
   const encryptionKey = useEncryptionKey();
   const network = useNetworkStatus();
+  const operatorCapabilities = useOperatorCapabilities();
+  const upgradeStatus = useUpgradeStatus();
   const gapTo = network.data?.blockNumber ?? undefined;
   const gapFrom = gapTo !== undefined ? Math.max(0, gapTo - 64) : undefined;
   const gapRecords = useGapRecords(gapFrom, gapTo);
@@ -1694,6 +1786,9 @@ const ProtocolPage = ({ go }: any) => {
   const checkpointHeight = checkpointRows[0]?.blockHeight ?? null;
   const resignationRows = resignations.data?.rows ?? [];
   const recentGaps = gapRecords.data?.gapRecords ?? [];
+  const surfaceRows = Object.entries(operatorCapabilities.data?.surfaces ?? {});
+  const availableSurfaceCount = surfaceRows.filter(([, cap]: any) => cap.status === "available").length;
+  const upgrade = upgradeStatus.data;
   const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
     ? Number(feeStats.data.gasPrice) / 1e9
     : null;
@@ -1717,6 +1812,18 @@ const ProtocolPage = ({ go }: any) => {
           label="Capabilities"
           value={capabilityRows.length ? `${activeCapabilityCount}/${capabilityRows.length}` : "—"}
           sub={capabilities.data ? `sampled at block ${Number(capabilities.data.blockNumber).toLocaleString()}` : "lyth_capabilities"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Operator surfaces"
+          value={surfaceRows.length ? `${availableSurfaceCount}/${surfaceRows.length}` : "—"}
+          sub={operatorCapabilities.data ? `schema v${operatorCapabilities.data.schemaVersion}` : "lyth_operatorCapabilities"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Upgrade status"
+          value={upgrade?.state ?? "—"}
+          sub={upgrade ? (upgrade.configured ? `${upgrade.planCount} plans · ${upgrade.pendingCount} pending` : "no plan configured") : "lyth_upgradeStatus"}
           tone="neutral"
         />
         <StatCounter
@@ -1754,6 +1861,54 @@ const ProtocolPage = ({ go }: any) => {
           </div>
         </Card>
       )}
+      <section className="tx-split">
+        <Card title="Operator surfaces">
+          {surfaceRows.length ? (
+            <table className="ms-table">
+              <thead><tr><th>Surface</th><th>Status</th><th>Tracking</th></tr></thead>
+              <tbody>
+                {surfaceRows.map(([surface, cap]: any) => (
+                  <tr key={surface}>
+                    <td className="mono">{surface}</td>
+                    <td><span className={`pill ${cap.status === "available" ? "ok" : "warn"}`}>{cap.status}</span></td>
+                    <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{cap.tracking ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+              {operatorCapabilities.isLoading ? "checking operator capability surfaces…" : "operator capability surface is not reporting on this peer"}
+            </p>
+          )}
+        </Card>
+        <Card title="Upgrade readiness">
+          {upgrade ? (
+            <div className="tx-kv">
+              <KV label="State" value={upgrade.state} mono/>
+              <KV label="Configured" value={upgrade.configured ? "yes" : "no"}/>
+              <KV label="Sample block" value={`#${upgrade.blockNumber.toLocaleString()}`} mono/>
+              <KV label="Chain" value={`${upgrade.chainId}`} mono/>
+              <KV label="Plan count" value={`${upgrade.planCount}`} mono/>
+              <KV label="Pending" value={`${upgrade.pendingCount}`} mono/>
+              <KV
+                label="Active plan"
+                value={upgrade.active ? `${upgrade.active.upgradeId} · activates #${upgrade.active.activationHeight.toLocaleString()}` : "—"}
+                mono
+              />
+              <KV
+                label="Next pending"
+                value={upgrade.pending[0] ? `${upgrade.pending[0].upgradeId} · ${upgrade.pending[0].requiredBinaryVersion}` : "—"}
+                mono
+              />
+            </div>
+          ) : (
+            <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+              {upgradeStatus.isLoading ? "checking upgrade state…" : "upgrade status is not reporting on this peer"}
+            </p>
+          )}
+        </Card>
+      </section>
       <Card title="Latest PQ finality checkpoint">
         {checkpointRows.length ? (
           <table className="ms-table">

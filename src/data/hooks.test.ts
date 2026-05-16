@@ -96,6 +96,11 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythAddressFlow).toBe("function");
     expect(typeof proto.lythSearch).toBe("function");
     expect(typeof proto.lythChainStats).toBe("function");
+    expect(typeof proto.lythPeerSummary).toBe("function");
+    expect(typeof proto.lythOperatorCapabilities).toBe("function");
+    expect(typeof proto.lythUpgradeStatus).toBe("function");
+    expect(typeof proto.lythMetricsRange).toBe("function");
+    expect(typeof proto.lythTxStatus).toBe("function");
     expect(typeof proto.lythVerticesAtRound).toBe("function");
     expect(typeof proto.lythAddressActivityKind).toBe("function");
     // The `protocore_*` names should NOT exist on the new SDK — if they
