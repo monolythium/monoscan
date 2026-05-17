@@ -30,7 +30,7 @@ Or visit the hosted instance at https://monoscan.xyz.
 
 ## Getting started
 
-Once `docker compose up` is running, open http://localhost:8080 in your browser. For local development, `pnpm dev` serves the app at http://localhost:5174 and proxies `/rpc` to the testnet endpoint from `chain-registry` unless `VITE_MONOSCAN_RPC_URL` or `VITE_MONO_RPC_URL` is set.
+Once `docker compose up` is running, open http://localhost:8080 in your browser. For local development, `pnpm dev` serves the app at http://localhost:5174 and proxies `/rpc` plus `/api/v1` to the testnet endpoint from `chain-registry` unless `VITE_MONOSCAN_RPC_URL` or `VITE_MONO_RPC_URL` is set. The production container uses the same relative routes through Caddy, with `MONOSCAN_RPC_UPSTREAM` controlling the runtime upstream node.
 
 Self-hosting notes live in [docs/self-host.md](./docs/self-host.md).
 
