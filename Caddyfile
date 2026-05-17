@@ -4,9 +4,7 @@
 }
 
 :{$PORT:8080} {
-	root * /srv
 	encode gzip zstd
-	file_server
 
 	header {
 		X-Content-Type-Options "nosniff"
@@ -16,5 +14,20 @@
 		Cache-Control "public, max-age=300"
 	}
 
-	try_files {path} /index.html
+	@rpc path /rpc /rpc/*
+	handle @rpc {
+		rewrite * /
+		reverse_proxy {$MONOSCAN_RPC_UPSTREAM:http://178.105.15.216:8545}
+	}
+
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy {$MONOSCAN_RPC_UPSTREAM:http://178.105.15.216:8545}
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
 }

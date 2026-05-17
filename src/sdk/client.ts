@@ -10,7 +10,6 @@
 import {
   ApiClient,
   RpcClient,
-  getRpcEndpoints,
   type ApiClientOptions,
   type RpcClientOptions,
 } from "@monolythium/core-sdk";
@@ -24,17 +23,16 @@ import {
  *                                wallets / Monarch builds (per
  *                                `monolythium-vision/CLAUDE.md` §6).
  *
- * If neither is set, use the SDK-bundled chain-registry snapshot for
- * `testnet-69420`. This keeps browser sessions opened from another
- * machine from accidentally dialing their own `localhost:8545`.
+ * If neither is set, use the same relative `/rpc` route in every browser
+ * build. Vite proxies that path in dev/preview, and the production Caddy
+ * container proxies it at runtime. This keeps Railway/static deployments
+ * aligned with local dev and avoids baking a direct node URL into the JS
+ * bundle.
  */
-const REGISTRY_RPC_URL = getRpcEndpoints("testnet-69420")[0]?.url;
-
 const RPC_URL: string =
   (import.meta.env.VITE_MONOSCAN_RPC_URL as string | undefined) ??
   (import.meta.env.VITE_MONO_RPC_URL as string | undefined) ??
-  (import.meta.env.DEV ? "/rpc" : undefined) ??
-  REGISTRY_RPC_URL;
+  "/rpc";
 
 const HASH32_RE = /^0x[0-9a-fA-F]{64}$/;
 const DEFAULT_LYTH_TOKEN_ID = `0x${"00".repeat(32)}`;
