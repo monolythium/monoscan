@@ -2312,6 +2312,31 @@ const GetMonolythiumPage = ({ go }: any) => {
         </div>
       </section>
 
+      <section className="get-notice" style={{
+        margin: "16px 0",
+        padding: "14px 18px",
+        border: "1px solid var(--warn, #c08a3a)",
+        borderRadius: 8,
+        background: "rgba(192, 138, 58, 0.06)",
+        fontSize: 13,
+        lineHeight: 1.55,
+        color: "var(--fg-200, #d6d3cf)",
+      }}>
+        <div style={{display:"flex",gap:10,alignItems:"baseline",flexWrap:"wrap"}}>
+          <span className="mono" style={{
+            fontSize: 11,
+            letterSpacing: "0.08em",
+            color: "var(--warn, #c08a3a)",
+            textTransform: "uppercase",
+          }}>Eligibility &amp; compliance</span>
+          <span>
+            This allocation program is <b>not offered to U.S. persons</b> (including residents, citizens, and entities organized under U.S. law) or to persons in sanctioned or restricted jurisdictions.
+            All reservations are subject to <b>identity verification (KYC)</b> before any LYTH is released.
+            By submitting an allocation, you represent that you are eligible to participate.
+          </span>
+        </div>
+      </section>
+
       <section className="get-grid" id="get-builder">
         <Card title="Allocation builder" right={<span className="pill gold">Preview</span>}>
           <div className="get-form">
