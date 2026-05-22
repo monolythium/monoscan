@@ -2082,7 +2082,7 @@ const GET_LYTH_ASSETS = [
   { id: "atom", label: "ATOM", sub: "Cosmos", logo: "https://cryptologos.cc/logos/cosmos-atom-logo.svg" },
 ];
 const GET_LYTH_MIN_USD = 500;
-const GET_LYTH_MAX_USD = 100_000;
+const GET_LYTH_MAX_USD = 500_000;
 const GET_LYTH_API_URL = (import.meta.env.VITE_GENESIS_LIQUIDITY_API_URL || "https://genesis-liquidity-api-production.up.railway.app").replace(/\/$/, "");
 const GET_LYTH_FALLBACK_POOL: GetLythPoolStatus = {
   totalPool: 8_000_000,
