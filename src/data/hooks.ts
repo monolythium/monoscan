@@ -2213,22 +2213,38 @@ function bridgeDisclosureValues(value: unknown, source: string): BridgeRouteDisc
   return out;
 }
 
+function pushBridgeRouteDiscoveryArray(
+  out: BridgeRouteDisclosureSource[],
+  value: unknown,
+  source: string,
+): void {
+  if (!Array.isArray(value)) return;
+  value.forEach((route, index) => {
+    out.push({ value: route, source: `${source}[${index}]` });
+  });
+}
+
 function bridgeRouteDiscoverySources(value: unknown, source: string): BridgeRouteDisclosureSource[] {
   const out: BridgeRouteDisclosureSource[] = [];
   const raw = unknownRecord(value);
   const data = raw?.data ?? value;
   const dataRecord = unknownRecord(data);
-  const routes: unknown[] = Array.isArray(data)
-    ? data
-    : Array.isArray(dataRecord?.routes)
-      ? dataRecord.routes
-      : Array.isArray(dataRecord?.bridgeRoutes)
-        ? dataRecord.bridgeRoutes
-        : [];
+  if (Array.isArray(data)) {
+    pushBridgeRouteDiscoveryArray(out, data, source);
+    return out;
+  }
+  if (!dataRecord) return out;
 
-  routes.forEach((route, index) => {
-    out.push({ value: route, source: `${source}[${index}]` });
-  });
+  const hasRoutes = Array.isArray(dataRecord.routes);
+  pushBridgeRouteDiscoveryArray(out, dataRecord.routes, source);
+  pushBridgeRouteDiscoveryArray(
+    out,
+    dataRecord.bridgeRoutes,
+    hasRoutes ? `${source}.bridgeRoutes` : source,
+  );
+  pushBridgeRouteDiscoveryArray(out, dataRecord.bridgeRouteDisclosures, `${source}.bridgeRouteDisclosures`);
+  pushBridgeRouteDiscoveryArray(out, dataRecord.bridge_route_disclosures, `${source}.bridge_route_disclosures`);
+  pushBridgeRouteDiscoveryArray(out, dataRecord.routeDisclosures, `${source}.routeDisclosures`);
   return out;
 }
 
