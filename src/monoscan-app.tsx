@@ -10,7 +10,7 @@ import {
   Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
 import { MONOSCAN_DATA, MARKETS } from "./data/mock";
-import { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, GetMonolythiumPage } from "./monoscan-extras";
+import { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
 import {
   useChainHead,
@@ -127,7 +127,6 @@ const Header = ({ go, route }: any) => {
     ["#/markets", "Markets"],
   ];
   const moreNav = [
-    ["#/get-monolythium", "Get LYTH"],
     ["#/wallets", "Wallets"],
     ["#/clusters", "Clusters"],
     ["#/operators", "Operators"],
@@ -362,7 +361,7 @@ const Landing = ({ go }: any) => {
           </p>
           <div className="ov-hero__ctas">
             <button onClick={()=>go("#/markets")} className="ov-cta ov-cta--primary">Browse markets</button>
-            <button onClick={()=>go("#/get-monolythium")} className="ov-cta">Get Monolythium</button>
+            <a href="https://monolythium.com/get-lyth" className="ov-cta">Get LYTH ↗</a>
             <button onClick={()=>go("#/clusters")} className="ov-cta">Stake with a cluster</button>
             <button onClick={()=>document.getElementById("ov-feed")?.scrollIntoView({block:"center",behavior:"smooth"})} className="ov-cta ov-cta--ghost">See it live ↓</button>
           </div>
@@ -1586,7 +1585,11 @@ const App = () => {
   else if (parts[0]==="operator")   page = <OperatorPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
   else if (parts[0]==="operators")  page = <OperatorsPage go={go}/>;
   else if (parts[0]==="stats")      page = <StatsPage go={go}/>;
-  else if (parts[0]==="get-monolythium") page = <GetMonolythiumPage go={go}/>;
+  else if (parts[0]==="get-monolythium" || parts[0]==="get-lyth") {
+    // Genesis sale moved to monolythium.com. Redirect for deep links.
+    if (typeof window !== "undefined") window.location.replace("https://monolythium.com/get-lyth");
+    page = <div style={{padding: 40, textAlign: "center", color: "var(--fg-300)"}}>Redirecting to monolythium.com/get-lyth …</div>;
+  }
   else if (parts[0]==="protocol")   page = <ProtocolPage go={go}/>;
   else if (parts[0]==="transactions") page = <TransactionsPage go={go}/>;
   else if (parts[0]==="wallets")    page = <WalletsPage go={go}/>;
