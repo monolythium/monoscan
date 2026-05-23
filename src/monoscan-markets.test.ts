@@ -9,6 +9,7 @@ import {
   buildNativeNftSweepExpiredListingsForwarderInput,
   buildNativeSpotLimitOrderForwarderInput,
   deriveClobMarketId,
+  type CapabilitiesResponse,
 } from "@monolythium/core-sdk";
 import {
   buildMarketOrderWalletRequest,
@@ -22,6 +23,26 @@ import {
   nextSpotOrderNonceForOwner,
   ownerStateAccount,
 } from "./monoscan-markets";
+
+function capabilitiesWithMarketForwarder(
+  requestBytes: number,
+  contractAddress = "0x3333333333333333333333333333333333333333",
+): CapabilitiesResponse {
+  return {
+    blockNumber: 1n,
+    capabilities: {},
+    nativeModuleForwarders: {
+      market: [{
+        module: "market",
+        requestBytes,
+        contractAddress,
+        artifactProfile: "native-call-forwarder-v1",
+        status: "configured",
+        deploymentVerified: false,
+      }],
+    },
+  };
+}
 
 describe("buildMarketOrderWalletRequest", () => {
   const baseTokenId = `0x${"11".repeat(32)}`;
@@ -63,6 +84,62 @@ describe("buildMarketOrderWalletRequest", () => {
       valueWeiHex: "0x0",
     });
     expect((request.params[0].input.length - 2) / 2).toBe(176);
+  });
+
+  it("uses the capability-disclosed forwarder matching request byte length", () => {
+    const expectedForwarder = buildNativeSpotLimitOrderForwarderInput({
+      marketId,
+      owner: ownerAddress,
+      nonce: "7",
+      side: "buy",
+      price: "125",
+      quantity: "50",
+      expiresAtBlock: "999",
+    }, "22000");
+    const capabilityAddress = "0x3333333333333333333333333333333333333333";
+
+    const request = buildMarketOrderWalletRequest({
+      marketId,
+      baseTokenId,
+      quoteTokenId,
+      ownerAddress,
+      orderNonce: "7",
+      forwarderContractAddress: null,
+      capabilities: capabilitiesWithMarketForwarder(expectedForwarder.requestBytes, capabilityAddress),
+      side: "buy",
+      price: "125",
+      quantity: "50",
+      expiryBlock: "999",
+    });
+
+    expect(request.params[0].contractAddress).toBe(capabilityAddress);
+    expect(request.params[0].input).toBe(expectedForwarder.input);
+  });
+
+  it("rejects capability-disclosed forwarders with the wrong request byte length", () => {
+    const expectedForwarder = buildNativeSpotLimitOrderForwarderInput({
+      marketId,
+      owner: ownerAddress,
+      nonce: "7",
+      side: "buy",
+      price: "125",
+      quantity: "50",
+      expiresAtBlock: "999",
+    }, "22000");
+
+    expect(() => buildMarketOrderWalletRequest({
+      marketId,
+      baseTokenId,
+      quoteTokenId,
+      ownerAddress,
+      orderNonce: "7",
+      forwarderContractAddress,
+      capabilities: capabilitiesWithMarketForwarder(expectedForwarder.requestBytes + 1),
+      side: "buy",
+      price: "125",
+      quantity: "50",
+      expiryBlock: "999",
+    })).toThrow("request bytes is not configured");
   });
 
   it("requires live market metadata", () => {
