@@ -16,6 +16,7 @@ import {
   useAddressActivityKind,
   useAddressLabel,
   useAddressProfile,
+  useAgentReputation,
   useActivePrecompiles,
   useBlsRoundCertificate,
   useBlockByHash,
@@ -45,6 +46,7 @@ import {
   useWalletDelegationHistory,
 } from "./data/hooks";
 import { getLythTokenId } from "./sdk/client";
+import type { AgentReputationRecord, AgentReputationResponse } from "@monolythium/core-sdk";
 
 /* Light helpers — keep local so this file is self-contained */
 const _fmt  = (n: any) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -135,6 +137,59 @@ function tokenBalanceSecondary(row: IndexedTokenBalanceRow): string | null {
   if (mrc.tokenId) parts.unshift(`token ${_short(mrc.tokenId, 8)}`);
   return parts.join(" · ");
 }
+function reputationScopeLabel(reputation: AgentReputationResponse): string {
+  return reputation.categoryScope === "category"
+    ? `Category ${reputation.categoryId}`
+    : "Global";
+}
+function reputationAverageLabel(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  const score = value / 10;
+  return `${score % 1 === 0 ? score.toFixed(0) : score.toFixed(1)} / 10`;
+}
+const AgentReputationCard = ({ reputation }: { reputation: AgentReputationResponse }) => {
+  const record: AgentReputationRecord | null = reputation.record ?? null;
+  const hasSamples = Boolean(record && record.sampleCount > 0);
+  const ratings = record
+    ? [
+        ["Speed", record.avgSpeedX10],
+        ["Quality", record.avgQualityX10],
+        ["Communication", record.avgCommunicationX10],
+        ["Accuracy", record.avgAccuracyX10],
+      ] as const
+    : [];
+
+  return (
+    <Card
+      title="Agent reputation"
+      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>lyth_agentReputation</span>}
+    >
+      <div className="tx-kv">
+        <KV label="Category scope" value={reputationScopeLabel(reputation)} mono/>
+        <KV label="Samples" value={hasSamples && record ? record.sampleCount.toLocaleString() : "0"} mono/>
+        <KV label="Provider" value={_short(reputation.provider, 18)} mono/>
+        <KV label="Block height" value={record ? Number(record.blockHeight).toLocaleString() : "—"} mono/>
+      </div>
+      {hasSamples ? (
+        <table className="ms-table ms-table--tight">
+          <thead><tr><th>Rating</th><th style={{textAlign:"right"}}>Average</th></tr></thead>
+          <tbody>
+            {ratings.map(([label, avg])=>(
+              <tr key={label}>
+                <td>{label}</td>
+                <td className="mono num" style={{textAlign:"right",color:"var(--gold)"}}>{reputationAverageLabel(avg)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"12px 16px 0"}}>
+          No reputation records reported for this provider category.
+        </p>
+      )}
+    </Card>
+  );
+};
 const _fmtExecutionUnitPrice = (price: bigint | null | undefined) =>
   price === null || price === undefined ? null : `${price.toLocaleString()} lythoshi / execution unit`;
 const _ageFromTs = (timestamp: number | null | undefined) => {
@@ -643,6 +698,7 @@ const WalletPage = ({ addr, go }: any) => {
   const tokenBalances = useTokenBalances(addr);
   const addressLabel = useAddressLabel(addr);
   const code = useAccountCode(addr);
+  const agentReputation = useAgentReputation(addr);
   const fixtureWallet = WALLETS.find(w => w.addr === addr);
   const profileAccount = profile.data?.account ?? null;
   const profileBalance = profileAccount?.nativeBalance ?? null;
@@ -686,6 +742,7 @@ const WalletPage = ({ addr, go }: any) => {
     ? profile.data.tokenBalances
     : (tokenBalances.data ?? [])) as IndexedTokenBalanceRow[];
   const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
+  const liveAgentReputation = agentReputation.data ?? null;
   const profileActivityKind = profile.data?.activity?.kind ?? null;
   const liveActivityKind = profileActivityKind ? { kind: profileActivityKind, retention: profile.data?.activity?.retention ?? null } : (activityKind.data ?? null);
   const liveRetention = liveActivityKind?.retention && typeof liveActivityKind.retention === "object"
@@ -729,7 +786,7 @@ const WalletPage = ({ addr, go }: any) => {
         </div>
       </section>
 
-      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || codeValue !== null || profileAccount) && (
+      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || codeValue !== null || profileAccount || liveAgentReputation) && (
         <section className="tx-split">
           <Card title="Live account">
             <div className="tx-kv">
@@ -801,6 +858,7 @@ const WalletPage = ({ addr, go }: any) => {
               )}
             </Card>
           )}
+          {liveAgentReputation && <AgentReputationCard reputation={liveAgentReputation}/>}
         </section>
       )}
 

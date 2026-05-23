@@ -235,6 +235,8 @@ export const QK = {
   addressActivity: (addr: string) => ["mono", "address", addr] as const,
   addressProfile: (addr: string) => ["mono", "address", addr, "profile"] as const,
   addressFlow: (addr: string, limit: number) => ["mono", "address", addr, "flow", limit] as const,
+  agentReputation: (provider: string, categoryId: number) =>
+    ["mono", "agent", provider, "reputation", categoryId] as const,
   accountBalance: (addr: string) => ["mono", "address", addr, "balance"] as const,
   accountPolicy: (addr: string) => ["mono", "address", addr, "policy"] as const,
   addressActivityKind: (addr: string) => ["mono", "address", addr, "activity-kind"] as const,
