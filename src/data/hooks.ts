@@ -653,7 +653,17 @@ export interface NativeMarketStateDisplayRow {
 }
 
 export interface NativeAgentStateDisplayRow {
-  kind: "spendingPolicy" | "policySpend" | "escrow";
+  kind:
+    | "issuer"
+    | "attestation"
+    | "consent"
+    | "service"
+    | "availability"
+    | "arbiter"
+    | "reputationReview"
+    | "spendingPolicy"
+    | "policySpend"
+    | "escrow";
   primaryId: string | null;
   account: string | null;
   counterparty: string | null;
@@ -662,6 +672,19 @@ export interface NativeAgentStateDisplayRow {
   amount: string | null;
   blockHeight: number | null;
   fields: Array<[string, string]>;
+}
+
+export interface NativeAgentStateDisplayRows {
+  issuers: NativeAgentStateDisplayRow[];
+  attestations: NativeAgentStateDisplayRow[];
+  consents: NativeAgentStateDisplayRow[];
+  services: NativeAgentStateDisplayRow[];
+  availability: NativeAgentStateDisplayRow[];
+  arbiters: NativeAgentStateDisplayRow[];
+  reputationReviews: NativeAgentStateDisplayRow[];
+  spendingPolicies: NativeAgentStateDisplayRow[];
+  policySpends: NativeAgentStateDisplayRow[];
+  escrows: NativeAgentStateDisplayRow[];
 }
 
 export const MRV_NATIVE_TX_EXTENSION_KIND = 0x30;
@@ -911,29 +934,18 @@ function nativeAgentStateRow(
   raw: unknown,
 ): NativeAgentStateDisplayRow {
   const row = nativeStateRecord(raw);
-  const primaryId = readNativeStateString(row, [
-    "policyId",
-    "policy_id",
-    "escrowId",
-    "escrow_id",
-    "id",
-  ]);
-  const account = readNativeStateString(row, [
-    "owner",
-    "buyer",
-    "controller",
-    "provider",
-    "arbiter",
-    "account",
-  ]);
-  const counterparty = readNativeStateString(row, [
-    "controller",
-    "provider",
-    "buyer",
-    "arbiter",
-    "lastActor",
-    "last_actor",
-  ]);
+  const primaryId = readNativeStateString(row, nativeAgentPrimaryIdKeys(kind));
+  const account = readNativeStateString(row, nativeAgentAccountKeys(kind));
+  const counterparty = readNativeStateString(row, nativeAgentCounterpartyKeys(kind));
+  const directStatus = readNativeStateString(row, ["status", "state", "resolution"]);
+  const maxConcurrent = readNativeStateString(row, ["maxConcurrent", "max_concurrent"]);
+  const openRequests = readNativeStateString(row, ["openRequests", "open_requests"]);
+  const scoreSummary = [
+    readNativeStateString(row, ["speedScore", "speed_score"]),
+    readNativeStateString(row, ["qualityScore", "quality_score"]),
+    readNativeStateString(row, ["communicationScore", "communication_score"]),
+    readNativeStateString(row, ["accuracyScore", "accuracy_score"]),
+  ].filter((value): value is string => value !== null);
 
   return {
     kind,
@@ -941,19 +953,36 @@ function nativeAgentStateRow(
     account,
     counterparty,
     assetId: readNativeStateString(row, ["assetId", "asset_id", "paymentAssetId", "payment_asset_id"]),
-    status: readNativeStateString(row, ["status", "state", "resolution"]),
-    amount: readNativeStateString(row, [
-      "amount",
-      "spent",
-      "windowLimit",
-      "window_limit",
-      "perActionLimit",
-      "per_action_limit",
-    ]),
+    status: directStatus ?? nativeAgentBooleanStatus(kind, row),
+    amount:
+      kind === "availability" && (openRequests !== null || maxConcurrent !== null)
+        ? `${openRequests ?? "0"}/${maxConcurrent ?? "?"}`
+        : kind === "reputationReview" && scoreSummary.length > 0
+          ? scoreSummary.join("/")
+          : readNativeStateString(row, [
+              "amount",
+              "spent",
+              "windowLimit",
+              "window_limit",
+              "perActionLimit",
+              "per_action_limit",
+            ]),
     blockHeight: readNativeStateNumber(row, ["updatedAtBlock", "updated_at_block", "createdAtBlock", "created_at_block"]),
     fields: row
       ? Object.entries(row)
           .filter(([key]) => ![
+            "issuerId",
+            "issuer_id",
+            "attestationId",
+            "attestation_id",
+            "consentId",
+            "consent_id",
+            "serviceId",
+            "service_id",
+            "arbiterId",
+            "arbiter_id",
+            "reviewId",
+            "review_id",
             "policyId",
             "policy_id",
             "escrowId",
@@ -964,6 +993,10 @@ function nativeAgentStateRow(
             "controller",
             "provider",
             "arbiter",
+            "issuer",
+            "subject",
+            "reviewer",
+            "grantee",
             "account",
             "lastActor",
             "last_actor",
@@ -980,6 +1013,21 @@ function nativeAgentStateRow(
             "window_limit",
             "perActionLimit",
             "per_action_limit",
+            "enabled",
+            "active",
+            "paused",
+            "maxConcurrent",
+            "max_concurrent",
+            "openRequests",
+            "open_requests",
+            "speedScore",
+            "speed_score",
+            "qualityScore",
+            "quality_score",
+            "communicationScore",
+            "communication_score",
+            "accuracyScore",
+            "accuracy_score",
             "updatedAtBlock",
             "updated_at_block",
             "createdAtBlock",
@@ -988,6 +1036,88 @@ function nativeAgentStateRow(
           .map(([key, value]) => [key, nativeFieldDisplay(value)] as [string, string])
       : [],
   };
+}
+
+function nativeAgentPrimaryIdKeys(kind: NativeAgentStateDisplayRow["kind"]): string[] {
+  switch (kind) {
+    case "issuer":
+      return ["issuerId", "issuer_id", "id"];
+    case "attestation":
+      return ["attestationId", "attestation_id", "id"];
+    case "consent":
+      return ["consentId", "consent_id", "id"];
+    case "service":
+      return ["serviceId", "service_id", "id"];
+    case "availability":
+      return ["provider", "account", "id"];
+    case "arbiter":
+      return ["arbiterId", "arbiter_id", "id"];
+    case "reputationReview":
+      return ["reviewId", "review_id", "id"];
+    case "spendingPolicy":
+    case "policySpend":
+      return ["policyId", "policy_id", "id"];
+    case "escrow":
+      return ["escrowId", "escrow_id", "id"];
+  }
+}
+
+function nativeAgentAccountKeys(kind: NativeAgentStateDisplayRow["kind"]): string[] {
+  switch (kind) {
+    case "issuer":
+      return ["issuer", "account"];
+    case "attestation":
+      return ["subject", "account"];
+    case "consent":
+      return ["subject", "account"];
+    case "service":
+    case "availability":
+      return ["provider", "account"];
+    case "arbiter":
+      return ["arbiter", "account"];
+    case "reputationReview":
+      return ["reviewer", "account"];
+    case "spendingPolicy":
+      return ["owner", "account", "controller"];
+    case "policySpend":
+      return ["controller", "account"];
+    case "escrow":
+      return ["buyer", "provider", "arbiter", "account"];
+  }
+}
+
+function nativeAgentCounterpartyKeys(kind: NativeAgentStateDisplayRow["kind"]): string[] {
+  switch (kind) {
+    case "issuer":
+    case "service":
+    case "availability":
+    case "arbiter":
+      return ["lastActor", "last_actor"];
+    case "attestation":
+      return ["issuer", "issuerId", "issuer_id", "lastActor", "last_actor"];
+    case "consent":
+      return ["grantee", "lastActor", "last_actor"];
+    case "reputationReview":
+      return ["subject", "lastActor", "last_actor"];
+    case "spendingPolicy":
+      return ["controller", "owner", "lastActor", "last_actor"];
+    case "policySpend":
+      return ["controller", "lastActor", "last_actor"];
+    case "escrow":
+      return ["provider", "arbiter", "lastActor", "last_actor"];
+  }
+}
+
+function nativeAgentBooleanStatus(
+  kind: NativeAgentStateDisplayRow["kind"],
+  row: Record<string, unknown> | null,
+): string | null {
+  if (!row) return null;
+  if (typeof row["enabled"] === "boolean") return row["enabled"] ? "enabled" : "disabled";
+  if (typeof row["active"] === "boolean") return row["active"] ? "active" : "inactive";
+  if (typeof row["paused"] === "boolean") return row["paused"] ? "paused" : "available";
+  if (kind === "availability") return "available";
+  return null;
 }
 
 function nativeEventDisplayRow(event: {
@@ -1592,16 +1722,34 @@ export function nativeMarketStateRows(
 
 export function nativeAgentStateRows(
   response: NativeAgentStateResponse | null | undefined,
-): {
-  spendingPolicies: NativeAgentStateDisplayRow[];
-  policySpends: NativeAgentStateDisplayRow[];
-  escrows: NativeAgentStateDisplayRow[];
-} {
+): NativeAgentStateDisplayRows {
   return {
+    issuers: (response?.issuers ?? []).map((row) => nativeAgentStateRow("issuer", row)),
+    attestations: (response?.attestations ?? []).map((row) => nativeAgentStateRow("attestation", row)),
+    consents: (response?.consents ?? []).map((row) => nativeAgentStateRow("consent", row)),
+    services: (response?.services ?? []).map((row) => nativeAgentStateRow("service", row)),
+    availability: (response?.availability ?? []).map((row) => nativeAgentStateRow("availability", row)),
+    arbiters: (response?.arbiters ?? []).map((row) => nativeAgentStateRow("arbiter", row)),
+    reputationReviews: (response?.reputationReviews ?? []).map((row) => nativeAgentStateRow("reputationReview", row)),
     spendingPolicies: (response?.spendingPolicies ?? []).map((row) => nativeAgentStateRow("spendingPolicy", row)),
     policySpends: (response?.policySpends ?? []).map((row) => nativeAgentStateRow("policySpend", row)),
     escrows: (response?.escrows ?? []).map((row) => nativeAgentStateRow("escrow", row)),
   };
+}
+
+export function nativeAgentStateDisplayRowsAll(rows: NativeAgentStateDisplayRows): NativeAgentStateDisplayRow[] {
+  return [
+    ...rows.issuers,
+    ...rows.attestations,
+    ...rows.consents,
+    ...rows.services,
+    ...rows.availability,
+    ...rows.arbiters,
+    ...rows.reputationReviews,
+    ...rows.spendingPolicies,
+    ...rows.policySpends,
+    ...rows.escrows,
+  ];
 }
 
 function apiActivityToRpcActivity(row: ApiAddressActivityEntry): AddressActivityEntry {

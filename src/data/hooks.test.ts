@@ -499,14 +499,80 @@ describe("live-SDK seam", () => {
     expect(result).toBe(response);
   });
 
-  it("reads native agent state without fabricating missing policy or escrow rows", async () => {
+  it("reads native agent state without fabricating missing current-state rows", async () => {
     const policyId = `0x${"aa".repeat(32)}`;
     const escrowId = `0x${"bb".repeat(32)}`;
+    const issuerId = `0x${"11".repeat(32)}`;
+    const attestationId = `0x${"12".repeat(32)}`;
+    const consentId = `0x${"13".repeat(32)}`;
+    const serviceId = `0x${"14".repeat(32)}`;
+    const arbiterId = `0x${"15".repeat(32)}`;
+    const reviewId = `0x${"16".repeat(32)}`;
     const owner = "mono1agentowner";
+    const provider = "mono1agentprovider";
     const response = {
       schemaVersion: 1,
       limit: 5,
       filters: { policyId: null, escrowId: null, account: owner, includePolicySpends: true },
+      issuers: [{
+        issuerId,
+        issuer: provider,
+        metadataHash: null,
+        updatedAtBlock: 45,
+      }],
+      attestations: [{
+        attestationId,
+        issuerId,
+        issuer: provider,
+        subject: owner,
+        schemaHash: `0x${"17".repeat(32)}`,
+        payloadHash: null,
+        active: true,
+        updatedAtBlock: 46,
+      }],
+      consents: [{
+        consentId,
+        subject: owner,
+        grantee: "mono1agentgrantee",
+        scopeHash: null,
+        expiresAt: null,
+        active: false,
+        updatedAtBlock: 47,
+      }],
+      services: [{
+        serviceId,
+        provider,
+        categoryHash: `0x${"18".repeat(32)}`,
+        metadataHash: null,
+        active: true,
+        updatedAtBlock: 48,
+      }],
+      availability: [{
+        provider,
+        maxConcurrent: 8,
+        openRequests: 2,
+        paused: false,
+        updatedAtBlock: 49,
+      }],
+      arbiters: [{
+        arbiterId,
+        arbiter: "mono1agentarbiter",
+        tier: 2,
+        metadataHash: null,
+        updatedAtBlock: 50,
+      }],
+      reputationReviews: [{
+        reviewId,
+        reviewer: "mono1agentreviewer",
+        subject: provider,
+        categoryId: 7,
+        speedScore: 9,
+        qualityScore: 8,
+        communicationScore: 10,
+        accuracyScore: 9,
+        payloadHash: null,
+        updatedAtBlock: 51,
+      }],
       spendingPolicies: [{
         policyId,
         owner,
@@ -557,6 +623,56 @@ describe("live-SDK seam", () => {
 
     expect(apiSpy).toHaveBeenCalledWith({ account: owner, includePolicySpends: true, limit: 5 });
     expect(rpcSpy).not.toHaveBeenCalled();
+    expect(rows.issuers[0]).toMatchObject({
+      kind: "issuer",
+      primaryId: issuerId,
+      account: provider,
+      blockHeight: 45,
+    });
+    expect(rows.attestations[0]).toMatchObject({
+      kind: "attestation",
+      primaryId: attestationId,
+      account: owner,
+      counterparty: provider,
+      status: "active",
+      blockHeight: 46,
+    });
+    expect(rows.consents[0]).toMatchObject({
+      kind: "consent",
+      primaryId: consentId,
+      account: owner,
+      counterparty: "mono1agentgrantee",
+      status: "inactive",
+      blockHeight: 47,
+    });
+    expect(rows.services[0]).toMatchObject({
+      kind: "service",
+      primaryId: serviceId,
+      account: provider,
+      status: "active",
+      blockHeight: 48,
+    });
+    expect(rows.availability[0]).toMatchObject({
+      kind: "availability",
+      account: provider,
+      status: "available",
+      amount: "2/8",
+      blockHeight: 49,
+    });
+    expect(rows.arbiters[0]).toMatchObject({
+      kind: "arbiter",
+      primaryId: arbiterId,
+      account: "mono1agentarbiter",
+      blockHeight: 50,
+    });
+    expect(rows.reputationReviews[0]).toMatchObject({
+      kind: "reputationReview",
+      primaryId: reviewId,
+      account: "mono1agentreviewer",
+      counterparty: provider,
+      amount: "9/8/10/9",
+      blockHeight: 51,
+    });
     expect(rows.spendingPolicies[0]).toMatchObject({
       kind: "spendingPolicy",
       primaryId: policyId,
@@ -577,8 +693,30 @@ describe("live-SDK seam", () => {
       amount: "1000",
       blockHeight: 44,
     });
-    expect(nativeAgentStateRows({ ...response, spendingPolicies: [], policySpends: [], escrows: [] }))
-      .toEqual({ spendingPolicies: [], policySpends: [], escrows: [] });
+    expect(nativeAgentStateRows({
+      ...response,
+      issuers: [],
+      attestations: [],
+      consents: [],
+      services: [],
+      availability: [],
+      arbiters: [],
+      reputationReviews: [],
+      spendingPolicies: [],
+      policySpends: [],
+      escrows: [],
+    })).toEqual({
+      issuers: [],
+      attestations: [],
+      consents: [],
+      services: [],
+      availability: [],
+      arbiters: [],
+      reputationReviews: [],
+      spendingPolicies: [],
+      policySpends: [],
+      escrows: [],
+    });
   });
 
   it("falls back to lyth_nativeAgentState with a valid account-scoped filter", async () => {
@@ -586,6 +724,13 @@ describe("live-SDK seam", () => {
       schemaVersion: 1,
       limit: 5,
       filters: { policyId: null, escrowId: null, account: "mono1agentowner", includePolicySpends: true },
+      issuers: [],
+      attestations: [],
+      consents: [],
+      services: [],
+      availability: [],
+      arbiters: [],
+      reputationReviews: [],
       spendingPolicies: [],
       policySpends: [],
       escrows: [],
