@@ -38,6 +38,7 @@ describe("MrvNativeEvidenceCard", () => {
       schema: "riscv.receipt.v1",
       txType: MRV_NATIVE_RECEIPT_TX_TYPE,
       artifactHash: `0x${"ef".repeat(32)}`,
+      noEvmProof: null,
       counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
       fee: {
         total_lythoshi: "12",
@@ -70,8 +71,8 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain("Receipt");
     expect(html).toContain("txType 0x41");
     expect(html).toContain("No-EVM proof");
-    expect(html).toContain("missing · not returned; no proof rendered");
-    expect(html).toContain("lyth_decodeTx.finalityProof");
+    expect(html).toContain("missing · native-receipt.noEvmProof returned null; no proof rendered");
+    expect(html).toContain("native-receipt.noEvmProof returned null");
     expect(html).not.toContain("proof present");
   });
 
