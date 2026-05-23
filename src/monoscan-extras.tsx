@@ -50,6 +50,8 @@ import {
   bridgeTrustDisclosuresFromAddressData,
   type MrcMetadataResponse,
   type BridgeTrustDisclosureRow,
+  type MrvNativeTransactionEvidence,
+  mrvNativeTransactionEvidence,
   nativeReceiptEventRows,
   nativeReceiptMarketEventRows,
 } from "./data/hooks";
@@ -61,6 +63,7 @@ const _fmt  = (n: any) => n.toLocaleString(undefined, { maximumFractionDigits: 2
 const _fmtI = (n: any) => Math.round(n).toLocaleString();
 const _abbr = (n: any) => n >= 1e9 ? `${(n/1e9).toFixed(2)}B` : n >= 1e6 ? `${(n/1e6).toFixed(2)}M` : n >= 1e3 ? `${(n/1e3).toFixed(1)}K` : _fmt(n);
 const _short = (a: any, n=10) => a && a.length > n*2+3 ? `${a.slice(0, n)}…${a.slice(-4)}` : a;
+const _hexByte = (n: number) => `0x${n.toString(16).padStart(2, "0")}`;
 const LYTHOSHI_PER_LYTH = 100_000_000n;
 const _fmtLythoshiAmount = (lythoshi: bigint) => {
   const sign = lythoshi < 0n ? "-" : "";
@@ -1500,6 +1503,7 @@ const TxPage = ({ hash, go }: any) => {
   const liveNativeReceipt = nativeReceipt.data ?? null;
   const nativeEventRows = nativeReceiptEventRows(liveNativeReceipt);
   const nativeMarketEventRows = nativeReceiptMarketEventRows(liveNativeReceipt);
+  const mrvEvidence = mrvNativeTransactionEvidence(liveDecoded, liveNativeReceipt);
   const indexedStatus = txStatus.data ?? null;
   const fixture = TXS[hash];
   const decodedCalldata = liveDecoded?.decodedCalldata && typeof liveDecoded.decodedCalldata === "object"
@@ -1753,6 +1757,12 @@ const TxPage = ({ hash, go }: any) => {
         </section>
       )}
 
+      {mrvEvidence && (
+        <section>
+          <MrvNativeEvidenceCard evidence={mrvEvidence}/>
+        </section>
+      )}
+
       {/* Attestation */}
       <section>
         <h3 className="ov-section-title">Attestation · who signed what</h3>
@@ -1856,6 +1866,70 @@ const TxPage = ({ hash, go }: any) => {
         </section>
       )}
     </div>
+  );
+};
+
+const mrvEvidenceStateText = (state: "present" | "missing" | "invalid") => (
+  state === "present" ? "present" : state === "invalid" ? "invalid" : "missing"
+);
+
+const mrvEvidencePillClass = (evidence: MrvNativeTransactionEvidence) => (
+  evidence.proofState === "present"
+    ? "pill ok"
+    : evidence.receiptState === "present"
+      ? "pill warn"
+      : "pill"
+);
+
+export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransactionEvidence | null }) => {
+  if (!evidence) return null;
+
+  const extension = evidence.extension;
+  const submittedValue = extension
+    ? `${mrvEvidenceStateText(evidence.submittedState)} · kind ${_hexByte(extension.kind)} · body ${extension.bodyHex ?? "not exposed"} · ${extension.source}`
+    : "missing · extension not exposed";
+  const includedValue = evidence.includedBlock !== null
+    ? `${mrvEvidenceStateText(evidence.includedState)} · block ${evidence.includedBlock.toLocaleString()}`
+    : "missing · no block height in detail payload";
+  const receiptValue = evidence.receiptState === "present"
+    ? `${mrvEvidenceStateText(evidence.receiptState)} · txType ${evidence.receiptTxType === null ? "not exposed" : _hexByte(evidence.receiptTxType)} · ${evidence.artifactHash ? _short(evidence.artifactHash, 18) : "artifact hash missing"}`
+    : "missing · native MRV receipt not returned";
+  const resultValue = evidence.receiptState === "present"
+    ? `${evidence.reverted ? "reverted" : "committed"} · events ${evidence.eventCount ?? "—"} · native deltas ${evidence.nativeDeltaCount ?? "—"}`
+    : "—";
+  const proofValue = evidence.proof
+    ? `present · ${evidence.proof.summary} · ${evidence.proof.source}`
+    : "missing · not returned; no proof rendered";
+
+  return (
+    <Card
+      title="MRV native evidence"
+      right={<span className={mrvEvidencePillClass(evidence)}>{evidence.proofState === "present" ? "proof present" : "proof blocked"}</span>}
+    >
+      <div className="tx-kv">
+        {evidence.operation && <KV label="Operation" value={evidence.operation} mono/>}
+        {evidence.txHash && <KV label="Transaction" value={_short(evidence.txHash, 18)} mono/>}
+        <KV label="Submitted" value={submittedValue} mono/>
+        <KV label="Included" value={includedValue} mono/>
+        <KV label="Receipt" value={receiptValue} mono/>
+        {evidence.receiptSchema && <KV label="Receipt schema" value={evidence.receiptSchema} mono/>}
+        <KV label="Execution result" value={resultValue} mono/>
+        {evidence.pqCheckpoint && <KV label="PQ checkpoint" value={evidence.pqCheckpoint} mono/>}
+        <KV label="No-EVM proof" value={proofValue} mono/>
+      </div>
+      {evidence.blockers.length > 0 && (
+        <div className="tx-log" style={{marginTop:12,borderColor:"rgba(255,204,102,0.28)"}}>
+          <div className="mono tx-log__topic" style={{color:"var(--warn)"}}>Blocked evidence</div>
+          <div style={{marginTop:8,display:"grid",gap:6}}>
+            {evidence.blockers.map((blocker)=>(
+              <div key={blocker} className="mono" style={{fontSize:11,lineHeight:1.45,color:"var(--fg-300)"}}>
+                {blocker}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 };
 
