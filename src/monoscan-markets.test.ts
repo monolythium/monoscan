@@ -4,14 +4,20 @@ import {
   buildNativeNftBuyListingForwarderInput,
   buildNativeNftCancelListingForwarderInput,
   buildNativeNftCreateListingForwarderInput,
+  buildNativeNftPlaceAuctionBidForwarderInput,
+  buildNativeNftSettleAuctionForwarderInput,
+  buildNativeNftSweepExpiredListingsForwarderInput,
   buildNativeSpotLimitOrderForwarderInput,
   deriveClobMarketId,
 } from "@monolythium/core-sdk";
 import {
   buildMarketOrderWalletRequest,
+  buildNftAuctionBidWalletRequest,
+  buildNftAuctionSettleWalletRequest,
   buildNftListingBuyWalletRequest,
   buildNftListingCancelWalletRequest,
   buildNftListingCreateWalletRequest,
+  buildNftListingSweepWalletRequest,
   nextSpotOrderNonceForOwner,
   ownerStateAccount,
 } from "./monoscan-markets";
@@ -203,6 +209,54 @@ describe("native NFT listing create/cancel wallet requests", () => {
     });
   });
 
+  it("builds English-auction create-listing forwarder requests", () => {
+    const request = buildNftListingCreateWalletRequest({
+      sellerAddress,
+      listingNonce: 8,
+      standard: "mrc1155",
+      collectionId,
+      tokenId,
+      quantity: "10",
+      paymentAsset,
+      price: "250",
+      kind: {
+        english: {
+          reserve: "300",
+          endBlock: 1500,
+          minBidIncrementBps: 500,
+        },
+      },
+      expiresAtBlock: 1600,
+      forwarderContractAddress,
+    });
+
+    const expectedForwarder = buildNativeNftCreateListingForwarderInput({
+      seller: sellerAddress,
+      nonce: 8,
+      standard: "mrc1155",
+      collectionId,
+      tokenId,
+      quantity: "10",
+      paymentAsset,
+      price: "250",
+      kind: {
+        english: {
+          reserve: "300",
+          endBlock: 1500,
+          minBidIncrementBps: 500,
+        },
+      },
+      expiresAtBlock: 1600,
+    }, "22000");
+
+    expect(request.params[0]).toMatchObject({
+      contractAddress: forwarderContractAddress,
+      input: expectedForwarder.input,
+      executionUnitLimitHex: "0x200000",
+      valueWeiHex: "0x0",
+    });
+  });
+
   it("requires create-listing ids and a configured forwarder", () => {
     expect(() => buildNftListingCreateWalletRequest({
       sellerAddress,
@@ -220,6 +274,103 @@ describe("native NFT listing create/cancel wallet requests", () => {
     expect(() => buildNftListingCancelWalletRequest({
       listingId,
       callerAddress: sellerAddress,
+      forwarderContractAddress: null,
+    })).toThrow("forwarder address is not configured");
+  });
+});
+
+describe("native NFT auction wallet requests", () => {
+  const listingId = `0x${"77".repeat(32)}`;
+  const otherListingId = `0x${"88".repeat(32)}`;
+  const bidderAddress = "0xabcdef0123456789abcdef0123456789abcdef01";
+  const forwarderContractAddress = "0x2222222222222222222222222222222222222222";
+
+  it("builds auction bid, settle, and sweep forwarder requests", () => {
+    const bidRequest = buildNftAuctionBidWalletRequest({
+      listingId,
+      bidderAddress,
+      amount: "321",
+      currentBlock: 888,
+      forwarderContractAddress,
+    });
+    const expectedBid = buildNativeNftPlaceAuctionBidForwarderInput({
+      listingId,
+      bidder: bidderAddress,
+      amount: "321",
+      currentBlock: 888,
+    }, "22000");
+    expect(bidRequest.params[0]).toMatchObject({
+      contractAddress: forwarderContractAddress,
+      input: expectedBid.input,
+      executionUnitLimitHex: "0x200000",
+      valueWeiHex: "0x0",
+    });
+
+    const settleRequest = buildNftAuctionSettleWalletRequest({
+      listingId,
+      currentBlock: 999,
+      forwarderContractAddress,
+    });
+    const expectedSettle = buildNativeNftSettleAuctionForwarderInput({
+      listingId,
+      currentBlock: 999,
+    }, "22000");
+    expect(settleRequest.params[0]).toMatchObject({
+      contractAddress: forwarderContractAddress,
+      input: expectedSettle.input,
+      executionUnitLimitHex: "0x200000",
+      valueWeiHex: "0x0",
+    });
+
+    const sweepRequest = buildNftListingSweepWalletRequest({
+      listingIds: [listingId, otherListingId],
+      currentBlock: 777,
+      forwarderContractAddress,
+    });
+    const expectedSweep = buildNativeNftSweepExpiredListingsForwarderInput({
+      listingIds: [listingId, otherListingId],
+      currentBlock: 777,
+    }, "22000");
+    expect(sweepRequest.params[0]).toMatchObject({
+      contractAddress: forwarderContractAddress,
+      input: expectedSweep.input,
+      executionUnitLimitHex: "0x200000",
+      valueWeiHex: "0x0",
+    });
+  });
+
+  it("requires auction ids, live chain head, amount, and configured forwarder", () => {
+    expect(() => buildNftAuctionBidWalletRequest({
+      listingId: null,
+      bidderAddress,
+      amount: "321",
+      currentBlock: 888,
+      forwarderContractAddress,
+    })).toThrow("listing id");
+
+    expect(() => buildNftAuctionBidWalletRequest({
+      listingId,
+      bidderAddress,
+      amount: "",
+      currentBlock: 888,
+      forwarderContractAddress,
+    })).toThrow("Auction bid amount");
+
+    expect(() => buildNftAuctionSettleWalletRequest({
+      listingId,
+      currentBlock: null,
+      forwarderContractAddress,
+    })).toThrow("Live chain head");
+
+    expect(() => buildNftListingSweepWalletRequest({
+      listingIds: [],
+      currentBlock: 777,
+      forwarderContractAddress,
+    })).toThrow("At least one");
+
+    expect(() => buildNftListingSweepWalletRequest({
+      listingIds: [listingId],
+      currentBlock: 777,
       forwarderContractAddress: null,
     })).toThrow("forwarder address is not configured");
   });
