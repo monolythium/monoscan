@@ -2052,6 +2052,15 @@ export interface BridgeTrustDisclosureRow {
   source: string;
 }
 
+export const BRIDGE_TRUST_DISCLOSURE_DISPLAY_LIMIT = 5;
+
+export interface BridgeTrustDisclosureDisplaySlice {
+  preferred: BridgeTrustDisclosureRow | null;
+  rows: BridgeTrustDisclosureRow[];
+  hiddenCount: number;
+  totalCount: number;
+}
+
 export type BridgeRouteDisclosureSource = {
   value: unknown;
   source: string;
@@ -2309,6 +2318,51 @@ export function assessBridgeTrustDisclosures(
     assessment,
     source: sourceByKey.get(bridgeRouteDisclosureKey(route)) ?? "upstream",
   }));
+}
+
+export function bridgeTrustDisclosureDisplaySlice(
+  disclosures: readonly BridgeTrustDisclosureRow[],
+  limit = BRIDGE_TRUST_DISCLOSURE_DISPLAY_LIMIT,
+): BridgeTrustDisclosureDisplaySlice {
+  const boundedLimit = Number.isFinite(limit) && limit > 0
+    ? Math.trunc(limit)
+    : BRIDGE_TRUST_DISCLOSURE_DISPLAY_LIMIT;
+  const rows = disclosures.slice(0, boundedLimit);
+  return {
+    preferred: disclosures[0] ?? null,
+    rows,
+    hiddenCount: Math.max(0, disclosures.length - rows.length),
+    totalCount: disclosures.length,
+  };
+}
+
+export function bridgeRouteDisclosureFailureDetails(row: BridgeTrustDisclosureRow): string[] {
+  const details: string[] = [];
+  const warningSet = new Set([...row.assessment.blockedReasons, ...row.assessment.warnings]);
+
+  if (row.route.cooldownSeconds === 0 || warningSet.has("route cooldown missing")) {
+    details.push(`cooldown missing (${row.route.cooldownSeconds}s)`);
+  } else if (warningSet.has("cooldown is under one hour")) {
+    details.push(`cooldown under one hour (${row.route.cooldownSeconds}s)`);
+  }
+
+  if (row.route.finalityBlocks === 0 || warningSet.has("route finality delay missing")) {
+    details.push(`finality missing (${row.route.finalityBlocks} blocks)`);
+  } else if (warningSet.has("finality delay is under two blocks")) {
+    details.push(`finality below two blocks (${row.route.finalityBlocks} blocks)`);
+  }
+
+  if (row.route.circuitBreaker === "paused") {
+    details.push("circuit breaker paused");
+  } else if (row.route.circuitBreaker === "disabled" || row.route.circuitBreaker === "unknown" || warningSet.has("route circuit breaker missing")) {
+    details.push(`circuit breaker ${row.route.circuitBreaker}`);
+  }
+
+  if (!decimalStringIsPositive(row.route.insuranceAtomic) || warningSet.has("slashable insurance pool missing or zero")) {
+    details.push(`insurance missing or zero (${row.route.insuranceAtomic})`);
+  }
+
+  return details;
 }
 
 export function bridgeTrustDisclosuresFromAddressData(

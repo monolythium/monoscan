@@ -122,6 +122,59 @@ describe("BridgeTrustDisclosuresCard", () => {
     expect(html).toContain("score 100");
   });
 
+  it("renders deterministic preferred route and bounded failure details when multiple disclosures are present", () => {
+    const rows = bridgeTrustDisclosuresFromAddressData({
+      bridgeRouteDisclosures: [
+        {
+          ...validDisclosure,
+          routeId: "disabled-controls",
+          finalityBlocks: 0,
+          cooldownSeconds: 0,
+          circuitBreaker: "disabled",
+          insuranceAtomic: "0",
+        },
+        {
+          ...validDisclosure,
+          routeId: "zz-hidden-controls",
+          circuitBreaker: "disabled",
+          insuranceAtomic: "0",
+        },
+        {
+          ...validDisclosure,
+          routeId: "short-cooldown",
+          cooldownSeconds: 60,
+        },
+        {
+          ...validDisclosure,
+          routeId: "healthy-route",
+        },
+        {
+          ...validDisclosure,
+          routeId: "paused-controls",
+          circuitBreaker: "paused",
+        },
+        {
+          ...validDisclosure,
+          routeId: "short-finality",
+          finalityBlocks: 1,
+        },
+      ],
+    });
+
+    const html = renderToStaticMarkup(<BridgeTrustDisclosuresCard disclosures={rows}/>);
+
+    expect(html).toContain("ranked 5/6");
+    expect(html).toContain("Preferred route");
+    expect(html).toContain("healthy-route");
+    expect(html).toContain("Disclosure failures");
+    expect(html).toContain("route short-finality · finality below two blocks (1 blocks)");
+    expect(html).toContain("route short-cooldown · cooldown under one hour (60s)");
+    expect(html).toContain("route disabled-controls · cooldown missing (0s) · finality missing (0 blocks) · circuit breaker disabled · insurance missing or zero (0)");
+    expect(html).toContain("route paused-controls · circuit breaker paused");
+    expect(html).toContain("Showing top 5 of 6 ranked disclosures");
+    expect(html).not.toContain("zz-hidden-controls");
+  });
+
   it("renders invalid disclosures as blocked, never as accepted low risk", () => {
     const rows = bridgeTrustDisclosuresFromAddressData({
       bridgeRouteDisclosures: [{

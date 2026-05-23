@@ -30,6 +30,8 @@ import {
   apiReceiptToRpcReceipt,
   apiTxToRpcTx,
   assessBridgeTrustDisclosures,
+  bridgeRouteDisclosureFailureDetails,
+  bridgeTrustDisclosureDisplaySlice,
   bridgeTrustDisclosuresFromAddressData,
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
@@ -544,6 +546,61 @@ describe("bridge trust disclosure normalization", () => {
     expect(rows[0].assessment.blockedReasons).toContain("route cooldown missing");
     expect(rows[0].assessment.blockedReasons).toContain("route circuit breaker missing");
     expect(rows[0].assessment.blockedReasons).toContain("slashable insurance pool missing or zero");
+  });
+
+  it("ranks disclosures deterministically and exposes a bounded preferred display slice", () => {
+    const pausedDisclosure = {
+      ...validDisclosure,
+      routeId: "paused-route",
+      circuitBreaker: "paused",
+    };
+    const shortCooldownDisclosure = {
+      ...validDisclosure,
+      routeId: "short-cooldown",
+      cooldownSeconds: 60,
+    };
+    const healthyDisclosure = {
+      ...validDisclosure,
+      routeId: "healthy-route",
+    };
+
+    const rows = assessBridgeTrustDisclosures([
+      { source: "addressProfile[0]", value: pausedDisclosure },
+      { source: "addressProfile[1]", value: shortCooldownDisclosure },
+      { source: "addressProfile[2]", value: healthyDisclosure },
+    ]);
+    const slice = bridgeTrustDisclosureDisplaySlice(rows, 2);
+
+    expect(rows.map((row) => row.route.routeId)).toEqual([
+      "healthy-route",
+      "short-cooldown",
+      "paused-route",
+    ]);
+    expect(slice.preferred?.route.routeId).toBe("healthy-route");
+    expect(slice.rows.map((row) => row.route.routeId)).toEqual(["healthy-route", "short-cooldown"]);
+    expect(slice.hiddenCount).toBe(1);
+    expect(slice.totalCount).toBe(3);
+  });
+
+  it("reports bridge cooldown, finality, circuit-breaker, and insurance failure details from disclosures", () => {
+    const rows = assessBridgeTrustDisclosures([{
+      source: "addressProfile[0]",
+      value: {
+        ...validDisclosure,
+        routeId: "bad-controls",
+        finalityBlocks: 0,
+        cooldownSeconds: 0,
+        circuitBreaker: "disabled",
+        insuranceAtomic: "0",
+      },
+    }]);
+
+    expect(bridgeRouteDisclosureFailureDetails(rows[0])).toEqual([
+      "cooldown missing (0s)",
+      "finality missing (0 blocks)",
+      "circuit breaker disabled",
+      "insurance missing or zero (0)",
+    ]);
   });
 
   it("does not synthesize a route when upstream disclosure metadata is absent", () => {
