@@ -11,6 +11,7 @@ import {
   ApiClient,
   RpcClient,
   type ApiClientOptions,
+  type CapabilitiesResponse,
   type RpcClientOptions,
 } from "@monolythium/core-sdk";
 
@@ -35,6 +36,7 @@ const RPC_URL: string =
   "/rpc";
 
 const HASH32_RE = /^0x[0-9a-fA-F]{64}$/;
+const HEX20_RE = /^0x[0-9a-fA-F]{40}$/;
 const DEFAULT_LYTH_TOKEN_ID = `0x${"00".repeat(32)}`;
 
 export function isRpcConfigured(): boolean {
@@ -50,10 +52,26 @@ export function getLythTokenId(): string {
   return configured && HASH32_RE.test(configured) ? configured : DEFAULT_LYTH_TOKEN_ID;
 }
 
-export function getNativeMarketForwarderAddress(): string | null {
+export function getEnvNativeMarketForwarderAddress(): string | null {
   const configured = import.meta.env.VITE_MONOSCAN_MRV_NATIVE_MARKET_FORWARDER as string | undefined;
   const trimmed = configured?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+export function getNativeMarketForwarderAddress(
+  capabilities?: CapabilitiesResponse | null,
+  requestBytes?: number | null,
+): string | null {
+  const rows = capabilities?.nativeModuleForwarders?.market ?? [];
+  if (rows.length > 0) {
+    const match = rows.find((row) =>
+      row.module === "market" &&
+      HEX20_RE.test(row.contractAddress) &&
+      (requestBytes === null || requestBytes === undefined || row.requestBytes === requestBytes)
+    );
+    return match?.contractAddress ?? null;
+  }
+  return getEnvNativeMarketForwarderAddress();
 }
 
 let _marketIds: Record<string, string> | null = null;

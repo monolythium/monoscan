@@ -17,6 +17,7 @@ import {
   buildNativeNftSettleAuctionForwarderInput,
   buildNativeNftSweepExpiredListingsForwarderInput,
   buildNativeSpotLimitOrderForwarderInput,
+  type CapabilitiesResponse,
   type NativeNftAssetStandard,
   type NativeNftListingKind,
   type SpotLimitOrderSide,
@@ -33,6 +34,7 @@ import {
   useClobOhlc,
   useClobOrderBook,
   useClobTrades,
+  useCapabilities,
   useNativeMarketEvents,
   useNativeMarketState,
 } from "./data/hooks";
@@ -199,6 +201,7 @@ export interface MarketOrderWalletRequestArgs {
   ownerAddress: string | null | undefined;
   orderNonce: string | number | bigint;
   forwarderContractAddress: string | null | undefined;
+  capabilities?: CapabilitiesResponse | null;
   side: SpotLimitOrderSide;
   price: string;
   quantity: string;
@@ -222,6 +225,7 @@ export interface NftListingBuyWalletRequestArgs {
   buyerAddress: string | null | undefined;
   currentBlock: string | number | bigint | null | undefined;
   forwarderContractAddress: string | null | undefined;
+  capabilities?: CapabilitiesResponse | null;
   maxCycles?: string | number | bigint;
   executionUnitLimitHex?: string;
 }
@@ -248,6 +252,7 @@ export interface NftListingCreateWalletRequestArgs {
   kind?: NativeNftListingKind;
   expiresAtBlock: string | number | bigint;
   forwarderContractAddress: string | null | undefined;
+  capabilities?: CapabilitiesResponse | null;
   maxCycles?: string | number | bigint;
   executionUnitLimitHex?: string;
 }
@@ -256,6 +261,7 @@ export interface NftListingCancelWalletRequestArgs {
   listingId: string | null | undefined;
   callerAddress: string | null | undefined;
   forwarderContractAddress: string | null | undefined;
+  capabilities?: CapabilitiesResponse | null;
   maxCycles?: string | number | bigint;
   executionUnitLimitHex?: string;
 }
@@ -266,6 +272,7 @@ export interface NftAuctionBidWalletRequestArgs {
   amount: string;
   currentBlock: string | number | bigint | null | undefined;
   forwarderContractAddress: string | null | undefined;
+  capabilities?: CapabilitiesResponse | null;
   maxCycles?: string | number | bigint;
   executionUnitLimitHex?: string;
 }
@@ -274,6 +281,7 @@ export interface NftAuctionSettleWalletRequestArgs {
   listingId: string | null | undefined;
   currentBlock: string | number | bigint | null | undefined;
   forwarderContractAddress: string | null | undefined;
+  capabilities?: CapabilitiesResponse | null;
   maxCycles?: string | number | bigint;
   executionUnitLimitHex?: string;
 }
@@ -282,6 +290,7 @@ export interface NftListingSweepWalletRequestArgs {
   listingIds: readonly string[];
   currentBlock: string | number | bigint | null | undefined;
   forwarderContractAddress: string | null | undefined;
+  capabilities?: CapabilitiesResponse | null;
   maxCycles?: string | number | bigint;
   executionUnitLimitHex?: string;
 }
@@ -296,6 +305,21 @@ export interface NftListingActionWalletRequest {
   }];
 }
 
+function _resolveNativeMarketForwarderAddress(
+  capabilities: CapabilitiesResponse | null | undefined,
+  requestBytes: number,
+  fallbackAddress: string | null | undefined,
+): string {
+  const resolved = getNativeMarketForwarderAddress(capabilities, requestBytes);
+  if (resolved) return resolved;
+  if ((capabilities?.nativeModuleForwarders?.market ?? []).length > 0) {
+    throw new Error(`MRV native market forwarder for ${requestBytes} request bytes is not configured.`);
+  }
+  const fallback = fallbackAddress?.trim();
+  if (fallback) return fallback;
+  throw new Error("MRV native market forwarder address is not configured.");
+}
+
 export function buildMarketOrderWalletRequest(args: MarketOrderWalletRequestArgs): MarketOrderWalletRequest {
   if (!args.marketId) {
     throw new Error("Live native market id is required before placing an order.");
@@ -303,10 +327,6 @@ export function buildMarketOrderWalletRequest(args: MarketOrderWalletRequestArgs
   const owner = args.ownerAddress?.trim();
   if (!owner) {
     throw new Error("Wallet account is required before placing an order.");
-  }
-  const forwarder = args.forwarderContractAddress?.trim();
-  if (!forwarder) {
-    throw new Error("MRV native market forwarder address is not configured.");
   }
   const forwarderInput = buildNativeSpotLimitOrderForwarderInput({
     marketId: args.marketId,
@@ -317,6 +337,11 @@ export function buildMarketOrderWalletRequest(args: MarketOrderWalletRequestArgs
     quantity: args.quantity.trim(),
     expiresAtBlock: args.expiryBlock ?? 0,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  const forwarder = _resolveNativeMarketForwarderAddress(
+    args.capabilities,
+    forwarderInput.requestBytes,
+    args.forwarderContractAddress,
+  );
   return {
     method: "monolythium_submitMrvNativeCall",
     params: [{
@@ -343,15 +368,16 @@ export function buildNftListingBuyWalletRequest(
   if (args.currentBlock === null || args.currentBlock === undefined) {
     throw new Error("Live chain head is required before buying a listing.");
   }
-  const forwarder = args.forwarderContractAddress?.trim();
-  if (!forwarder) {
-    throw new Error("MRV native market forwarder address is not configured.");
-  }
   const forwarderInput = buildNativeNftBuyListingForwarderInput({
     listingId,
     buyer,
     currentBlock: args.currentBlock,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  const forwarder = _resolveNativeMarketForwarderAddress(
+    args.capabilities,
+    forwarderInput.requestBytes,
+    args.forwarderContractAddress,
+  );
   return {
     method: "monolythium_submitMrvNativeCall",
     params: [{
@@ -383,10 +409,6 @@ export function buildNftListingCreateWalletRequest(
   if (!paymentAsset) {
     throw new Error("Payment asset id is required before creating a listing.");
   }
-  const forwarder = args.forwarderContractAddress?.trim();
-  if (!forwarder) {
-    throw new Error("MRV native market forwarder address is not configured.");
-  }
   const forwarderInput = buildNativeNftCreateListingForwarderInput({
     seller,
     nonce: args.listingNonce,
@@ -399,6 +421,11 @@ export function buildNftListingCreateWalletRequest(
     kind: args.kind ?? "fixed-price",
     expiresAtBlock: args.expiresAtBlock,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  const forwarder = _resolveNativeMarketForwarderAddress(
+    args.capabilities,
+    forwarderInput.requestBytes,
+    args.forwarderContractAddress,
+  );
   return {
     method: "monolythium_submitMrvNativeCall",
     params: [{
@@ -422,14 +449,15 @@ export function buildNftListingCancelWalletRequest(
   if (!caller) {
     throw new Error("Wallet account is required before cancelling a listing.");
   }
-  const forwarder = args.forwarderContractAddress?.trim();
-  if (!forwarder) {
-    throw new Error("MRV native market forwarder address is not configured.");
-  }
   const forwarderInput = buildNativeNftCancelListingForwarderInput({
     listingId,
     caller,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  const forwarder = _resolveNativeMarketForwarderAddress(
+    args.capabilities,
+    forwarderInput.requestBytes,
+    args.forwarderContractAddress,
+  );
   return {
     method: "monolythium_submitMrvNativeCall",
     params: [{
@@ -456,10 +484,6 @@ export function buildNftAuctionBidWalletRequest(
   if (args.currentBlock === null || args.currentBlock === undefined) {
     throw new Error("Live chain head is required before placing an auction bid.");
   }
-  const forwarder = args.forwarderContractAddress?.trim();
-  if (!forwarder) {
-    throw new Error("MRV native market forwarder address is not configured.");
-  }
   const amount = args.amount.trim();
   if (!amount) {
     throw new Error("Auction bid amount is required before placing an auction bid.");
@@ -470,6 +494,11 @@ export function buildNftAuctionBidWalletRequest(
     amount,
     currentBlock: args.currentBlock,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  const forwarder = _resolveNativeMarketForwarderAddress(
+    args.capabilities,
+    forwarderInput.requestBytes,
+    args.forwarderContractAddress,
+  );
   return {
     method: "monolythium_submitMrvNativeCall",
     params: [{
@@ -492,14 +521,15 @@ export function buildNftAuctionSettleWalletRequest(
   if (args.currentBlock === null || args.currentBlock === undefined) {
     throw new Error("Live chain head is required before settling an auction.");
   }
-  const forwarder = args.forwarderContractAddress?.trim();
-  if (!forwarder) {
-    throw new Error("MRV native market forwarder address is not configured.");
-  }
   const forwarderInput = buildNativeNftSettleAuctionForwarderInput({
     listingId,
     currentBlock: args.currentBlock,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  const forwarder = _resolveNativeMarketForwarderAddress(
+    args.capabilities,
+    forwarderInput.requestBytes,
+    args.forwarderContractAddress,
+  );
   return {
     method: "monolythium_submitMrvNativeCall",
     params: [{
@@ -522,14 +552,15 @@ export function buildNftListingSweepWalletRequest(
   if (args.currentBlock === null || args.currentBlock === undefined) {
     throw new Error("Live chain head is required before sweeping listings.");
   }
-  const forwarder = args.forwarderContractAddress?.trim();
-  if (!forwarder) {
-    throw new Error("MRV native market forwarder address is not configured.");
-  }
   const forwarderInput = buildNativeNftSweepExpiredListingsForwarderInput({
     listingIds,
     currentBlock: args.currentBlock,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  const forwarder = _resolveNativeMarketForwarderAddress(
+    args.capabilities,
+    forwarderInput.requestBytes,
+    args.forwarderContractAddress,
+  );
   return {
     method: "monolythium_submitMrvNativeCall",
     params: [{
@@ -683,12 +714,14 @@ const NativeNftListingsTable = ({
   empty,
   latestBlock,
   forwarderAddress,
+  capabilities,
   go,
 }: {
   rows: NativeMarketStateDisplayRow[];
   empty: string;
   latestBlock: number | null;
   forwarderAddress: string | null;
+  capabilities?: CapabilitiesResponse | null;
   go?: (to: string) => void;
 }) => {
   const [buySubmit, setBuySubmit] = useState<{
@@ -767,6 +800,7 @@ const NativeNftListingsTable = ({
         kind: listingKind,
         expiresAtBlock: createForm.expiresAtBlock.trim() || "0",
         forwarderContractAddress: forwarderAddress,
+        capabilities,
       });
       const result = await provider.request(request);
       const txHash = _walletTxHash(result);
@@ -805,6 +839,7 @@ const NativeNftListingsTable = ({
         buyerAddress,
         currentBlock: latestBlock,
         forwarderContractAddress: forwarderAddress,
+        capabilities,
       });
       const result = await provider.request(request);
       const txHash = _walletTxHash(result);
@@ -835,6 +870,7 @@ const NativeNftListingsTable = ({
         listingId: row.primaryId,
         callerAddress,
         forwarderContractAddress: forwarderAddress,
+        capabilities,
       });
       const result = await provider.request(request);
       const txHash = _walletTxHash(result);
@@ -867,6 +903,7 @@ const NativeNftListingsTable = ({
         amount: auctionBidAmount,
         currentBlock: latestBlock,
         forwarderContractAddress: forwarderAddress,
+        capabilities,
       });
       const result = await provider.request(request);
       const txHash = _walletTxHash(result);
@@ -896,6 +933,7 @@ const NativeNftListingsTable = ({
         listingId: row.primaryId,
         currentBlock: latestBlock,
         forwarderContractAddress: forwarderAddress,
+        capabilities,
       });
       const result = await provider.request(request);
       const txHash = _walletTxHash(result);
@@ -925,6 +963,7 @@ const NativeNftListingsTable = ({
         listingIds: row.primaryId ? [row.primaryId] : [],
         currentBlock: latestBlock,
         forwarderContractAddress: forwarderAddress,
+        capabilities,
       });
       const result = await provider.request(request);
       const txHash = _walletTxHash(result);
@@ -1230,7 +1269,7 @@ const NativeNftListingsTable = ({
   );
 };
 
-const NativeMarketStateCard = ({ state, rows, loading, scope, latestBlock, forwarderAddress, go }: any) => {
+const NativeMarketStateCard = ({ state, rows, loading, scope, latestBlock, forwarderAddress, capabilities, go }: any) => {
   const total = rows.spotMarkets.length + rows.spotOrders.length + rows.nftListings.length + rows.collectionRoyalties.length;
   return (
     <div className="ms-card" style={{padding:0,overflow:"hidden"}}>
@@ -1261,6 +1300,7 @@ const NativeMarketStateCard = ({ state, rows, loading, scope, latestBlock, forwa
             empty="No NFT listings returned."
             latestBlock={latestBlock ?? null}
             forwarderAddress={forwarderAddress ?? null}
+            capabilities={capabilities ?? null}
             go={go}
           />
           <NativeMarketStateTable title="Collection royalties" rows={rows.collectionRoyalties} empty="No collection royalties returned."/>
@@ -1308,6 +1348,7 @@ const MarketsPage = ({ go }: any) => {
   const [dir, setDir] = useState(1);
   const [tab, setTab] = useState("all");
   const head = useChainHead();
+  const capabilities = useCapabilities();
   const liveMarkets = useClobMarkets(100);
   const nativeMarketState = useNativeMarketState();
   const nativeStateRows = useMemo(() => nativeMarketStateRows(nativeMarketState.data), [nativeMarketState.data]);
@@ -1524,7 +1565,8 @@ const MarketsPage = ({ go }: any) => {
         rows={nativeStateRows}
         loading={nativeMarketState.isLoading}
         latestBlock={head.data?.blockNumber ?? null}
-        forwarderAddress={getNativeMarketForwarderAddress()}
+        forwarderAddress={getNativeMarketForwarderAddress(capabilities.data)}
+        capabilities={capabilities.data}
       />
 
       <div className="mono" style={{color:"var(--fg-500)",fontSize:11,textAlign:"center",letterSpacing:"0.04em",padding:"6px 0"}}>
@@ -1541,6 +1583,7 @@ const MarketPage = ({ sym, go }: any) => {
   const routeKey = decodeURIComponent(sym ?? "");
   const configuredMarketId = getMarketIdForSymbol(routeKey);
   const head = useChainHead();
+  const capabilities = useCapabilities();
   const liveMarkets = useClobMarkets(100);
   const matchedLiveSummary = liveMarkets.data?.markets.find((row: any) =>
     row.marketId === configuredMarketId || row.marketId === routeKey,
@@ -1600,7 +1643,7 @@ const MarketPage = ({ sym, go }: any) => {
   const takerFeeBps = liveMarket?.takerFeeBps ?? 5;
   const orderBaseTokenId = liveMarket?.baseToken ?? null;
   const orderQuoteTokenId = liveMarket?.quoteToken ?? null;
-  const nativeMarketForwarderAddress = getNativeMarketForwarderAddress();
+  const nativeMarketForwarderAddress = getNativeMarketForwarderAddress(capabilities.data);
   const suggestedOrderPrice = _positiveIntegerText(
     orderSide === "buy" ? liveMarket?.bestBidPrice : liveMarket?.bestAskPrice,
     _positiveIntegerText(liveMarket?.lastTradePrice, _positiveIntegerText(liveMarket?.tickSize, "1")),
@@ -1661,6 +1704,7 @@ const MarketPage = ({ sym, go }: any) => {
         ownerAddress,
         orderNonce: nonceResolution.nonce,
         forwarderContractAddress: nativeMarketForwarderAddress,
+        capabilities: capabilities.data,
         side: orderSide,
         price: orderPrice,
         quantity: orderQuantity,
@@ -2216,6 +2260,7 @@ const MarketPage = ({ sym, go }: any) => {
         scope={marketId ? `primaryId ${_shortHash(marketId)}` : "unscoped until a live market id is known"}
         latestBlock={head.data?.blockNumber ?? null}
         forwarderAddress={nativeMarketForwarderAddress}
+        capabilities={capabilities.data}
         go={go}
       />
 
