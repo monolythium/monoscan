@@ -9,13 +9,16 @@
 
 import { useState, useEffect, useMemo } from "react";
 import {
+  addressToTypedBech32,
   buildNativeSpotLimitOrderForwarderInput,
   type SpotLimitOrderSide,
 } from "@monolythium/core-sdk";
 import { MARKETS } from "./data/mock";
 import {
+  fetchNativeMarketState,
   nativeMarketEventRows,
   nativeMarketStateRows,
+  type NativeMarketStateDisplayRow,
   useChainHead,
   useClobMarket,
   useClobMarkets,
@@ -52,6 +55,11 @@ const _positiveIntegerText = (value: unknown, fallback: string): string => {
   if (typeof value === "bigint" && value > 0n) return value.toString(10);
   return fallback;
 };
+const _decimalNonceValue = (value: string | null | undefined): bigint | null => {
+  const text = value?.trim();
+  if (!text || !/^(0|[1-9]\d*)$/.test(text)) return null;
+  return BigInt(text);
+};
 const NATIVE_MARKET_FORWARDER_MAX_CYCLES = "22000";
 const NATIVE_MARKET_MRV_EXECUTION_UNIT_LIMIT_HEX = "0x200000";
 const _cumLevels = (rows: Array<{ price: string; size: string }>) => {
@@ -63,6 +71,75 @@ const _cumLevels = (rows: Array<{ price: string; size: string }>) => {
     return { px, sz, total };
   });
 };
+
+export function ownerStateAccount(ownerAddress: string | null | undefined): string | null {
+  const trimmed = ownerAddress?.trim();
+  if (!trimmed) return null;
+  try {
+    return addressToTypedBech32("user", trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function _ownerAccountCandidates(ownerAddress: string | null | undefined): Set<string> {
+  const candidates = new Set<string>();
+  const trimmed = ownerAddress?.trim();
+  if (!trimmed) return candidates;
+  candidates.add(trimmed.toLowerCase());
+  try {
+    candidates.add(addressToTypedBech32("user", trimmed).toLowerCase());
+  } catch {
+    // Already-typed wallet accounts are still matched through the raw candidate.
+  }
+  return candidates;
+}
+
+export function nextSpotOrderNonceForOwner(
+  rows: Array<Pick<NativeMarketStateDisplayRow, "account" | "nonce">>,
+  ownerAddress: string | null | undefined,
+): string | null {
+  const candidates = _ownerAccountCandidates(ownerAddress);
+  if (candidates.size === 0) return null;
+
+  let maxNonce: bigint | null = null;
+  for (const row of rows) {
+    const account = row.account?.trim().toLowerCase();
+    if (!account || !candidates.has(account)) continue;
+    const nonce = _decimalNonceValue(row.nonce);
+    if (nonce === null) continue;
+    if (maxNonce === null || nonce > maxNonce) maxNonce = nonce;
+  }
+  return maxNonce === null ? null : (maxNonce + 1n).toString(10);
+}
+
+export interface MarketOrderNonceResolution {
+  nonce: string;
+  source: "indexed" | "fallback";
+  ownerAccount: string | null;
+}
+
+async function resolveMarketOrderNonce(args: {
+  ownerAddress: string;
+  fallbackNonce: string;
+  spotOrders: NativeMarketStateDisplayRow[];
+}): Promise<MarketOrderNonceResolution> {
+  const ownerAccount = ownerStateAccount(args.ownerAddress);
+  const ownerState = ownerAccount ? await fetchNativeMarketState({ account: ownerAccount }) : null;
+  const ownerRows = nativeMarketStateRows(ownerState).spotOrders;
+  const indexedNonce = nextSpotOrderNonceForOwner(
+    [...ownerRows, ...args.spotOrders],
+    args.ownerAddress,
+  );
+  if (indexedNonce !== null) {
+    return { nonce: indexedNonce, source: "indexed", ownerAccount };
+  }
+  return {
+    nonce: args.fallbackNonce.trim() || "0",
+    source: "fallback",
+    ownerAccount,
+  };
+}
 
 export interface MarketOrderWalletRequestArgs {
   marketId: string | null | undefined;
@@ -583,6 +660,7 @@ const MarketPage = ({ sym, go }: any) => {
   const [orderPrice, setOrderPrice] = useState("1");
   const [orderQuantity, setOrderQuantity] = useState("1");
   const [orderNonce, setOrderNonce] = useState("0");
+  const [orderNonceResolution, setOrderNonceResolution] = useState<MarketOrderNonceResolution | null>(null);
   const [orderExpiryBlock, setOrderExpiryBlock] = useState("0");
   const [orderMarketSeed, setOrderMarketSeed] = useState<string | null>(null);
   const [orderSubmit, setOrderSubmit] = useState<{
@@ -613,12 +691,18 @@ const MarketPage = ({ sym, go }: any) => {
     _positiveIntegerText(liveMarket?.lastTradePrice, _positiveIntegerText(liveMarket?.tickSize, "1")),
   );
   const suggestedOrderQuantity = _positiveIntegerText(liveMarket?.lotSize, "1");
+  const orderNonceStatus = orderNonceResolution
+    ? orderNonceResolution.source === "indexed"
+      ? `indexed next ${orderNonceResolution.nonce}`
+      : `fallback ${orderNonceResolution.nonce}`
+    : "indexed after wallet connect";
 
   useEffect(() => {
     if (!marketId || !liveMarket || orderMarketSeed === marketId) return;
     setOrderPrice(suggestedOrderPrice);
     setOrderQuantity(suggestedOrderQuantity);
     setOrderNonce("0");
+    setOrderNonceResolution(null);
     setOrderExpiryBlock("0");
     setOrderMarketSeed(marketId);
     setOrderSubmit({ state: "idle" });
@@ -641,12 +725,26 @@ const MarketPage = ({ sym, go }: any) => {
       }
       setOrderSubmit({ state: "submitting", message: "awaiting wallet" });
       const accounts = await provider.request({ method: "eth_requestAccounts", params: [] });
+      const ownerAddress = _walletAccount(accounts);
+      setOrderSubmit({ state: "submitting", message: "resolving owner nonce" });
+      const nonceResolution = await resolveMarketOrderNonce({
+        ownerAddress,
+        fallbackNonce: orderNonce.trim() || "0",
+        spotOrders: nativeStateRows.spotOrders,
+      });
+      setOrderNonceResolution(nonceResolution);
+      setOrderSubmit({
+        state: "submitting",
+        message: nonceResolution.source === "indexed"
+          ? `using indexed order nonce ${nonceResolution.nonce}`
+          : `using fallback order nonce ${nonceResolution.nonce}; indexed owner nonce unavailable`,
+      });
       const request = buildMarketOrderWalletRequest({
         marketId,
         baseTokenId: orderBaseTokenId,
         quoteTokenId: orderQuoteTokenId,
-        ownerAddress: _walletAccount(accounts),
-        orderNonce: orderNonce.trim() || "0",
+        ownerAddress,
+        orderNonce: nonceResolution.nonce,
         forwarderContractAddress: nativeMarketForwarderAddress,
         side: orderSide,
         price: orderPrice,
@@ -941,10 +1039,16 @@ const MarketPage = ({ sym, go }: any) => {
           </div>
 
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 10px",background:"rgba(255,255,255,0.025)",borderRadius:8,border:"1px solid var(--fg-700)"}}>
-            <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Order nonce</span>
+            <div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Nonce fallback</div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>{orderNonceStatus}</div>
+            </div>
             <input
               value={orderNonce}
-              onChange={(event)=>setOrderNonce(event.currentTarget.value)}
+              onChange={(event)=>{
+                setOrderNonce(event.currentTarget.value);
+                setOrderNonceResolution(null);
+              }}
               inputMode="numeric"
               className="mono num"
               style={{fontSize:12,color:"var(--fg-200)",textAlign:"right",width:120}}

@@ -631,6 +631,7 @@ export interface NativeMarketStateDisplayRow {
   collectionId: string | null;
   tokenId: string | null;
   account: string | null;
+  nonce: string | null;
   side: string | null;
   status: string | null;
   price: string | null;
@@ -804,6 +805,7 @@ function nativeMarketStateRow(
     collectionId,
     tokenId,
     account: readNativeStateString(row, ["owner", "account", "maker", "seller", "recipient", "royaltyRecipient", "royalty_recipient"]),
+    nonce: readNativeStateString(row, ["nonce", "orderNonce", "order_nonce"]),
     side: readNativeStateString(row, ["side", "orderSide", "order_side"]),
     status: readNativeStateString(row, ["status", "state", "listingStatus", "listing_status"]),
     price: readNativeStateString(row, ["price", "priceLythoshi", "price_lythoshi", "limitPrice", "limit_price"]),
@@ -836,6 +838,9 @@ function nativeMarketStateRow(
             "recipient",
             "royaltyRecipient",
             "royalty_recipient",
+            "nonce",
+            "orderNonce",
+            "order_nonce",
             "side",
             "orderSide",
             "order_side",
@@ -3937,9 +3942,12 @@ export function useNativeMarketEvents(options: {
 }
 
 export async function fetchNativeMarketState(
-  filter: { primaryId?: string | null } = {},
+  filter: { primaryId?: string | null; account?: string | null } = {},
 ): Promise<NativeMarketStateResponse | null> {
-  const query = filter.primaryId ? { primaryId: filter.primaryId } : {};
+  const query = {
+    ...(filter.primaryId ? { primaryId: filter.primaryId } : {}),
+    ...(filter.account ? { account: filter.account } : {}),
+  };
   try {
     return await getApiClient()
       .get<NativeMarketStateApiEnvelope>("/native-market-state", query)
