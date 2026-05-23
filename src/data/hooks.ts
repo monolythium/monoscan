@@ -245,6 +245,49 @@ type MrcHoldersRpcClient = {
 };
 
 export const MRC_HOLDERS_BALANCE_LIMIT = 6;
+export const MRC_ACCOUNT_POLICY_SPEND_LIMIT = 6;
+
+export interface MrcAccountRecord {
+  kind: string;
+  account: string;
+  controller: string | null;
+  recovery: string | null;
+  policyHash: string | null;
+  nonce: string | null;
+  updatedAtBlock: number;
+}
+
+export interface MrcPolicySpendRecord {
+  account: string;
+  assetId: string;
+  window: string;
+  amount: string;
+  spent: string;
+  updatedAtBlock: number;
+}
+
+export interface MrcAccountResponse {
+  schemaVersion: 1;
+  account: string;
+  spendLimit: number;
+  smartAccount: MrcAccountRecord | null;
+  policyAccount: MrcAccountRecord | null;
+  policySpends: MrcPolicySpendRecord[];
+}
+
+interface MrcAccountEnvelope {
+  data: unknown;
+}
+
+type MrcAccountApiClient = {
+  get?: <T>(path: string, query?: Record<string, string | number | bigint | boolean | null | undefined>) => Promise<T>;
+};
+
+type MrcAccountRpcClient = {
+  lythMrcAccount?: (account: string, limit?: number) => Promise<unknown>;
+  call?: <T>(method: string, params?: unknown) => Promise<T>;
+};
+
 /** Upstream metadata contract required before Monoscan can show bridge route trust rows. */
 export const BRIDGE_ROUTE_DISCLOSURE_UPSTREAM_FIELD =
   "AddressProfileResponse.bridgeRouteDisclosures, TokenBalanceRecord.bridgeRouteDisclosure(s), or /api/v1/bridge/routes";
@@ -2583,6 +2626,133 @@ export function useMrcHoldersForTokenBalances(
     enabled: keys.length > 0 && isRpcConfigured(),
     queryFn: () => fetchMrcHoldersForTokenBalances(rows, {}, rowLimit),
     staleTime: 60_000,
+  });
+}
+
+function boundedMrcAccountSpendLimit(limit = MRC_ACCOUNT_POLICY_SPEND_LIMIT): number {
+  return Math.max(1, Math.min(Math.trunc(limit), 50));
+}
+
+function unwrapMrcAccountResponse(value: unknown): unknown {
+  const envelope = unknownRecord(value) as (Record<string, unknown> & MrcAccountEnvelope) | null;
+  const data = unknownRecord(envelope?.data);
+  if (
+    data
+    && (
+      data.account !== undefined
+      || data.smartAccount !== undefined
+      || data.smart_account !== undefined
+      || data.policyAccount !== undefined
+      || data.policy_account !== undefined
+      || data.policySpends !== undefined
+      || data.policy_spends !== undefined
+    )
+  ) {
+    return data;
+  }
+  return value;
+}
+
+function normalizeMrcAccountRecord(value: unknown): MrcAccountRecord | null {
+  const row = unknownRecord(value);
+  if (!row) return null;
+  const kind = readStringField(row, ["kind"]);
+  const account = readStringField(row, ["account"]);
+  const updatedAtBlock = readNumberField(row, ["updatedAtBlock", "updated_at_block", "blockHeight", "block_height"]);
+  if (!kind || !account || updatedAtBlock === null) return null;
+  return {
+    kind,
+    account,
+    controller: readStringField(row, ["controller"]),
+    recovery: readStringField(row, ["recovery"]),
+    policyHash: readStringField(row, ["policyHash", "policy_hash"]),
+    nonce: readStringField(row, ["nonce"]),
+    updatedAtBlock,
+  };
+}
+
+function normalizeMrcPolicySpendRecord(value: unknown): MrcPolicySpendRecord | null {
+  const row = unknownRecord(value);
+  if (!row) return null;
+  const account = readStringField(row, ["account"]);
+  const assetId = readStringField(row, ["assetId", "asset_id"]);
+  const window = readStringField(row, ["window"]);
+  const amount = readStringField(row, ["amount"]);
+  const spent = readStringField(row, ["spent"]);
+  const updatedAtBlock = readNumberField(row, ["updatedAtBlock", "updated_at_block", "blockHeight", "block_height"]);
+  if (!account || !assetId || !window || !amount || !spent || updatedAtBlock === null) return null;
+  return {
+    account,
+    assetId,
+    window,
+    amount,
+    spent,
+    updatedAtBlock,
+  };
+}
+
+export function normalizeMrcAccountResponse(value: unknown): MrcAccountResponse | null {
+  const root = unknownRecord(unwrapMrcAccountResponse(value));
+  if (!root) return null;
+  const schemaVersion = readNumberField(root, ["schemaVersion", "schema_version"]);
+  const account = readStringField(root, ["account"]);
+  const spendLimit = readNumberField(root, ["spendLimit", "spend_limit"]);
+  if (schemaVersion !== 1 || !account || spendLimit === null) return null;
+  const rawSpends = readObjectField(root, ["policySpends", "policy_spends"]);
+  const policySpends = Array.isArray(rawSpends)
+    ? rawSpends
+        .map(normalizeMrcPolicySpendRecord)
+        .filter((row): row is MrcPolicySpendRecord => row !== null)
+    : [];
+  return {
+    schemaVersion: 1,
+    account,
+    spendLimit,
+    smartAccount: normalizeMrcAccountRecord(readObjectField(root, ["smartAccount", "smart_account"])),
+    policyAccount: normalizeMrcAccountRecord(readObjectField(root, ["policyAccount", "policy_account"])),
+    policySpends,
+  };
+}
+
+export async function fetchMrcAccount(
+  account: string,
+  limit = MRC_ACCOUNT_POLICY_SPEND_LIMIT,
+  clients: { api?: MrcAccountApiClient; rpc?: MrcAccountRpcClient } = {},
+): Promise<MrcAccountResponse | null> {
+  const rowLimit = boundedMrcAccountSpendLimit(limit);
+  const api = clients.api ?? getApiClient();
+  const rpc = clients.rpc ?? (getRpcClient() as unknown as MrcAccountRpcClient);
+  try {
+    if (typeof api.get !== "function") throw new Error("MRC account REST client unavailable");
+    const response = await api.get(
+      `/mrc/accounts/${encodeURIComponent(account)}`,
+      { limit: rowLimit },
+    );
+    const normalized = normalizeMrcAccountResponse(response);
+    if (normalized) return normalized;
+  } catch {
+    // Fall through to JSON-RPC for nodes without the REST indexer route.
+  }
+
+  try {
+    const response = typeof rpc.lythMrcAccount === "function"
+      ? await rpc.lythMrcAccount(account, rowLimit)
+      : typeof rpc.call === "function"
+        ? await rpc.call("lyth_mrcAccount", [account, rowLimit])
+        : null;
+    return normalizeMrcAccountResponse(response);
+  } catch {
+    return null;
+  }
+}
+
+export function useMrcAccount(addr: string | undefined, limit = MRC_ACCOUNT_POLICY_SPEND_LIMIT) {
+  const rowLimit = boundedMrcAccountSpendLimit(limit);
+  return useQuery<MrcAccountResponse | null>({
+    queryKey: QK.mrcAccount(addr ?? "", rowLimit),
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: () => fetchMrcAccount(addr as string, rowLimit),
+    staleTime: 30_000,
   });
 }
 
