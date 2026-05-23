@@ -168,6 +168,7 @@ type RedemptionQueueRpcClient = RpcClient & {
 };
 
 export interface MrcMetadataBalanceIdentity {
+  standard?: string | null;
   assetId?: string | null;
   tokenId?: string | null;
 }
@@ -203,6 +204,46 @@ type MrcMetadataRpcClient = {
 };
 
 export const MRC_METADATA_BALANCE_LIMIT = 8;
+
+export type MrcHolderStandard = "mrc721" | "mrc1155";
+
+export interface MrcHolderRecord {
+  rank: number;
+  address: string;
+  balance: string;
+  updatedAtBlock: number | string | bigint;
+}
+
+export interface MrcHoldersResponse {
+  schemaVersion: number;
+  standard: MrcHolderStandard;
+  assetId: string;
+  tokenId: string;
+  limit: number;
+  holders: MrcHolderRecord[];
+}
+
+export type MrcHoldersByTokenBalance = Record<string, MrcHoldersResponse>;
+
+interface MrcHoldersEnvelope {
+  data: MrcHoldersResponse;
+}
+
+type MrcHoldersApiClient = {
+  get?: <T>(path: string, query?: Record<string, string | number | bigint | boolean | null | undefined>) => Promise<T>;
+};
+
+type MrcHoldersRpcClient = {
+  lythMrcHolders?: (
+    standard: MrcHolderStandard,
+    assetId: string,
+    tokenId: string,
+    limit?: number,
+  ) => Promise<MrcHoldersResponse>;
+  call?: <T>(method: string, params?: unknown) => Promise<T>;
+};
+
+export const MRC_HOLDERS_BALANCE_LIMIT = 6;
 /** Upstream metadata contract required before Monoscan can show bridge route trust rows. */
 export const BRIDGE_ROUTE_DISCLOSURE_UPSTREAM_FIELD =
   "AddressProfileResponse.bridgeRouteDisclosures, TokenBalanceRecord.bridgeRouteDisclosure(s), or /api/v1/bridge/routes";
@@ -2126,6 +2167,119 @@ export function useMrcMetadataForTokenBalances(
     queryKey: QK.mrcMetadata(keys),
     enabled: keys.length > 0 && isRpcConfigured(),
     queryFn: () => fetchMrcMetadataForTokenBalances(rows, getRpcClient(), limit),
+    staleTime: 60_000,
+  });
+}
+
+function boundedMrcHoldersLimit(limit = MRC_HOLDERS_BALANCE_LIMIT): number {
+  return Math.max(1, Math.min(Math.trunc(limit), 25));
+}
+
+function normalizeMrcHolderStandard(standard: string | null | undefined): MrcHolderStandard | null {
+  return standard === "mrc721" || standard === "mrc1155" ? standard : null;
+}
+
+function mrcHoldersBalanceQueryKey(row: MrcMetadataBalanceRow): string | null {
+  const standard = normalizeMrcHolderStandard(row.mrc?.standard);
+  const assetId = row.mrc?.assetId ?? null;
+  const tokenId = row.mrc?.tokenId ?? null;
+  if (!standard || !assetId || !tokenId) return null;
+  return `${standard}:${assetId}:${tokenId}:${row.tokenId}`;
+}
+
+function uniqueMrcHoldersBalanceRows(
+  rows: readonly MrcMetadataBalanceRow[],
+  limit = MRC_HOLDERS_BALANCE_LIMIT,
+): MrcMetadataBalanceRow[] {
+  const out: MrcMetadataBalanceRow[] = [];
+  const seen = new Set<string>();
+  const rowLimit = boundedMrcHoldersLimit(limit);
+  for (const row of rows) {
+    const standard = normalizeMrcHolderStandard(row.mrc?.standard);
+    const assetId = row.mrc?.assetId ?? null;
+    const tokenId = row.mrc?.tokenId ?? null;
+    if (!standard || !assetId || !tokenId) continue;
+    const holderKey = `${standard}:${assetId}:${tokenId}`;
+    if (seen.has(holderKey)) continue;
+    seen.add(holderKey);
+    out.push(row);
+    if (out.length >= rowLimit) break;
+  }
+  return out;
+}
+
+export function mrcHoldersBalanceQueryKeys(
+  rows: readonly MrcMetadataBalanceRow[],
+  limit = MRC_HOLDERS_BALANCE_LIMIT,
+): string[] {
+  return uniqueMrcHoldersBalanceRows(rows, limit).map(mrcHoldersBalanceQueryKey).filter((key): key is string => Boolean(key));
+}
+
+function unwrapMrcHoldersResponse(response: MrcHoldersResponse | MrcHoldersEnvelope): MrcHoldersResponse {
+  return "data" in response ? response.data : response;
+}
+
+async function fetchMrcHoldersForIdentity(
+  standard: MrcHolderStandard,
+  assetId: string,
+  tokenId: string,
+  limit: number,
+  api: MrcHoldersApiClient,
+  rpc: MrcHoldersRpcClient,
+): Promise<MrcHoldersResponse | null> {
+  try {
+    if (typeof api.get !== "function") throw new Error("MRC holder REST client unavailable");
+    return unwrapMrcHoldersResponse(await api.get<MrcHoldersResponse | MrcHoldersEnvelope>(
+      `/mrc/${encodeURIComponent(standard)}/${encodeURIComponent(assetId)}/${encodeURIComponent(tokenId)}/holders`,
+      { limit },
+    ));
+  } catch {
+    if (typeof rpc.lythMrcHolders === "function") {
+      return rpc.lythMrcHolders(standard, assetId, tokenId, limit);
+    }
+    if (typeof rpc.call === "function") {
+      return rpc.call<MrcHoldersResponse>("lyth_mrcHolders", [standard, assetId, tokenId, limit]);
+    }
+    return null;
+  }
+}
+
+export async function fetchMrcHoldersForTokenBalances(
+  rows: readonly MrcMetadataBalanceRow[],
+  clients: { api?: MrcHoldersApiClient; rpc?: MrcHoldersRpcClient } = {},
+  limit = MRC_HOLDERS_BALANCE_LIMIT,
+): Promise<MrcHoldersByTokenBalance> {
+  const rowLimit = boundedMrcHoldersLimit(limit);
+  const api = clients.api ?? getApiClient();
+  const rpc = clients.rpc ?? getRpcClient();
+  const out: MrcHoldersByTokenBalance = {};
+  await Promise.all(uniqueMrcHoldersBalanceRows(rows, rowLimit).map(async (row) => {
+    const standard = normalizeMrcHolderStandard(row.mrc?.standard);
+    const assetId = row.mrc?.assetId ?? null;
+    const tokenId = row.mrc?.tokenId ?? null;
+    if (!standard || !assetId || !tokenId) return;
+    try {
+      const response = await fetchMrcHoldersForIdentity(standard, assetId, tokenId, rowLimit, api, rpc);
+      if (response && Array.isArray(response.holders)) {
+        out[row.tokenId] = response;
+      }
+    } catch {
+      // Missing node support should leave wallet token rows unchanged.
+    }
+  }));
+  return out;
+}
+
+export function useMrcHoldersForTokenBalances(
+  rows: readonly MrcMetadataBalanceRow[],
+  limit = MRC_HOLDERS_BALANCE_LIMIT,
+) {
+  const rowLimit = boundedMrcHoldersLimit(limit);
+  const keys = mrcHoldersBalanceQueryKeys(rows, rowLimit);
+  return useQuery<MrcHoldersByTokenBalance>({
+    queryKey: QK.mrcHolders(keys, rowLimit),
+    enabled: keys.length > 0 && isRpcConfigured(),
+    queryFn: () => fetchMrcHoldersForTokenBalances(rows, {}, rowLimit),
     staleTime: 60_000,
   });
 }

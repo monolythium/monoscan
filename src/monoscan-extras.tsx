@@ -32,6 +32,7 @@ import {
   useLatestCheckpoint,
   useLatestTransactions,
   useMetricsRange,
+  useMrcHoldersForTokenBalances,
   useMrcMetadataForTokenBalances,
   useNetworkStatus,
   useOperatorCapabilities,
@@ -54,6 +55,7 @@ import {
   bridgeTrustDisclosuresFromAddressData,
   mergeBridgeTrustDisclosures,
   type MrcMetadataResponse,
+  type MrcHoldersResponse,
   type BridgeTrustDisclosureRow,
   type MrvNativeTransactionEvidence,
   mrvNativeTransactionEvidence,
@@ -175,6 +177,14 @@ function tokenBalanceMetadataLines(row: IndexedTokenBalanceRow, metadata: MrcMet
   ].filter((part): part is string => Boolean(part));
   if (fallback) parts.push(fallback);
   return parts;
+}
+function tokenBalanceHolderLines(holders: MrcHoldersResponse | undefined): string[] {
+  if (!holders || holders.holders.length === 0) return [];
+  return holders.holders.slice(0, holders.limit).map((holder) => {
+    const block = Number(holder.updatedAtBlock);
+    const blockText = Number.isFinite(block) ? block.toLocaleString() : String(holder.updatedAtBlock);
+    return `#${holder.rank} ${_short(holder.address, 10)} · ${holder.balance} · block ${blockText}`;
+  });
 }
 function reputationScopeLabel(reputation: AgentReputationResponse): string {
   return reputation.categoryScope === "category"
@@ -1042,6 +1052,7 @@ const WalletPage = ({ addr, go }: any) => {
     ? profile.data.tokenBalances
     : (tokenBalances.data ?? [])) as IndexedTokenBalanceRow[];
   const tokenBalanceMetadata = useMrcMetadataForTokenBalances(liveTokenBalances);
+  const tokenBalanceHolders = useMrcHoldersForTokenBalances(liveTokenBalances);
   const bridgeRouteDiscovery = useBridgeRouteDisclosures();
   const bridgeTrustDisclosures = useMemoX(
     () => mergeBridgeTrustDisclosures([
@@ -1227,6 +1238,7 @@ const WalletPage = ({ addr, go }: any) => {
                   {liveTokenBalances.map((row: IndexedTokenBalanceRow)=>{
                     const metadata = tokenBalanceMetadata.data?.[row.tokenId];
                     const metadataLines = tokenBalanceMetadataLines(row, metadata);
+                    const holderLines = tokenBalanceHolderLines(tokenBalanceHolders.data?.[row.tokenId]);
                     return (
                     <tr key={row.tokenId}>
                       <td className="mono" style={{fontSize:11}}>
@@ -1234,6 +1246,12 @@ const WalletPage = ({ addr, go }: any) => {
                         {metadataLines.map((line) => (
                           <div key={line} style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>{line}</div>
                         ))}
+                        {holderLines.length > 0 && (
+                          <div style={{fontSize:10,color:"var(--fg-400)",marginTop:6}}>
+                            <div style={{color:"var(--gold)"}}>Native holders</div>
+                            {holderLines.map((line) => <div key={line}>{line}</div>)}
+                          </div>
+                        )}
                       </td>
                       <td className="mono num" style={{textAlign:"right"}}>{String(row.balance)}</td>
                       <td className="mono num" style={{textAlign:"right"}}>{Number(row.updatedAtBlock).toLocaleString()}</td>
