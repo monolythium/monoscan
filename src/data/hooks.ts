@@ -667,6 +667,7 @@ export interface NativeAgentStateDisplayRow {
   primaryId: string | null;
   account: string | null;
   counterparty: string | null;
+  nonce: string | null;
   assetId: string | null;
   status: string | null;
   amount: string | null;
@@ -952,6 +953,7 @@ function nativeAgentStateRow(
     primaryId,
     account,
     counterparty,
+    nonce: readNativeStateString(row, ["nonce"]),
     assetId: readNativeStateString(row, ["assetId", "asset_id", "paymentAssetId", "payment_asset_id"]),
     status: directStatus ?? nativeAgentBooleanStatus(kind, row),
     amount:
@@ -1000,6 +1002,7 @@ function nativeAgentStateRow(
             "account",
             "lastActor",
             "last_actor",
+            "nonce",
             "assetId",
             "asset_id",
             "paymentAssetId",

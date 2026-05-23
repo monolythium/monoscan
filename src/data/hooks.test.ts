@@ -517,6 +517,7 @@ describe("live-SDK seam", () => {
       issuers: [{
         issuerId,
         issuer: provider,
+        nonce: 1,
         metadataHash: null,
         updatedAtBlock: 45,
       }],
@@ -525,6 +526,7 @@ describe("live-SDK seam", () => {
         issuerId,
         issuer: provider,
         subject: owner,
+        nonce: "2",
         schemaHash: `0x${"17".repeat(32)}`,
         payloadHash: null,
         active: true,
@@ -534,6 +536,7 @@ describe("live-SDK seam", () => {
         consentId,
         subject: owner,
         grantee: "mono1agentgrantee",
+        nonce: 3,
         scopeHash: null,
         expiresAt: null,
         active: false,
@@ -542,6 +545,7 @@ describe("live-SDK seam", () => {
       services: [{
         serviceId,
         provider,
+        nonce: "4",
         categoryHash: `0x${"18".repeat(32)}`,
         metadataHash: null,
         active: true,
@@ -557,6 +561,7 @@ describe("live-SDK seam", () => {
       arbiters: [{
         arbiterId,
         arbiter: "mono1agentarbiter",
+        nonce: 5,
         tier: 2,
         metadataHash: null,
         updatedAtBlock: 50,
@@ -577,6 +582,7 @@ describe("live-SDK seam", () => {
         policyId,
         owner,
         controller: "mono1agentcontroller",
+        nonce: "6",
         assetId: `0x${"cc".repeat(32)}`,
         enabled: true,
         perActionLimit: "100",
@@ -598,6 +604,7 @@ describe("live-SDK seam", () => {
         buyer: owner,
         provider: "mono1agentprovider",
         arbiter: "mono1agentarbiter",
+        nonce: 7,
         assetId: `0x${"cc".repeat(32)}`,
         amount: "1000",
         termsHash: `0x${"dd".repeat(32)}`,
@@ -627,6 +634,7 @@ describe("live-SDK seam", () => {
       kind: "issuer",
       primaryId: issuerId,
       account: provider,
+      nonce: "1",
       blockHeight: 45,
     });
     expect(rows.attestations[0]).toMatchObject({
@@ -634,6 +642,7 @@ describe("live-SDK seam", () => {
       primaryId: attestationId,
       account: owner,
       counterparty: provider,
+      nonce: "2",
       status: "active",
       blockHeight: 46,
     });
@@ -642,6 +651,7 @@ describe("live-SDK seam", () => {
       primaryId: consentId,
       account: owner,
       counterparty: "mono1agentgrantee",
+      nonce: "3",
       status: "inactive",
       blockHeight: 47,
     });
@@ -649,6 +659,7 @@ describe("live-SDK seam", () => {
       kind: "service",
       primaryId: serviceId,
       account: provider,
+      nonce: "4",
       status: "active",
       blockHeight: 48,
     });
@@ -663,6 +674,7 @@ describe("live-SDK seam", () => {
       kind: "arbiter",
       primaryId: arbiterId,
       account: "mono1agentarbiter",
+      nonce: "5",
       blockHeight: 50,
     });
     expect(rows.reputationReviews[0]).toMatchObject({
@@ -678,6 +690,7 @@ describe("live-SDK seam", () => {
       primaryId: policyId,
       account: owner,
       counterparty: "mono1agentcontroller",
+      nonce: "6",
       amount: "500",
       blockHeight: 42,
     });
@@ -689,6 +702,7 @@ describe("live-SDK seam", () => {
     expect(rows.escrows[0]).toMatchObject({
       kind: "escrow",
       primaryId: escrowId,
+      nonce: "7",
       status: "accepted",
       amount: "1000",
       blockHeight: 44,
