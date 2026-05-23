@@ -17,7 +17,12 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentReputationResponse } from "@monolythium/core-sdk";
+import {
+  ApiClient,
+  RpcClient,
+  type AgentReputationResponse,
+  type NativeReceiptResponse,
+} from "@monolythium/core-sdk";
 import {
   HEAD_POLL_MS,
   apiBlockToRpcHeader,
@@ -28,6 +33,7 @@ import {
   bridgeTrustDisclosuresFromAddressData,
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
+  fetchTxNativeReceipt,
   fetchMrcMetadataForTokenBalances,
   MRV_NATIVE_RECEIPT_TX_TYPE,
   MRV_NATIVE_TX_EXTENSION_BODY_HEX,
@@ -49,6 +55,54 @@ afterEach(() => {
   resetRpcClient();
   vi.restoreAllMocks();
 });
+
+function nativeReceiptFixture(
+  overrides: Partial<NativeReceiptResponse<unknown>> & Record<string, unknown> = {},
+): NativeReceiptResponse<unknown> & Record<string, unknown> {
+  return {
+    txHash: `0x${"22".repeat(32)}`,
+    blockHash: `0x${"33".repeat(32)}`,
+    blockHeight: 100,
+    txIndex: 0,
+    schema: "riscv.receipt.v1",
+    artifactHash: `0x${"aa".repeat(32)}`,
+    counters: { cycles: 44, syscallUnits: 3, stateIoUnits: 2 },
+    fee: {
+      total_lythoshi: "440000000000",
+      total_lyth: "4,400",
+      cycles_used: 44,
+      base_price_per_cycle_lythoshi: "10000000000",
+      state_io_units: 2,
+      state_io_price_per_unit_lythoshi: "0",
+      priority_tip_lythoshi: "0",
+    },
+    reverted: false,
+    nativeDeltaCount: 0,
+    eventCount: 0,
+    events: [],
+    source: {
+      chainProvider: "mock_chain",
+      indexerProvider: "native_events",
+      metadataLogIndex: 0xffff_ffff,
+    },
+    ...overrides,
+  };
+}
+
+function apiEnvelope<T>(data: T) {
+  return {
+    schemaVersion: 1,
+    chainId: 69420,
+    genesisHash: `0x${"00".repeat(32)}`,
+    latest: {
+      available: true,
+      height: 100,
+      hash: `0x${"11".repeat(32)}`,
+      timestamp: 1_700_000_000,
+    },
+    data,
+  };
+}
 
 describe("live-SDK seam", () => {
   it("polls the chain head every 2 seconds", () => {
@@ -139,6 +193,46 @@ describe("live-SDK seam", () => {
     // re-appear it means a downstream regression dragged the v0 names
     // back. Treat as a hard fail.
     expect((proto as Record<string, unknown>).protocoreCurrentRound).toBeUndefined();
+  });
+
+  it("prefers the native receipt API and preserves explicit null noEvmProof", async () => {
+    const txHash = `0x${"55".repeat(32)}`;
+    const receipt = nativeReceiptFixture({
+      txHash,
+      noEvmProof: null,
+    });
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "transactionNativeReceipt")
+      .mockResolvedValue(apiEnvelope(receipt));
+    const rpcSpy = vi.spyOn(RpcClient.prototype, "lythNativeReceipt");
+
+    const result = await fetchTxNativeReceipt(txHash);
+
+    expect(apiSpy).toHaveBeenCalledWith(txHash);
+    expect(rpcSpy).not.toHaveBeenCalled();
+    expect(result?.txHash).toBe(txHash);
+    expect((result as Record<string, unknown> | null)?.noEvmProof).toBeNull();
+  });
+
+  it("falls back to lyth_nativeReceipt when the native receipt API is unavailable", async () => {
+    const txHash = `0x${"66".repeat(32)}`;
+    const receipt = nativeReceiptFixture({
+      txHash,
+      noEvmProof: { verifier: "fixture", digest: `0x${"77".repeat(32)}` },
+    });
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "transactionNativeReceipt")
+      .mockRejectedValue(new Error("api unavailable"));
+    const rpcSpy = vi
+      .spyOn(RpcClient.prototype, "lythNativeReceipt")
+      .mockResolvedValue(receipt);
+
+    const result = await fetchTxNativeReceipt(txHash);
+
+    expect(apiSpy).toHaveBeenCalledWith(txHash);
+    expect(rpcSpy).toHaveBeenCalledWith(txHash);
+    expect((result as Record<string, unknown> | null)?.noEvmProof)
+      .toEqual({ verifier: "fixture", digest: `0x${"77".repeat(32)}` });
   });
 
   it("keeps the typed agent reputation response available to UI hooks", () => {
@@ -673,7 +767,7 @@ describe("API execution-unit transformations", () => {
     expect(rows[0].decodedFields).toContainEqual(["price_lythoshi", "100000000"]);
   });
 
-  it("extracts bounded MRV submitted, included, receipt, and proof states without inventing proof", () => {
+  it("extracts bounded MRV submitted, included, receipt, and explicit null-proof states without inventing proof", () => {
     const evidence = mrvNativeTransactionEvidence({
       txHash: `0x${"88".repeat(32)}`,
       blockNumber: 120n,
@@ -699,6 +793,7 @@ describe("API execution-unit transformations", () => {
       schema: "riscv.receipt.v1",
       txType: MRV_NATIVE_RECEIPT_TX_TYPE,
       artifactHash: `0x${"aa".repeat(32)}`,
+      noEvmProof: null,
       counters: { cycles: 44, syscallUnits: 3, stateIoUnits: 2 },
       fee: {
         total_lythoshi: "440000000000",
@@ -726,6 +821,8 @@ describe("API execution-unit transformations", () => {
       includedState: "present",
       receiptState: "present",
       proofState: "missing",
+      proofFieldSource: "native-receipt.noEvmProof",
+      proofFieldState: "explicit-null",
       includedBlock: 120,
       receiptTxType: MRV_NATIVE_RECEIPT_TX_TYPE,
       artifactHash: `0x${"aa".repeat(32)}`,
@@ -737,7 +834,41 @@ describe("API execution-unit transformations", () => {
       validMrvV1: true,
     });
     expect(evidence?.blockers).toContain(
-      "lyth_decodeTx.finalityProof or native-receipt.noEvmProof must return a verifier payload before Monoscan can render no-EVM proof evidence.",
+      "native-receipt.noEvmProof returned null; Monoscan treats the no-EVM proof as missing until a verifier payload is available.",
+    );
+  });
+
+  it("marks no-EVM proof present only when native receipt noEvmProof has a payload", () => {
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"77".repeat(32)}`,
+      blockNumber: 122n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+      finalityProof: { verifier: "finality-only" },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"77".repeat(32)}`,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof: { verifier: "native", digest: `0x${"12".repeat(32)}` },
+      }),
+    } as any);
+
+    expect(evidence).toMatchObject({
+      proofState: "present",
+      proofFieldSource: "native-receipt.noEvmProof",
+      proofFieldState: "present",
+    });
+    expect(evidence?.proof).toMatchObject({
+      source: "native-receipt.noEvmProof",
+      summary: "present",
+    });
+    expect(evidence?.blockers).not.toContain(
+      "native-receipt.noEvmProof must return a verifier payload before Monoscan can render no-EVM proof evidence.",
     );
   });
 
@@ -758,11 +889,16 @@ describe("API execution-unit transformations", () => {
       submittedState: "present",
       includedState: "present",
       receiptState: "missing",
-      proofState: "present",
+      proofState: "missing",
+      proofFieldSource: null,
+      proofFieldState: "missing",
     });
     expect(evidence?.extension?.bodyHex).toBe(MRV_NATIVE_TX_EXTENSION_BODY_HEX);
     expect(evidence?.blockers).toContain(
       "GET /api/v1/transactions/{hash}/native-receipt or lyth_nativeReceipt(txHash) must return txType 0x41, artifactHash, counters, and events for MRV receipt evidence.",
+    );
+    expect(evidence?.blockers).toContain(
+      "native-receipt.noEvmProof must return a verifier payload before Monoscan can render no-EVM proof evidence.",
     );
   });
 

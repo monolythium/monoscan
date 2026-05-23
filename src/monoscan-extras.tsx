@@ -1899,7 +1899,9 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
     : "—";
   const proofValue = evidence.proof
     ? `present · ${evidence.proof.summary} · ${evidence.proof.source}`
-    : "missing · not returned; no proof rendered";
+    : evidence.proofFieldState === "explicit-null"
+      ? `missing · ${evidence.proofFieldSource} returned null; no proof rendered`
+      : "missing · native-receipt.noEvmProof not returned; no proof rendered";
 
   return (
     <Card

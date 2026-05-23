@@ -511,6 +511,8 @@ export interface MrvNativeProofEvidence {
   summary: string;
 }
 
+export type MrvNativeProofFieldState = "present" | "explicit-null" | "missing";
+
 export interface MrvNativeTransactionEvidence {
   txHash: string | null;
   operation: string | null;
@@ -523,6 +525,8 @@ export interface MrvNativeTransactionEvidence {
   eventCount: number | null;
   nativeDeltaCount: number | null;
   proof: MrvNativeProofEvidence | null;
+  proofFieldSource: string | null;
+  proofFieldState: MrvNativeProofFieldState;
   pqCheckpoint: string | null;
   submittedState: MrvNativeEvidenceState;
   includedState: MrvNativeEvidenceState;
@@ -703,35 +707,27 @@ function proofSummary(value: unknown): string {
   return "present";
 }
 
-function findMrvProofEvidence(
-  decoded: unknown,
+function readNativeNoEvmProofField(
   nativeReceipt: unknown,
-): MrvNativeProofEvidence | null {
-  const decodedProof = readPresentField(decoded, ["finalityProof", "finality_proof"]);
-  if (decodedProof) {
-    return {
-      source: `lyth_decodeTx.${decodedProof.key}`,
-      summary: proofSummary(decodedProof.value),
-    };
+): { source: string; state: MrvNativeProofFieldState; value: unknown | null } {
+  const row = unknownRecord(nativeReceipt);
+  if (!row) {
+    return { source: "native-receipt.noEvmProof", state: "missing", value: null };
   }
 
-  const receiptProof = readPresentField(nativeReceipt, [
-    "noEvmProof",
-    "no_evm_proof",
-    "nativeProof",
-    "native_proof",
-    "receiptProof",
-    "receipt_proof",
-    "executionProof",
-    "execution_proof",
-    "proof",
-  ]);
-  return receiptProof
-    ? {
-        source: `native-receipt.${receiptProof.key}`,
-        summary: proofSummary(receiptProof.value),
-      }
-    : null;
+  for (const key of ["noEvmProof", "no_evm_proof"]) {
+    if (!Object.prototype.hasOwnProperty.call(row, key)) continue;
+    const value = row[key];
+    const source = `native-receipt.${key}`;
+    if (value === null) return { source, state: "explicit-null", value: null };
+    if (value === undefined) return { source, state: "missing", value: null };
+    if (typeof value === "string" && value.trim() === "") {
+      return { source, state: "missing", value: null };
+    }
+    return { source, state: "present", value };
+  }
+
+  return { source: "native-receipt.noEvmProof", state: "missing", value: null };
 }
 
 function pqCheckpointSummary(decoded: unknown): string | null {
@@ -760,7 +756,13 @@ export function mrvNativeTransactionEvidence(
 
   const includedBlock = readNumberField(decoded, ["blockNumber", "blockHeight", "block_number", "block_height"])
     ?? readNumberField(nativeReceipt, ["blockHeight", "blockNumber", "block_height", "block_number"]);
-  const proof = findMrvProofEvidence(decoded, nativeReceipt);
+  const proofField = readNativeNoEvmProofField(nativeReceipt);
+  const proof = proofField.state === "present"
+    ? {
+        source: proofField.source,
+        summary: proofSummary(proofField.value),
+      }
+    : null;
   const submittedState: MrvNativeEvidenceState = extension
     ? (extension.validMrvV1 ? "present" : "invalid")
     : "missing";
@@ -784,8 +786,9 @@ export function mrvNativeTransactionEvidence(
     );
   }
   if (!proof) {
-    blockers.push(
-      "lyth_decodeTx.finalityProof or native-receipt.noEvmProof must return a verifier payload before Monoscan can render no-EVM proof evidence.",
+    blockers.push(proofField.state === "explicit-null"
+      ? `${proofField.source} returned null; Monoscan treats the no-EVM proof as missing until a verifier payload is available.`
+      : "native-receipt.noEvmProof must return a verifier payload before Monoscan can render no-EVM proof evidence.",
     );
   }
 
@@ -801,6 +804,8 @@ export function mrvNativeTransactionEvidence(
     eventCount: readNumberField(nativeReceipt, ["eventCount", "event_count"]),
     nativeDeltaCount: readNumberField(nativeReceipt, ["nativeDeltaCount", "native_delta_count"]),
     proof,
+    proofFieldSource: proofField.state === "missing" ? null : proofField.source,
+    proofFieldState: proofField.state,
     pqCheckpoint: pqCheckpointSummary(decoded),
     submittedState,
     includedState,
@@ -1162,23 +1167,25 @@ export function useTxReceipt(hash: string | undefined) {
  * `lyth_nativeReceipt` RPC method. Unsupported nodes return `null` so the tx
  * page can omit the RISC-V panel without inventing data.
  */
+export async function fetchTxNativeReceipt(hash: string): Promise<NativeReceiptResponse<unknown> | null> {
+  try {
+    const response = await getApiClient().transactionNativeReceipt(hash);
+    return response.data;
+  } catch {
+    // Fall through to JSON-RPC for nodes without the `/api/v1` indexer route.
+  }
+  try {
+    return await getRpcClient().lythNativeReceipt(hash);
+  } catch {
+    return null;
+  }
+}
+
 export function useTxNativeReceipt(hash: string | undefined) {
   return useQuery<NativeReceiptResponse<unknown> | null>({
     queryKey: QK.txNativeReceipt(hash ?? ""),
     enabled: Boolean(hash) && isRpcConfigured(),
-    queryFn: async () => {
-      try {
-        const response = await getApiClient().transactionNativeReceipt(hash as string);
-        return response.data;
-      } catch {
-        // Fall through to JSON-RPC for nodes without the `/api/v1` indexer route.
-      }
-      try {
-        return await getRpcClient().lythNativeReceipt(hash as string);
-      } catch {
-        return null;
-      }
-    },
+    queryFn: () => fetchTxNativeReceipt(hash as string),
     staleTime: 60_000,
   });
 }
