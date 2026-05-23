@@ -17,7 +17,17 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HEAD_POLL_MS, queryClient } from "./hooks";
+import {
+  HEAD_POLL_MS,
+  apiBlockToRpcHeader,
+  apiBlockTransactionsToRows,
+  apiReceiptToRpcReceipt,
+  apiTxToRpcTx,
+  decodedTxToRpcReceipt,
+  decodedTxToRpcTx,
+  queryClient,
+  txFeedToRows,
+} from "./hooks";
 import { isWebSocketEnabled, resetRpcClient } from "../sdk/client";
 
 afterEach(() => {
@@ -107,5 +117,122 @@ describe("live-SDK seam", () => {
     // re-appear it means a downstream regression dragged the v0 names
     // back. Treat as a hard fail.
     expect((proto as Record<string, unknown>).protocoreCurrentRound).toBeUndefined();
+  });
+});
+
+describe("API execution-unit transformations", () => {
+  it("maps new API block fields to the RPC header shape", () => {
+    const header = apiBlockToRpcHeader({
+      height: 42,
+      blockHash: "0xblock",
+      parentHash: "0xparent",
+      stateRoot: "0xstate",
+      timestamp: 1_700_000_000,
+      executionUnitsUsed: 123_456,
+      executionUnitLimit: 30_000_000,
+      basePricePerCycleLythoshi: "4",
+    } as any);
+
+    expect(header.gas_used).toBe(123_456n);
+    expect(header.gas_limit).toBe(30_000_000n);
+  });
+
+  it("maps new API transaction and receipt lythoshi fields to the RPC detail shape", () => {
+    const tx = apiTxToRpcTx({
+      txHash: "0xtx",
+      blockHash: "0xblock",
+      blockHeight: 42,
+      txIndex: 3,
+      from: "0xfrom",
+      to: "0xto",
+      nonce: 9,
+      valueLythoshi: "1234",
+      maxExecutionFeeLythoshi: "55",
+      priorityTipLythoshi: "7",
+      executionUnitLimit: 42_000,
+      fee: { total_lythoshi: "77" },
+      input: "0xabcdef",
+      signedEnvelope: "0xsigned",
+    } as any, 69_420);
+    const receipt = apiReceiptToRpcReceipt({
+      txHash: "0xtx",
+      blockHash: "0xblock",
+      blockHeight: 42,
+      txIndex: 3,
+      status: 1,
+      executionUnitsUsed: 21_111,
+      logs: [],
+    } as any);
+
+    expect(tx.value).toBe("0x4d2");
+    expect(tx.gas).toBe("0xa410");
+    expect(tx.maxFeePerGas).toBe("0x37");
+    expect(tx.maxPriorityFeePerGas).toBe("0x7");
+    expect(receipt.gas_used).toBe(21_111n);
+  });
+
+  it("maps new decoded transaction fields with older payload fallbacks", () => {
+    const decoded = {
+      txHash: "0xtx",
+      blockHash: "0xblock",
+      blockNumber: 42n,
+      txIndex: 3,
+      from: "0xfrom",
+      to: null,
+      valueLythoshi: "1234",
+      nonce: 9n,
+      executionUnitLimit: 42_000n,
+      maxExecutionFeeLythoshi: "55",
+      priorityTipLythoshi: "7",
+      executionUnitsUsed: 21_111n,
+      fee: { total_lythoshi: "77" },
+      decodedCalldata: { rawCalldata: "0xabcdef" },
+      memo: null,
+      logs: [],
+      status: "success",
+      errorCode: null,
+    };
+
+    expect(decodedTxToRpcTx(decoded as any).gas).toBe("0xa410");
+    expect(decodedTxToRpcReceipt(decoded as any).gas_used).toBe(21_111n);
+
+    expect(decodedTxToRpcTx({ ...decoded, valueLythoshi: undefined, executionUnitLimit: undefined, value: "0x2a", gasLimit: 21_000n } as any).value).toBe("0x2a");
+  });
+
+  it("normalizes recent transaction rows from API pages and tx feeds", () => {
+    const fee = { total_lythoshi: "77" };
+    const pageRows = apiBlockTransactionsToRows({
+      block: { timestamp: 1_700_000_000 },
+      transactions: [{
+        txHash: "0xtx",
+        blockHash: "0xblock",
+        blockHeight: 42,
+        txIndex: 3,
+        from: "0xfrom",
+        to: "0xto",
+        valueLythoshi: "1234",
+        executionUnitLimit: 42_000,
+        fee,
+        input: "0x",
+      }],
+    } as any);
+    const feedRows = txFeedToRows({
+      transactions: [{
+        txHash: "0xfeed",
+        blockHash: "0xblock",
+        blockNumber: 43,
+        blockTimestamp: null,
+        txIndex: 0,
+        from: "0xfrom",
+        to: null,
+        value: "999",
+        executionUnitLimit: 21_000,
+        fee,
+        input: "0x",
+      }],
+    } as any);
+
+    expect(pageRows[0]).toMatchObject({ value: "1234", executionUnitLimit: 42_000, fee });
+    expect(feedRows[0]).toMatchObject({ value: "999", executionUnitLimit: 21_000, fee });
   });
 });
