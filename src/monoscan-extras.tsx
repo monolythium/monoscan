@@ -39,11 +39,13 @@ import {
   useSearch,
   useTokenBalances,
   useTxByHashLive,
+  useTxNativeReceipt,
   useTxStatus,
   useUpgradeStatus,
   useVerticesAtRound,
   useWalletDelegations,
   useWalletDelegationHistory,
+  nativeReceiptEventRows,
 } from "./data/hooks";
 import { getLythTokenId } from "./sdk/client";
 import type { AgentReputationRecord, AgentReputationResponse } from "@monolythium/core-sdk";
@@ -1305,10 +1307,13 @@ const TransactionsPage = ({ go }: any) => {
 ===================================================== */
 const TxPage = ({ hash, go }: any) => {
   const live = useTxByHashLive(hash);
+  const nativeReceipt = useTxNativeReceipt(hash);
   const txStatus = useTxStatus(hash);
   const liveTx = live.data?.tx ?? null;
   const liveReceipt = live.data?.receipt ?? null;
   const liveDecoded: any = live.data?.decoded ?? null;
+  const liveNativeReceipt = nativeReceipt.data ?? null;
+  const nativeEventRows = nativeReceiptEventRows(liveNativeReceipt);
   const indexedStatus = txStatus.data ?? null;
   const fixture = TXS[hash];
   const decodedCalldata = liveDecoded?.decodedCalldata && typeof liveDecoded.decodedCalldata === "object"
@@ -1330,12 +1335,17 @@ const TxPage = ({ hash, go }: any) => {
         },
       }))
     : [];
+  const liveBlockNumber = liveReceipt?.block_number !== undefined
+    ? Number(liveReceipt.block_number)
+    : liveTx?.blockNumber
+      ? Number(BigInt(liveTx.blockNumber))
+      : liveNativeReceipt?.blockHeight ?? null;
 
   // Merge live receipt over the fixture so the UI always renders a complete
   // shape. `lyth_decodeTx` now provides decoded calldata, logs, status,
   // execution-unit usage, and PQ-finality metadata; the signature timing chart
   // remains fixture-only until the chain exposes per-signer timing.
-  const tx = liveTx || liveReceipt
+  const tx = liveTx || liveReceipt || liveNativeReceipt
     ? {
         ...(fixture ?? {
           // Bare minimum so the page has something to render when there's
@@ -1365,10 +1375,11 @@ const TxPage = ({ hash, go }: any) => {
           gasLimit: 0,
         }),
         // Live overrides — keep the node fields as the source of truth.
-        hash: liveTx?.hash ?? liveReceipt?.tx_hash ?? fixture?.hash ?? hash,
+        hash: liveTx?.hash ?? liveReceipt?.tx_hash ?? liveNativeReceipt?.txHash ?? fixture?.hash ?? hash,
         from: liveTx?.from ?? fixture?.from ?? "—",
         to: liveTx?.to ?? fixture?.to ?? "—",
         amount: liveTx?.value ? _rawToLythNumber(liveTx.value) : (fixture?.amount ?? 0),
+        fee: liveNativeReceipt ? _rawToLythNumber(liveNativeReceipt.fee.total_lythoshi) : (fixture?.fee ?? 0),
         gasLimit: liveTx?.gas ? Number(BigInt(liveTx.gas)) : (fixture?.gasLimit ?? 0),
         nonce: liveTx?.nonce ? Number(BigInt(liveTx.nonce)) : (fixture?.nonce ?? 0),
         kindLabel: decodedMethod ?? fixture?.kindLabel ?? "Transfer",
@@ -1380,22 +1391,16 @@ const TxPage = ({ hash, go }: any) => {
             ? (liveDecoded.status === "success" ? "ok" : liveDecoded.status === "unknown" ? "pending" : "failed")
             : typeof liveReceipt?.status === "number"
             ? (liveReceipt.status === 1 ? "ok" : liveReceipt.status === -1 ? "pending" : "failed")
+            : liveNativeReceipt
+            ? (liveNativeReceipt.reverted ? "failed" : "ok")
             : (fixture?.status ?? "ok")),
         gasUsed: Number(
-          liveReceipt?.executionUnitsUsed ?? fixture?.gasUsed ?? 0,
+          liveReceipt?.executionUnitsUsed ?? liveNativeReceipt?.counters.cycles ?? fixture?.gasUsed ?? 0,
         ),
-        round: Number(
-          liveReceipt?.block_number ??
-            (liveTx?.blockNumber ? BigInt(liveTx.blockNumber) : undefined) ??
-            fixture?.round ??
-            0,
-        ),
+        round: liveBlockNumber ?? fixture?.round ?? 0,
         roundLabel:
-          liveReceipt?.block_number !== undefined || liveTx?.blockNumber !== undefined
-            ? `block ${Number(
-                liveReceipt?.block_number ??
-                  (liveTx?.blockNumber ? BigInt(liveTx.blockNumber) : 0n),
-              ).toLocaleString()}`
+          liveBlockNumber !== null
+            ? `block ${liveBlockNumber.toLocaleString()}`
             : (fixture?.roundLabel ?? "round —"),
       }
     : fixture;
@@ -1537,6 +1542,31 @@ const TxPage = ({ hash, go }: any) => {
         </section>
       )}
 
+      {liveNativeReceipt && (
+        <section className="tx-split">
+          <Card title="Native RISC-V receipt">
+            <div className="tx-kv">
+              <KV label="Schema" value={liveNativeReceipt.schema} mono/>
+              <KV label="Artifact hash" value={_short(liveNativeReceipt.artifactHash, 18)} mono/>
+              <KV label="Result" value={liveNativeReceipt.reverted ? "Reverted" : "Committed"}/>
+              <KV label="Events" value={`${liveNativeReceipt.eventCount}`} mono/>
+              <KV label="Native deltas" value={`${liveNativeReceipt.nativeDeltaCount}`} mono/>
+              <KV label="Source" value={`${liveNativeReceipt.source.chainProvider} · ${liveNativeReceipt.source.indexerProvider}`} mono/>
+            </div>
+          </Card>
+          <Card title="Native execution">
+            <div className="tx-kv">
+              <KV label="Cycles" value={_fmt(liveNativeReceipt.counters.cycles)} mono/>
+              <KV label="Syscall units" value={_fmt(liveNativeReceipt.counters.syscallUnits)} mono/>
+              <KV label="State I/O units" value={_fmt(liveNativeReceipt.counters.stateIoUnits)} mono/>
+              <KV label="Total fee" value={`${liveNativeReceipt.fee.total_lyth} LYTH`} mono/>
+              <KV label="Total fee lythoshi" value={liveNativeReceipt.fee.total_lythoshi} mono/>
+              <KV label="Priority tip" value={liveNativeReceipt.fee.priority_tip_lythoshi} mono/>
+            </div>
+          </Card>
+        </section>
+      )}
+
       {/* Attestation */}
       <section>
         <h3 className="ov-section-title">Attestation · who signed what</h3>
@@ -1593,6 +1623,29 @@ const TxPage = ({ hash, go }: any) => {
               ))}
             </Card>
           )}
+        </section>
+      )}
+
+      {nativeEventRows.length > 0 && (
+        <section>
+          <Card title="Native events">
+            {nativeEventRows.map((event)=>(
+              <div key={`${event.logIndex}-${event.eventTopic}`} className="tx-log">
+                <div className="mono tx-log__topic">
+                  {event.eventName ?? event.eventTopic}
+                </div>
+                <div className="tx-kv" style={{marginTop:8}}>
+                  <KV label="Address" value={event.address} mono/>
+                  <KV label="Topic" value={event.eventTopic} mono/>
+                  <KV label="Family" value={event.family ?? "—"} mono/>
+                  <KV label="Payload hash" value={event.payloadHash ?? "—"} mono/>
+                  {event.decodedFields.map(([k,v])=>(
+                    <KV key={k} label={k} value={v} mono/>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Card>
         </section>
       )}
     </div>
