@@ -7,7 +7,7 @@
  * the renderer doesn't change shape when we swap `mock-llm.ts` for the
  * real Claude call.
  *
- * TODO(monolythium-vision): swap this file's `mock-llm` consumer for the
+ * TODO(monolythium): swap this file's `mock-llm` consumer for the
  * real Claude API client once the `mono/api/monoscan-claude` key is
  * provisioned and the Rust proxy crate (`monoscan-nl-service/`) lands.
  * The wire shape stays the same — only the producer changes.

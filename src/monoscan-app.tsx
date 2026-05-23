@@ -254,7 +254,7 @@ const Landing = ({ go }: any) => {
 
   // Live latest blocks for the on-chain feed strip. Falls back to the mocked
   // recent vertices when the node is offline so the page never goes blank.
-  // TODO(monolythium-vision): once mono-core OI-0070 lands the indexer's
+  // TODO(monolythium): once mono-core OI-0070 lands the indexer's
   // per-vertex breakdown (transaction count, BLS-agg ms, DAC coverage, cluster
   // attribution), swap these block headers for the richer vertex shape the
   // designs demand.
@@ -1489,7 +1489,7 @@ const OperatorsPage = ({go}: any) => {
   // shape compared to the mocked operator profiles below; once the indexer
   // surfaces operator reputation/region/uptime aggregates we can swap the mock
   // list entirely.
-  // TODO(monolythium-vision): the SDK does not yet expose operator
+  // TODO(monolythium): the SDK does not yet expose operator
   // memberships, region, reputation, or 90d uptime — see plans/monoscan.md
   // Stage 3 + mono-core OI-0070.
   const clusters = useClusterSet();
@@ -1552,7 +1552,7 @@ const App = () => {
   // block + peers + version + mempool + indexer). Both fall back to a local
   // timer-based mock when the RPC endpoint is unreachable so the strip
   // never freezes during dev.
-  // TODO(monolythium-vision): swap the 2s long-poll for `lyth_subscribe`
+  // TODO(monolythium): swap the 2s long-poll for `lyth_subscribe`
   // over WebSocket once mono-core OI-0069 lands. The seam lives in
   // `data/hooks.ts::readLatestHeadFromWebSocket` and is feature-flagged
   // behind `VITE_MONOSCAN_USE_WS` (see `sdk/client.ts::isWebSocketEnabled`).

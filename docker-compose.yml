@@ -3,7 +3,7 @@ services:
     build:
       context: .
       args:
-        MONO_CORE_SDK_REPO: ${MONO_CORE_SDK_REPO:-https://github.com/monolythium-vision/mono-core-sdk.git}
+        MONO_CORE_SDK_REPO: ${MONO_CORE_SDK_REPO:-https://github.com/monolythium/mono-core-sdk.git}
         MONO_CORE_SDK_REF: ${MONO_CORE_SDK_REF:-ffeb897e4b710b4ee993a0c78bdde3f505009ae6}
     ports:
       - "${MONOSCAN_PORT:-8080}:8080"

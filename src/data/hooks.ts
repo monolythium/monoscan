@@ -3,7 +3,7 @@
  *
  * Single seam through which every page reads chain data. Hooks return
  * already-typed values from `@monolythium/core-sdk`; mock fallbacks live
- * in `./mock` and stay tagged `TODO(monolythium-vision)` for list-level
+ * in `./mock` and stay tagged `TODO(monolythium)` for list-level
  * aggregates and per-signer enrichment that mono-core has not yet shipped
  * (per `plans/monoscan.md` Stage 3).
  *
@@ -1865,7 +1865,7 @@ export function useClusterSet() {
   return useQuery<ClusterDescriptor[] | null>({
     queryKey: QK.clusterSet(),
     queryFn: async () => {
-      // TODO(monolythium-vision): swap to indexer aggregate (cluster +
+      // TODO(monolythium): swap to indexer aggregate (cluster +
       // operator + reward) once mono-core OI-0070 lands. Today's RPC returns
       // a compact descriptor list; the profile cards remain fixture-backed.
       return readClusterSet();

@@ -21,7 +21,7 @@ import {
  *   1. `VITE_MONOSCAN_RPC_URL` — explorer-specific override.
  *   2. `VITE_MONO_RPC_URL`     — workspace-wide fallback shared with the
  *                                wallets / Monarch builds (per
- *                                `monolythium-vision/CLAUDE.md` §6).
+ *                                `monolythium/CLAUDE.md` §6).
  *
  * If neither is set, use the same relative `/rpc` route in every browser
  * build. Vite proxies that path in dev/preview, and the production Caddy
@@ -162,7 +162,7 @@ export function getIndexerClient(): IndexerClient {
     throw new Error("Monoscan indexer URL is not configured");
   }
   if (_indexer === null) {
-    // TODO(monolythium-vision): swap in a streaming IndexerClient once
+    // TODO(monolythium): swap in a streaming IndexerClient once
     // mono-core ships OI-0069. The HTTP `/api/v1` client is enough for the
     // current block, tx, address, cluster, and operator reads.
     _indexer = getApiClient();

@@ -8,7 +8,7 @@
  * Claude integration in the follow-up stage may expand this; for the
  * mockup the substrate is whatever `mock-llm.ts` writes.
  *
- * TODO(monolythium-vision): when the live Claude API replaces the
+ * TODO(monolythium): when the live Claude API replaces the
  * mock-llm, swap this for `react-markdown` (or similar) — the seam is
  * one import.
  */

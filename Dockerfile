@@ -8,7 +8,7 @@ RUN apk add --no-cache git
 # the sibling SDK through `file:../mono-core-sdk/packages/ts`. Recreate that
 # sibling path inside the image, then build the SDK dist before installing
 # Monoscan so pnpm can resolve the linked package exactly like local dev.
-ARG MONO_CORE_SDK_REPO=https://github.com/monolythium-vision/mono-core-sdk.git
+ARG MONO_CORE_SDK_REPO=https://github.com/monolythium/mono-core-sdk.git
 # Pin the SDK commit used by Monoscan's API-client integration. Docker build
 # cache cannot see when a remote branch moves, so a floating `master` ref can
 # keep serving stale dist files until the cache is manually busted.
