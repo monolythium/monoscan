@@ -18,6 +18,7 @@ import {
   buildNftListingCancelWalletRequest,
   buildNftListingCreateWalletRequest,
   buildNftListingSweepWalletRequest,
+  nextNftListingNonceForSeller,
   nextSpotOrderNonceForOwner,
   ownerStateAccount,
 } from "./monoscan-markets";
@@ -399,5 +400,30 @@ describe("nextSpotOrderNonceForOwner", () => {
       { account: ownerAccount, nonce: null },
       { account: otherAccount, nonce: "3" },
     ], ownerAddress)).toBeNull();
+  });
+});
+
+describe("nextNftListingNonceForSeller", () => {
+  const sellerAddress = "0xabcdef0123456789abcdef0123456789abcdef01";
+  const sellerAccount = addressToTypedBech32("user", sellerAddress);
+  const otherAccount = addressToTypedBech32(
+    "user",
+    "0x9999999999999999999999999999999999999999",
+  );
+
+  it("derives the next seller-local nonce from indexed NFT listing rows", () => {
+    expect(nextNftListingNonceForSeller([
+      { account: sellerAccount, nonce: "4" },
+      { account: otherAccount, nonce: "100" },
+      { account: sellerAddress, nonce: "9" },
+      { account: sellerAccount, nonce: null },
+    ], sellerAddress)).toBe("10");
+  });
+
+  it("returns null when indexed NFT listing rows do not expose nonce yet", () => {
+    expect(nextNftListingNonceForSeller([
+      { account: sellerAccount, nonce: null },
+      { account: otherAccount, nonce: "3" },
+    ], sellerAddress)).toBeNull();
   });
 });
