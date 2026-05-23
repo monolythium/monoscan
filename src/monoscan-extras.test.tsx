@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BridgeTrustDisclosuresCard } from "./monoscan-extras";
+import { BridgeTrustDisclosuresCard, redemptionTicketStatusText } from "./monoscan-extras";
 import { bridgeTrustDisclosuresFromAddressData } from "./data/hooks";
+
+describe("redemptionTicketStatusText", () => {
+  it("separates cooldown maturity from payout availability", () => {
+    expect(redemptionTicketStatusText(true)).toBe("Cooldown complete · payout unavailable");
+    expect(redemptionTicketStatusText(false)).toBe("Cooldown active");
+    expect(redemptionTicketStatusText(null)).toBe("Cooldown state pending");
+  });
+});
 
 describe("BridgeTrustDisclosuresCard", () => {
   const validDisclosure = {
