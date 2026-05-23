@@ -143,7 +143,16 @@ describe("BridgeTrustDisclosuresCard", () => {
     expect(html).not.toContain("score 100");
   });
 
-  it("renders nothing when no upstream disclosure exists", () => {
+  it("renders unavailable state when upstream data was checked without disclosures", () => {
+    const html = renderToStaticMarkup(<BridgeTrustDisclosuresCard disclosures={[]} unavailable/>);
+
+    expect(html).toContain("Bridge trust disclosures");
+    expect(html).toContain("Disclosure unavailable");
+    expect(html).toContain("No bridgeRouteDisclosure or bridgeRouteDisclosures metadata");
+    expect(html).toContain("will not mark any bridge route as safe");
+  });
+
+  it("renders nothing before upstream disclosure data has been checked", () => {
     expect(renderToStaticMarkup(<BridgeTrustDisclosuresCard disclosures={[]}/>)).toBe("");
   });
 });
