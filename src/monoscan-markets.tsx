@@ -10,6 +10,7 @@
 import { useState, useEffect, useMemo } from "react";
 import {
   addressToTypedBech32,
+  buildNativeNftBuyListingForwarderInput,
   buildNativeSpotLimitOrderForwarderInput,
   type SpotLimitOrderSide,
 } from "@monolythium/core-sdk";
@@ -166,6 +167,25 @@ export interface MarketOrderWalletRequest {
   }];
 }
 
+export interface NftListingBuyWalletRequestArgs {
+  listingId: string | null | undefined;
+  buyerAddress: string | null | undefined;
+  currentBlock: string | number | bigint | null | undefined;
+  forwarderContractAddress: string | null | undefined;
+  maxCycles?: string | number | bigint;
+  executionUnitLimitHex?: string;
+}
+
+export interface NftListingBuyWalletRequest {
+  method: "monolythium_submitMrvNativeCall";
+  params: [{
+    contractAddress: string;
+    input: string;
+    executionUnitLimitHex: string;
+    valueWeiHex: "0x0";
+  }];
+}
+
 export function buildMarketOrderWalletRequest(args: MarketOrderWalletRequestArgs): MarketOrderWalletRequest {
   if (!args.marketId) {
     throw new Error("Live native market id is required before placing an order.");
@@ -186,6 +206,41 @@ export function buildMarketOrderWalletRequest(args: MarketOrderWalletRequestArgs
     price: args.price.trim(),
     quantity: args.quantity.trim(),
     expiresAtBlock: args.expiryBlock ?? 0,
+  }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  return {
+    method: "monolythium_submitMrvNativeCall",
+    params: [{
+      contractAddress: forwarder,
+      input: forwarderInput.input,
+      executionUnitLimitHex:
+        args.executionUnitLimitHex ?? NATIVE_MARKET_MRV_EXECUTION_UNIT_LIMIT_HEX,
+      valueWeiHex: "0x0",
+    }],
+  };
+}
+
+export function buildNftListingBuyWalletRequest(
+  args: NftListingBuyWalletRequestArgs,
+): NftListingBuyWalletRequest {
+  const listingId = args.listingId?.trim();
+  if (!listingId) {
+    throw new Error("Native NFT listing id is required before buying a listing.");
+  }
+  const buyer = args.buyerAddress?.trim();
+  if (!buyer) {
+    throw new Error("Wallet account is required before buying a listing.");
+  }
+  if (args.currentBlock === null || args.currentBlock === undefined) {
+    throw new Error("Live chain head is required before buying a listing.");
+  }
+  const forwarder = args.forwarderContractAddress?.trim();
+  if (!forwarder) {
+    throw new Error("MRV native market forwarder address is not configured.");
+  }
+  const forwarderInput = buildNativeNftBuyListingForwarderInput({
+    listingId,
+    buyer,
+    currentBlock: args.currentBlock,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
   return {
     method: "monolythium_submitMrvNativeCall",
@@ -323,7 +378,144 @@ const NativeMarketStateTable = ({ title, rows, empty }: any) => (
   </div>
 );
 
-const NativeMarketStateCard = ({ state, rows, loading, scope }: any) => {
+const NativeNftListingsTable = ({
+  rows,
+  empty,
+  latestBlock,
+  forwarderAddress,
+  go,
+}: {
+  rows: NativeMarketStateDisplayRow[];
+  empty: string;
+  latestBlock: number | null;
+  forwarderAddress: string | null;
+  go?: (to: string) => void;
+}) => {
+  const [buySubmit, setBuySubmit] = useState<{
+    listingId: string | null;
+    state: "idle" | "submitting" | "success" | "error";
+    message?: string;
+    txHash?: string | null;
+  }>({ listingId: null, state: "idle" });
+
+  const submitBuy = async (row: NativeMarketStateDisplayRow) => {
+    try {
+      const provider = typeof window !== "undefined" ? window.monolythium : undefined;
+      if (!provider?.request) {
+        throw new Error("Monolythium wallet provider not detected.");
+      }
+      setBuySubmit({ listingId: row.primaryId, state: "submitting", message: "awaiting wallet" });
+      const accounts = await provider.request({ method: "eth_requestAccounts", params: [] });
+      const buyerAddress = _walletAccount(accounts);
+      const request = buildNftListingBuyWalletRequest({
+        listingId: row.primaryId,
+        buyerAddress,
+        currentBlock: latestBlock,
+        forwarderContractAddress: forwarderAddress,
+      });
+      const result = await provider.request(request);
+      const txHash = _walletTxHash(result);
+      setBuySubmit({
+        listingId: row.primaryId,
+        state: "success",
+        txHash,
+        message: txHash ? `submitted ${_shortHash(txHash, 10, 6)}` : "submitted",
+      });
+      window.__msToast?.(txHash ? `NFT listing buy submitted ${_shortHash(txHash, 10, 6)}` : "NFT listing buy submitted");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "NFT listing buy failed.";
+      setBuySubmit({ listingId: row.primaryId, state: "error", message });
+      if (typeof window !== "undefined") window.__msToast?.(message);
+    }
+  };
+
+  return (
+    <div style={{overflowX:"auto"}}>
+      <div className="cap" style={{padding:"12px 16px 6px"}}>NFT listings</div>
+      {rows.length === 0 ? (
+        <div className="mono" style={{padding:"0 16px 14px",fontSize:12,color:"var(--fg-500)"}}>{empty}</div>
+      ) : (
+        <table className="ms-table ms-table--tight">
+          <thead>
+            <tr>
+              <th>Listing</th>
+              <th>Collection</th>
+              <th>Seller</th>
+              <th>Token</th>
+              <th style={{textAlign:"right"}}>Price</th>
+              <th>Status</th>
+              <th>Fields</th>
+              <th style={{textAlign:"right"}}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i)=> {
+              const activeSubmit = buySubmit.listingId === row.primaryId ? buySubmit : null;
+              const canBuy = Boolean(
+                row.primaryId &&
+                latestBlock !== null &&
+                forwarderAddress &&
+                row.status !== "filled" &&
+                row.status !== "cancelled" &&
+                row.status !== "expired",
+              );
+              return (
+                <tr key={`${row.kind}-${row.primaryId ?? row.collectionId ?? i}`}>
+                  <td className="mono" title={row.primaryId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.primaryId, 8, 5)}</td>
+                  <td className="mono" title={row.collectionId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.collectionId, 8, 5)}</td>
+                  <td className="mono" title={row.account ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.account, 8, 5)}</td>
+                  <td className="mono" title={row.tokenId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.tokenId, 7, 4)}</td>
+                  <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-200)"}}>{row.price ?? "—"}</td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{row.status ?? "—"}</td>
+                  <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)",maxWidth:260}}>
+                    {row.fields.slice(0, 3).map(([k, v])=>`${k}=${v}`).join(" · ") || "—"}
+                    {activeSubmit && activeSubmit.state !== "idle" && (
+                      <div style={{
+                        marginTop:4,
+                        color: activeSubmit.state === "error" ? "var(--err)" : activeSubmit.state === "success" ? "var(--ok)" : "var(--fg-400)",
+                      }}>
+                        {activeSubmit.message}
+                        {activeSubmit.txHash && (
+                          <a href={`#/tx/${activeSubmit.txHash}`} onClick={()=>go?.(`#/tx/${activeSubmit.txHash}`)} style={{color:"var(--gold)",marginLeft:8}}>View tx</a>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td style={{textAlign:"right"}}>
+                    <button
+                      className="mono"
+                      disabled={!canBuy || activeSubmit?.state === "submitting"}
+                      onClick={()=>submitBuy(row)}
+                      style={{
+                        padding:"5px 10px",
+                        borderRadius:6,
+                        border:"1px solid var(--fg-700)",
+                        background:canBuy ? "rgba(242,180,65,0.12)" : "rgba(255,255,255,0.03)",
+                        color:canBuy ? "var(--gold)" : "var(--fg-500)",
+                        cursor:canBuy ? "pointer" : "not-allowed",
+                        fontSize:10.5,
+                      }}
+                    >
+                      {activeSubmit?.state === "submitting"
+                        ? "Submitting"
+                        : !forwarderAddress
+                          ? "Forwarder"
+                          : latestBlock === null
+                            ? "Head"
+                            : "Buy"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
+const NativeMarketStateCard = ({ state, rows, loading, scope, latestBlock, forwarderAddress, go }: any) => {
   const total = rows.spotMarkets.length + rows.spotOrders.length + rows.nftListings.length + rows.collectionRoyalties.length;
   return (
     <div className="ms-card" style={{padding:0,overflow:"hidden"}}>
@@ -349,7 +541,13 @@ const NativeMarketStateCard = ({ state, rows, loading, scope }: any) => {
         <>
           <NativeMarketStateTable title="Spot markets" rows={rows.spotMarkets} empty="No spot markets returned."/>
           <NativeMarketStateTable title="Spot orders" rows={rows.spotOrders} empty="No spot orders returned."/>
-          <NativeMarketStateTable title="NFT listings" rows={rows.nftListings} empty="No NFT listings returned."/>
+          <NativeNftListingsTable
+            rows={rows.nftListings}
+            empty="No NFT listings returned."
+            latestBlock={latestBlock ?? null}
+            forwarderAddress={forwarderAddress ?? null}
+            go={go}
+          />
           <NativeMarketStateTable title="Collection royalties" rows={rows.collectionRoyalties} empty="No collection royalties returned."/>
         </>
       )}
@@ -610,6 +808,8 @@ const MarketsPage = ({ go }: any) => {
         state={nativeMarketState.data}
         rows={nativeStateRows}
         loading={nativeMarketState.isLoading}
+        latestBlock={head.data?.blockNumber ?? null}
+        forwarderAddress={getNativeMarketForwarderAddress()}
       />
 
       <div className="mono" style={{color:"var(--fg-500)",fontSize:11,textAlign:"center",letterSpacing:"0.04em",padding:"6px 0"}}>
@@ -1299,6 +1499,9 @@ const MarketPage = ({ sym, go }: any) => {
         rows={nativeStateRows}
         loading={nativeMarketState.isLoading}
         scope={marketId ? `primaryId ${_shortHash(marketId)}` : "unscoped until a live market id is known"}
+        latestBlock={head.data?.blockNumber ?? null}
+        forwarderAddress={nativeMarketForwarderAddress}
+        go={go}
       />
 
       <NativeMarketEventsCard
