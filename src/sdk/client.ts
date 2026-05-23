@@ -269,6 +269,23 @@ export const QK = {
     ] as const,
   clobOrderBook: (marketId: string, levels: number | null = null) =>
     ["mono", "markets", "clob", marketId, "order-book", levels ?? "default"] as const,
+  nativeMarketEvents: (
+    fromBlock: number | string,
+    toBlock: number | string,
+    limit: number,
+    primaryId: string | null = null,
+    eventName: string | null = null,
+  ) =>
+    [
+      "mono",
+      "markets",
+      "native-events",
+      fromBlock.toString(),
+      toBlock.toString(),
+      limit,
+      primaryId ?? "all",
+      eventName ?? "all",
+    ] as const,
   dagRecent: () => ["mono", "dag", "recent"] as const,
   verticesAtRound: (round: number | string) => ["mono", "dag", "vertices", round] as const,
   dagParents: (round: number | string) => ["mono", "dag", "parents", round] as const,
