@@ -6,29 +6,37 @@ import {
   MRV_NATIVE_RECEIPT_TX_TYPE,
   MRV_NATIVE_TX_EXTENSION_BODY_HEX,
   MRV_NATIVE_TX_EXTENSION_KIND,
+  NO_EVM_RECEIPTS_ROOT_ALGORITHM,
   NO_EVM_RECEIPT_PROOF_SCHEMA,
   NO_EVM_RECEIPT_PROOF_TYPE,
   mrvNativeTransactionEvidence,
+  verifyNoEvmReceiptProofConsistency,
   type NoEvmReceiptProofTranscript,
 } from "./data/hooks";
 
 function noEvmReceiptProofTranscript(
   overrides: Partial<NoEvmReceiptProofTranscript> = {},
 ): NoEvmReceiptProofTranscript {
-  return {
+  const transcript: NoEvmReceiptProofTranscript = {
     schema: NO_EVM_RECEIPT_PROOF_SCHEMA,
     proofType: NO_EVM_RECEIPT_PROOF_TYPE,
-    rootAlgorithm: "merkle-patricia-trie",
+    rootAlgorithm: NO_EVM_RECEIPTS_ROOT_ALGORITHM,
     receiptCodec: "rlp",
     blockHash: `0x${"cd".repeat(32)}`,
     txHash: `0x${"ab".repeat(32)}`,
-    receiptsRoot: `0x${"12".repeat(32)}`,
-    targetReceiptHash: `0x${"34".repeat(32)}`,
+    receiptsRoot: `0x${"00".repeat(32)}`,
+    targetReceiptHash: `0x${"00".repeat(32)}`,
     blockHeight: 321,
     txIndex: 1,
     receiptCount: 2,
     receiptTranscript: ["0x01", "0xaabb"],
     ...overrides,
+  };
+  const consistency = verifyNoEvmReceiptProofConsistency(transcript);
+  return {
+    ...transcript,
+    receiptsRoot: overrides.receiptsRoot ?? consistency.computedReceiptsRoot,
+    targetReceiptHash: overrides.targetReceiptHash ?? consistency.computedTargetReceiptHash ?? transcript.targetReceiptHash,
   };
 }
 
@@ -148,19 +156,80 @@ describe("MrvNativeEvidenceCard", () => {
 
     const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
 
-    expect(html).toContain("proof evidence present");
+    expect(html).toContain("transcript verified");
     expect(html).toContain("No-EVM receipt proof");
-    expect(html).toContain("present · bounded receipts transcript · canonicalReceiptsTranscript · block 321 · tx 2/2 · 2 receipt blobs");
-    expect(html).toContain("Proof codec");
-    expect(html).toContain("merkle-patricia-trie · rlp");
-    expect(html).toContain("Proof anchors");
+    expect(html).toContain("verified · bounded receipts transcript · canonicalReceiptsTranscript · block 321 · tx 2/2 · 2 receipt blobs");
+    expect(html).toContain("Transcript check");
+    expect(html).toContain("verified · computed");
+    expect(html).toContain(noEvmProof.receiptsRoot.slice(0, 18));
+    expect(html).toContain(noEvmProof.targetReceiptHash.slice(0, 18));
+    expect(html).toContain("Transcript codec");
+    expect(html).toContain("keccak256(&quot;monolythium/v2/receipts_root/1&quot;");
+    expect(html).toContain("rlp");
+    expect(html).toContain("Transcript anchors");
     expect(html).toContain("block 0xcdcdcdcdcdcdcdcd");
     expect(html).toContain("tx 0xabababababababab");
     expect(html).toContain("Receipt root");
-    expect(html).toContain("0x1212121212121212");
-    expect(html).toContain("target 0x3434343434343434");
+    expect(html).toContain(noEvmProof.receiptsRoot.slice(0, 18));
+    expect(html).toContain(`target ${noEvmProof.targetReceiptHash.slice(0, 18)}`);
     expect(html).toContain("Receipt transcript");
     expect(html).toContain("2 receipt blobs · receiptCount 2 · txIndex 1");
+    expect(html).not.toContain("Finality proof");
+  });
+
+  it("renders compact mismatch details for a well-formed no-EVM receipt transcript", () => {
+    const noEvmProof = noEvmReceiptProofTranscript({
+      receiptCount: 3,
+      receiptsRoot: `0x${"12".repeat(32)}`,
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"ab".repeat(32)}`,
+      blockNumber: 321n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      txHash: `0x${"ab".repeat(32)}`,
+      blockHash: `0x${"cd".repeat(32)}`,
+      blockHeight: 321,
+      txIndex: 1,
+      schema: "riscv.receipt.v1",
+      txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+      artifactHash: `0x${"ef".repeat(32)}`,
+      receiptCommitment: `0x${"19".repeat(32)}`,
+      noEvmProof,
+      counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
+      fee: {
+        total_lythoshi: "12",
+        total_lyth: "0.00000012",
+        cycles_used: 12,
+        base_price_per_cycle_lythoshi: "1",
+        state_io_units: 1,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "0",
+      },
+      reverted: false,
+      nativeDeltaCount: 1,
+      eventCount: 2,
+      events: [],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    } as any);
+
+    const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
+
+    expect(html).toContain("transcript mismatch");
+    expect(html).toContain("mismatch · bounded receipts transcript");
+    expect(html).toContain("Transcript check");
+    expect(html).toContain("mismatch · receiptCount 3 does not match 2 receipt blobs; receiptsRoot mismatch");
+    expect(html).toContain("computed");
     expect(html).not.toContain("Finality proof");
   });
 
