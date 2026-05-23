@@ -11,6 +11,7 @@ import { useState, useEffect, useMemo } from "react";
 import { MARKETS } from "./data/mock";
 import {
   nativeMarketEventRows,
+  nativeMarketStateRows,
   useChainHead,
   useClobMarket,
   useClobMarkets,
@@ -18,6 +19,7 @@ import {
   useClobOrderBook,
   useClobTrades,
   useNativeMarketEvents,
+  useNativeMarketState,
 } from "./data/hooks";
 import { getMarketIdForSymbol } from "./sdk/client";
 
@@ -48,6 +50,12 @@ const _cumLevels = (rows: Array<{ price: string; size: string }>) => {
     total += sz;
     return { px, sz, total };
   });
+};
+
+const _nativeStateSource = (state: any) => {
+  const source = state?.source;
+  if (!source || typeof source !== "object") return "/api/v1/native-market-state";
+  return Object.entries(source).map(([k, v]) => `${k}=${String(v)}`).join(" · ") || "/api/v1/native-market-state";
 };
 
 const NativeMarketEventsCard = ({ rows, latestBlock, loading, scope }: any) => (
@@ -108,6 +116,83 @@ const NativeMarketEventsCard = ({ rows, latestBlock, loading, scope }: any) => (
   </div>
 );
 
+const NativeMarketStateTable = ({ title, rows, empty }: any) => (
+  <div style={{overflowX:"auto"}}>
+    <div className="cap" style={{padding:"12px 16px 6px"}}>{title}</div>
+    {rows.length === 0 ? (
+      <div className="mono" style={{padding:"0 16px 14px",fontSize:12,color:"var(--fg-500)"}}>{empty}</div>
+    ) : (
+      <table className="ms-table ms-table--tight">
+        <thead>
+          <tr>
+            <th>Id</th>
+            <th>Market / collection</th>
+            <th>Account</th>
+            <th>Side</th>
+            <th style={{textAlign:"right"}}>Price</th>
+            <th style={{textAlign:"right"}}>Amount</th>
+            <th>Status</th>
+            <th>Fields</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row: any, i: number)=>(
+            <tr key={`${row.kind}-${row.primaryId ?? row.marketId ?? row.collectionId ?? i}`}>
+              <td className="mono" title={row.primaryId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.primaryId, 8, 5)}</td>
+              <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
+                {row.marketId ? <span title={row.marketId}>{_shortHash(row.marketId, 8, 5)}</span> : row.collectionId ? <span title={row.collectionId}>{_shortHash(row.collectionId, 8, 5)}</span> : "—"}
+                {row.tokenId && <div title={row.tokenId} style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>token {_shortHash(row.tokenId, 7, 4)}</div>}
+              </td>
+              <td className="mono" title={row.account ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.account, 8, 5)}</td>
+              <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{row.side ?? "—"}</td>
+              <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-200)"}}>{row.price ?? "—"}</td>
+              <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-300)"}}>{row.amount ?? "—"}</td>
+              <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{row.status ?? "—"}</td>
+              <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)",maxWidth:300}}>
+                {row.fields.slice(0, 3).map(([k, v]: [string, string])=>`${k}=${v}`).join(" · ") || "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+  </div>
+);
+
+const NativeMarketStateCard = ({ state, rows, loading, scope }: any) => {
+  const total = rows.spotMarkets.length + rows.spotOrders.length + rows.nftListings.length + rows.collectionRoyalties.length;
+  return (
+    <div className="ms-card" style={{padding:0,overflow:"hidden"}}>
+      <div style={{display:"flex",justifyContent:"space-between",gap:16,alignItems:"center",padding:"14px 16px",borderBottom:"1px solid var(--fg-700)"}}>
+        <div>
+          <div className="cap">Native market current state</div>
+          <h3 style={{margin:"3px 0 0",fontSize:14,fontWeight:500}}>Spot, NFT, and royalty rows</h3>
+        </div>
+        <div className="mono" style={{fontSize:10,color:"var(--fg-500)",textAlign:"right"}}>
+          {state ? _nativeStateSource(state) : loading ? "reading /api/v1/native-market-state" : "no current-state response"}
+          {scope && <div style={{marginTop:3}}>{scope}</div>}
+        </div>
+      </div>
+      {state && total === 0 ? (
+        <div className="mono" style={{padding:"16px",fontSize:12.5,color:"var(--fg-400)",lineHeight:1.55}}>
+          The native market state endpoint returned successfully, but it did not return spot markets, spot orders, NFT listings, or collection royalties for this scope.
+        </div>
+      ) : !state ? (
+        <div className="mono" style={{padding:"16px",fontSize:12.5,color:"var(--fg-400)",lineHeight:1.55}}>
+          {loading ? "Reading /api/v1/native-market-state…" : "Native market current state is unavailable from this node."}
+        </div>
+      ) : (
+        <>
+          <NativeMarketStateTable title="Spot markets" rows={rows.spotMarkets} empty="No spot markets returned."/>
+          <NativeMarketStateTable title="Spot orders" rows={rows.spotOrders} empty="No spot orders returned."/>
+          <NativeMarketStateTable title="NFT listings" rows={rows.nftListings} empty="No NFT listings returned."/>
+          <NativeMarketStateTable title="Collection royalties" rows={rows.collectionRoyalties} empty="No collection royalties returned."/>
+        </>
+      )}
+    </div>
+  );
+};
+
 /* Token glyph — seeded, visually stable */
 const TokenMark = ({ sym, size=24 }: any) => {
   const hue = Math.abs(sym.split("").reduce((a,c)=>a*17+c.charCodeAt(0),7))%360;
@@ -147,6 +232,8 @@ const MarketsPage = ({ go }: any) => {
   const [tab, setTab] = useState("all");
   const head = useChainHead();
   const liveMarkets = useClobMarkets(100);
+  const nativeMarketState = useNativeMarketState();
+  const nativeStateRows = useMemo(() => nativeMarketStateRows(nativeMarketState.data), [nativeMarketState.data]);
   const nativeMarketEvents = useNativeMarketEvents({ latestBlock: head.data?.blockNumber ?? null, limit: 25 });
   const nativeMarketRows = useMemo(() => nativeMarketEventRows(nativeMarketEvents.data), [nativeMarketEvents.data]);
 
@@ -355,6 +442,12 @@ const MarketsPage = ({ go }: any) => {
         loading={nativeMarketEvents.isLoading || head.isLoading}
       />
 
+      <NativeMarketStateCard
+        state={nativeMarketState.data}
+        rows={nativeStateRows}
+        loading={nativeMarketState.isLoading}
+      />
+
       <div className="mono" style={{color:"var(--fg-500)",fontSize:11,textAlign:"center",letterSpacing:"0.04em",padding:"6px 0"}}>
         {usingLiveMarkets
           ? "Live CLOB index. Empty rows mean the node has no indexed markets yet, not that demo fixtures are hidden by filters."
@@ -378,6 +471,8 @@ const MarketPage = ({ sym, go }: any) => {
   const liveTrades = useClobTrades(marketId, 50);
   const liveOhlc = useClobOhlc(marketId);
   const liveBook = useClobOrderBook(marketId, 9);
+  const nativeMarketState = useNativeMarketState({ primaryId: marketId ?? null });
+  const nativeStateRows = useMemo(() => nativeMarketStateRows(nativeMarketState.data), [nativeMarketState.data]);
   const nativeMarketEvents = useNativeMarketEvents({ latestBlock: head.data?.blockNumber ?? null, limit: 25, primaryId: marketId ?? null });
   const nativeMarketRows = useMemo(() => nativeMarketEventRows(nativeMarketEvents.data), [nativeMarketEvents.data]);
   const liveMarket = clob.data?.market ?? null;
@@ -454,10 +549,11 @@ const MarketPage = ({ sym, go }: any) => {
   let aT=0, bT=0;
   syntheticAsks.forEach(a=>{ aT+=a.sz; a.total=aT; });
   syntheticBids.forEach(b=>{ bT+=b.sz; b.total=bT; });
+  const liveBookResponded = liveBook.data !== undefined && liveBook.data !== null;
   const liveAsks = _cumLevels(liveBook.data?.asks ?? []);
   const liveBids = _cumLevels(liveBook.data?.bids ?? []);
-  const asks = liveAsks.length ? liveAsks : syntheticAsks;
-  const bids = liveBids.length ? liveBids : syntheticBids;
+  const asks = liveBookResponded ? liveAsks : syntheticAsks;
+  const bids = liveBookResponded ? liveBids : syntheticBids;
   const maxT = Math.max(
     1,
     asks[asks.length - 1]?.total ?? 0,
@@ -485,8 +581,8 @@ const MarketPage = ({ sym, go }: any) => {
     };
   });
   const tradeRows = liveTradeRows.length ? liveTradeRows : tkn.trades;
-  const buyVol  = liveBids.length ? (bids[bids.length - 1]?.total ?? 0) * mid : tkn.trades.filter(t=>t.side==="buy").reduce((a,t)=>a+t.value,0);
-  const sellVol = liveAsks.length ? (asks[asks.length - 1]?.total ?? 0) * mid : tkn.trades.filter(t=>t.side==="sell").reduce((a,t)=>a+t.value,0);
+  const buyVol  = liveBids.length ? (bids[bids.length - 1]?.total ?? 0) * mid : liveBookResponded ? null : tkn.trades.filter(t=>t.side==="buy").reduce((a,t)=>a+t.value,0);
+  const sellVol = liveAsks.length ? (asks[asks.length - 1]?.total ?? 0) * mid : liveBookResponded ? null : tkn.trades.filter(t=>t.side==="sell").reduce((a,t)=>a+t.value,0);
 
   return (
     <div className="ms-page ms-market">
@@ -805,6 +901,11 @@ const MarketPage = ({ sym, go }: any) => {
               <span>Price</span><span style={{textAlign:"right"}}>Size</span><span style={{textAlign:"right"}}>Total</span>
             </div>
             {/* asks */}
+            {asks.length === 0 ? (
+              <div className="mono" style={{padding:"14px 0",fontSize:11,color:"var(--fg-500)",lineHeight:1.45}}>
+                No ask levels returned by the current order-book read.
+              </div>
+            ) : (
             <div style={{display:"flex",flexDirection:"column-reverse"}}>
               {asks.map((a,i)=>(
                 <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",padding:"3px 0",fontSize:11,position:"relative"}}>
@@ -815,6 +916,7 @@ const MarketPage = ({ sym, go }: any) => {
                 </div>
               ))}
             </div>
+            )}
             <div style={{padding:"7px 0",margin:"4px 0",borderTop:"1px solid var(--fg-700)",borderBottom:"1px solid var(--fg-700)",display:"flex",alignItems:"center",gap:8}}>
               <span className="mono num" style={{fontSize:14,color: up?"var(--ok)":"var(--err)",fontWeight:500}}>{mkFmt(mid)}</span>
               <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.06em"}}>{up?"↑":"↓"} {Math.abs(chg).toFixed(2)}%</span>
@@ -824,7 +926,11 @@ const MarketPage = ({ sym, go }: any) => {
               </span>
             </div>
             {/* bids */}
-            {bids.map((b,i)=>(
+            {bids.length === 0 ? (
+              <div className="mono" style={{padding:"14px 0",fontSize:11,color:"var(--fg-500)",lineHeight:1.45}}>
+                No bid levels returned by the current order-book read.
+              </div>
+            ) : bids.map((b,i)=>(
               <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",padding:"3px 0",fontSize:11,position:"relative"}}>
                 <span style={{position:"absolute",right:0,top:0,bottom:0,width:`${(b.total/maxT)*100}%`,background:"oklch(0.78 0.14 155 / 0.10)"}}/>
                 <span className="mono num" style={{color:"var(--ok)",position:"relative"}}>{mkFmt(b.px)}</span>
@@ -833,8 +939,8 @@ const MarketPage = ({ sym, go }: any) => {
               </div>
             ))}
             <div className="mono" style={{marginTop:10,paddingTop:8,borderTop:"1px solid var(--fg-700)",fontSize:10,color:"var(--fg-500)"}}>
-              <div style={{display:"flex",justifyContent:"space-between"}}><span>Buy depth</span><span style={{color:"var(--ok)"}}>{mkUsd(buyVol)}</span></div>
-              <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span>Sell depth</span><span style={{color:"var(--err)"}}>{mkUsd(sellVol)}</span></div>
+              <div style={{display:"flex",justifyContent:"space-between"}}><span>Buy depth</span><span style={{color:"var(--ok)"}}>{buyVol === null ? "—" : mkUsd(buyVol)}</span></div>
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span>Sell depth</span><span style={{color:"var(--err)"}}>{sellVol === null ? "—" : mkUsd(sellVol)}</span></div>
               <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span>Venues</span><span style={{color:"var(--fg-300)"}}>{tkn.venues.slice(0,3).map(v=>v.name).join(" · ")}</span></div>
             </div>
           </div>
@@ -866,6 +972,13 @@ const MarketPage = ({ sym, go }: any) => {
           </div>
         </div>
       </div>
+
+      <NativeMarketStateCard
+        state={nativeMarketState.data}
+        rows={nativeStateRows}
+        loading={nativeMarketState.isLoading}
+        scope={marketId ? `primaryId ${_shortHash(marketId)}` : "unscoped until a live market id is known"}
+      />
 
       <NativeMarketEventsCard
         rows={nativeMarketRows}

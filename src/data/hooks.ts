@@ -614,6 +614,32 @@ export interface NativeMarketEventDisplayRow extends NativeReceiptEventDisplayRo
   counterparty: string | null;
 }
 
+export interface NativeMarketStateResponse {
+  schemaVersion?: number;
+  spotMarkets?: unknown[];
+  spotOrders?: unknown[];
+  nftListings?: unknown[];
+  collectionRoyalties?: unknown[];
+  filters?: Record<string, unknown>;
+  source?: Record<string, unknown>;
+}
+
+export interface NativeMarketStateDisplayRow {
+  kind: "spotMarket" | "spotOrder" | "nftListing" | "collectionRoyalty";
+  primaryId: string | null;
+  marketId: string | null;
+  collectionId: string | null;
+  tokenId: string | null;
+  account: string | null;
+  side: string | null;
+  status: string | null;
+  price: string | null;
+  amount: string | null;
+  quoteAsset: string | null;
+  blockHeight: number | null;
+  fields: Array<[string, string]>;
+}
+
 export const MRV_NATIVE_TX_EXTENSION_KIND = 0x30;
 export const MRV_NATIVE_TX_EXTENSION_BODY_HEX = "0x01";
 export const MRV_NATIVE_RECEIPT_TX_TYPE = 0x41;
@@ -726,6 +752,123 @@ function readNativeEventIdentity(decoded: Record<string, unknown> | null, keys: 
     if (typeof value === "bigint") return value.toString();
   }
   return null;
+}
+
+function nativeStateRecord(row: unknown): Record<string, unknown> | null {
+  return row && typeof row === "object" && !Array.isArray(row) ? row as Record<string, unknown> : null;
+}
+
+function readNativeStateString(row: Record<string, unknown> | null, keys: string[]): string | null {
+  if (!row) return null;
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim().length > 0) return value;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    if (typeof value === "bigint") return value.toString();
+  }
+  return null;
+}
+
+function readNativeStateNumber(row: Record<string, unknown> | null, keys: string[]): number | null {
+  const value = readNativeStateString(row, keys);
+  if (value === null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nativeMarketStateRow(
+  kind: NativeMarketStateDisplayRow["kind"],
+  raw: unknown,
+): NativeMarketStateDisplayRow {
+  const row = nativeStateRecord(raw);
+  const marketId = readNativeStateString(row, ["marketId", "market_id", "spotMarketId", "spot_market_id"]);
+  const collectionId = readNativeStateString(row, ["collectionId", "collection_id", "assetId", "asset_id"]);
+  const tokenId = readNativeStateString(row, ["tokenId", "token_id", "nftId", "nft_id"]);
+  const primaryId = readNativeStateString(row, [
+    "id",
+    "marketId",
+    "market_id",
+    "orderId",
+    "order_id",
+    "listingId",
+    "listing_id",
+    "collectionId",
+    "collection_id",
+  ]);
+
+  return {
+    kind,
+    primaryId,
+    marketId,
+    collectionId,
+    tokenId,
+    account: readNativeStateString(row, ["owner", "account", "maker", "seller", "recipient", "royaltyRecipient", "royalty_recipient"]),
+    side: readNativeStateString(row, ["side", "orderSide", "order_side"]),
+    status: readNativeStateString(row, ["status", "state", "listingStatus", "listing_status"]),
+    price: readNativeStateString(row, ["price", "priceLythoshi", "price_lythoshi", "limitPrice", "limit_price"]),
+    amount: readNativeStateString(row, ["amount", "amountBase", "amount_base", "remainingAmount", "remaining_amount", "royaltyBps", "royalty_bps"]),
+    quoteAsset: readNativeStateString(row, ["quoteAsset", "quote_asset", "quoteToken", "quote_token", "paymentAsset", "payment_asset"]),
+    blockHeight: readNativeStateNumber(row, ["blockHeight", "block_height", "updatedAtBlock", "updated_at_block", "registeredAtBlock", "registered_at_block"]),
+    fields: row
+      ? Object.entries(row)
+          .filter(([key]) => ![
+            "id",
+            "marketId",
+            "market_id",
+            "spotMarketId",
+            "spot_market_id",
+            "orderId",
+            "order_id",
+            "listingId",
+            "listing_id",
+            "collectionId",
+            "collection_id",
+            "tokenId",
+            "token_id",
+            "assetId",
+            "asset_id",
+            "owner",
+            "account",
+            "maker",
+            "seller",
+            "recipient",
+            "royaltyRecipient",
+            "royalty_recipient",
+            "side",
+            "orderSide",
+            "order_side",
+            "status",
+            "state",
+            "listingStatus",
+            "listing_status",
+            "price",
+            "priceLythoshi",
+            "price_lythoshi",
+            "limitPrice",
+            "limit_price",
+            "amount",
+            "amountBase",
+            "amount_base",
+            "remainingAmount",
+            "remaining_amount",
+            "royaltyBps",
+            "royalty_bps",
+            "quoteAsset",
+            "quote_asset",
+            "quoteToken",
+            "quote_token",
+            "paymentAsset",
+            "payment_asset",
+            "blockHeight",
+            "block_height",
+            "updatedAtBlock",
+            "updated_at_block",
+            "registeredAtBlock",
+            "registered_at_block",
+          ].includes(key))
+          .map(([key, value]) => [key, nativeFieldDisplay(value)] as [string, string])
+      : [],
+  };
 }
 
 function nativeEventDisplayRow(event: {
@@ -1310,6 +1453,22 @@ export function nativeMarketEventRows(
       counterparty: readNativeEventIdentity(decoded, ["counterparty", "seller", "buyer", "maker", "taker"]),
     };
   });
+}
+
+export function nativeMarketStateRows(
+  response: NativeMarketStateResponse | null | undefined,
+): {
+  spotMarkets: NativeMarketStateDisplayRow[];
+  spotOrders: NativeMarketStateDisplayRow[];
+  nftListings: NativeMarketStateDisplayRow[];
+  collectionRoyalties: NativeMarketStateDisplayRow[];
+} {
+  return {
+    spotMarkets: (response?.spotMarkets ?? []).map((row) => nativeMarketStateRow("spotMarket", row)),
+    spotOrders: (response?.spotOrders ?? []).map((row) => nativeMarketStateRow("spotOrder", row)),
+    nftListings: (response?.nftListings ?? []).map((row) => nativeMarketStateRow("nftListing", row)),
+    collectionRoyalties: (response?.collectionRoyalties ?? []).map((row) => nativeMarketStateRow("collectionRoyalty", row)),
+  };
 }
 
 function apiActivityToRpcActivity(row: ApiAddressActivityEntry): AddressActivityEntry {
@@ -3695,6 +3854,10 @@ interface NativeMarketEventsApiEnvelope {
   data: NativeEventsResponse<unknown>;
 }
 
+interface NativeMarketStateApiEnvelope {
+  data: NativeMarketStateResponse;
+}
+
 type NativeMarketEventsQuery = Record<string, string | number | bigint | boolean | null | undefined>;
 
 function boundedNativeMarketEventFilter(
@@ -3761,6 +3924,30 @@ export function useNativeMarketEvents(options: {
     ),
     enabled: filter !== null && isRpcConfigured(),
     queryFn: async () => fetchNativeMarketEvents(filter as NativeEventsFilter),
+    staleTime: 15_000,
+  });
+}
+
+export async function fetchNativeMarketState(
+  filter: { primaryId?: string | null } = {},
+): Promise<NativeMarketStateResponse | null> {
+  const query = filter.primaryId ? { primaryId: filter.primaryId } : {};
+  try {
+    return await getApiClient()
+      .get<NativeMarketStateApiEnvelope>("/native-market-state", query)
+      .then((response) => response.data)
+      .catch(() => getRpcClient().call<NativeMarketStateResponse>("lyth_nativeMarketState", [filter]));
+  } catch {
+    return null;
+  }
+}
+
+export function useNativeMarketState(options: { primaryId?: string | null } = {}) {
+  const primaryId = options.primaryId ?? null;
+  return useQuery<NativeMarketStateResponse | null>({
+    queryKey: QK.nativeMarketState(primaryId),
+    enabled: isRpcConfigured(),
+    queryFn: async () => fetchNativeMarketState(primaryId ? { primaryId } : {}),
     staleTime: 15_000,
   });
 }
