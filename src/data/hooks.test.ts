@@ -44,6 +44,8 @@ import {
   MRV_NATIVE_RECEIPT_TX_TYPE,
   MRV_NATIVE_TX_EXTENSION_BODY_HEX,
   MRV_NATIVE_TX_EXTENSION_KIND,
+  NO_EVM_RECEIPT_PROOF_SCHEMA,
+  NO_EVM_RECEIPT_PROOF_TYPE,
   mrvNativeTransactionEvidence,
   mrcHoldersBalanceQueryKeys,
   mrcMetadataBalanceQueryKeys,
@@ -54,6 +56,7 @@ import {
   nativeReceiptMarketEventRows,
   queryClient,
   txFeedToRows,
+  type NoEvmReceiptProofTranscript,
 } from "./hooks";
 import { isWebSocketEnabled, resetRpcClient } from "../sdk/client";
 
@@ -93,6 +96,26 @@ function nativeReceiptFixture(
       indexerProvider: "native_events",
       metadataLogIndex: 0xffff_ffff,
     },
+    ...overrides,
+  };
+}
+
+function noEvmReceiptProofTranscript(
+  overrides: Partial<NoEvmReceiptProofTranscript> = {},
+): NoEvmReceiptProofTranscript {
+  return {
+    schema: NO_EVM_RECEIPT_PROOF_SCHEMA,
+    proofType: NO_EVM_RECEIPT_PROOF_TYPE,
+    rootAlgorithm: "merkle-patricia-trie",
+    receiptCodec: "rlp",
+    blockHash: `0x${"33".repeat(32)}`,
+    txHash: `0x${"22".repeat(32)}`,
+    receiptsRoot: `0x${"44".repeat(32)}`,
+    targetReceiptHash: `0x${"55".repeat(32)}`,
+    blockHeight: 100,
+    txIndex: 1,
+    receiptCount: 2,
+    receiptTranscript: ["0x01", "0xaabb"],
     ...overrides,
   };
 }
@@ -226,13 +249,33 @@ describe("live-SDK seam", () => {
     expect((result as Record<string, unknown> | null)?.noEvmProof).toBeNull();
   });
 
+  it("preserves non-null noEvmProof transcript objects from the native receipt API", async () => {
+    const txHash = `0x${"57".repeat(32)}`;
+    const noEvmProof = noEvmReceiptProofTranscript({ txHash });
+    const receipt = nativeReceiptFixture({
+      txHash,
+      noEvmProof,
+    });
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "transactionNativeReceipt")
+      .mockResolvedValue(apiEnvelope(receipt));
+    const rpcSpy = vi.spyOn(RpcClient.prototype, "lythNativeReceipt");
+
+    const result = await fetchTxNativeReceipt(txHash);
+
+    expect(apiSpy).toHaveBeenCalledWith(txHash);
+    expect(rpcSpy).not.toHaveBeenCalled();
+    expect((result as Record<string, unknown> | null)?.noEvmProof).toEqual(noEvmProof);
+  });
+
   it("falls back to lyth_nativeReceipt when the native receipt API is unavailable", async () => {
     const txHash = `0x${"66".repeat(32)}`;
     const receiptCommitment = `0x${"11".repeat(32)}`;
+    const noEvmProof = noEvmReceiptProofTranscript({ txHash });
     const receipt = nativeReceiptFixture({
       txHash,
       receiptCommitment,
-      noEvmProof: { verifier: "fixture", digest: `0x${"77".repeat(32)}` },
+      noEvmProof,
     });
     const apiSpy = vi
       .spyOn(ApiClient.prototype, "transactionNativeReceipt")
@@ -246,8 +289,7 @@ describe("live-SDK seam", () => {
     expect(apiSpy).toHaveBeenCalledWith(txHash);
     expect(rpcSpy).toHaveBeenCalledWith(txHash);
     expect((result as Record<string, unknown> | null)?.receiptCommitment).toBe(receiptCommitment);
-    expect((result as Record<string, unknown> | null)?.noEvmProof)
-      .toEqual({ verifier: "fixture", digest: `0x${"77".repeat(32)}` });
+    expect((result as Record<string, unknown> | null)?.noEvmProof).toEqual(noEvmProof);
   });
 
   it("reads recent native market events from the dedicated API path", async () => {
@@ -1375,11 +1417,19 @@ describe("API execution-unit transformations", () => {
       validMrvV1: true,
     });
     expect(evidence?.blockers).toContain(
-      "native-receipt.noEvmProof returned null; Monoscan treats the no-EVM proof as missing until a verifier payload is available.",
+      "native-receipt.noEvmProof returned null; Monoscan treats the no-EVM receipt proof evidence as missing until a bounded receipts transcript is available.",
     );
   });
 
-  it("marks no-EVM proof present only when native receipt noEvmProof has a payload", () => {
+  it("marks no-EVM receipt proof present only when native receipt noEvmProof is a valid transcript", () => {
+    const noEvmProof = noEvmReceiptProofTranscript({
+      txHash: `0x${"77".repeat(32)}`,
+      blockHash: `0x${"34".repeat(32)}`,
+      blockHeight: 122,
+      txIndex: 0,
+      receiptCount: 2,
+      receiptTranscript: ["0x01", "0x0203"],
+    });
     const evidence = mrvNativeTransactionEvidence({
       txHash: `0x${"77".repeat(32)}`,
       blockNumber: 122n,
@@ -1394,8 +1444,10 @@ describe("API execution-unit transformations", () => {
     } as any, {
       ...nativeReceiptFixture({
         txHash: `0x${"77".repeat(32)}`,
+        blockHash: `0x${"34".repeat(32)}`,
+        blockHeight: 122,
         txType: MRV_NATIVE_RECEIPT_TX_TYPE,
-        noEvmProof: { verifier: "native", digest: `0x${"12".repeat(32)}` },
+        noEvmProof,
       }),
     } as any);
 
@@ -1406,10 +1458,55 @@ describe("API execution-unit transformations", () => {
     });
     expect(evidence?.proof).toMatchObject({
       source: "native-receipt.noEvmProof",
-      summary: "present",
+      summary: "canonicalReceiptsTranscript · block 122 · tx 1/2 · 2 receipt blobs",
+      transcript: noEvmProof,
+      validationErrors: [],
     });
     expect(evidence?.blockers).not.toContain(
-      "native-receipt.noEvmProof must return a verifier payload before Monoscan can render no-EVM proof evidence.",
+      "native-receipt.noEvmProof must return a bounded receipts transcript before Monoscan can render no-EVM receipt proof evidence.",
+    );
+  });
+
+  it("marks malformed no-EVM receipt proof transcripts invalid without treating them as missing", () => {
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"76".repeat(32)}`,
+      blockNumber: 123n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"76".repeat(32)}`,
+        blockHeight: 123,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof: {
+          ...noEvmReceiptProofTranscript({
+            txHash: `0x${"76".repeat(32)}`,
+            blockHeight: 123,
+            txIndex: 2,
+            receiptCount: 2,
+          }),
+          schema: "mono.no_evm_receipt_proof.v0",
+          receiptTranscript: ["0x01", "not-hex"],
+        },
+      }),
+    } as any);
+
+    expect(evidence).toMatchObject({
+      proofState: "invalid",
+      proofFieldSource: "native-receipt.noEvmProof",
+      proofFieldState: "present",
+    });
+    expect(evidence?.proof?.transcript).toBeNull();
+    expect(evidence?.proof?.validationErrors).toContain(`schema must be ${NO_EVM_RECEIPT_PROOF_SCHEMA}`);
+    expect(evidence?.proof?.validationErrors).toContain("receiptTranscript[1] must be a 0x byte blob");
+    expect(evidence?.proof?.validationErrors).toContain("txIndex must be less than receiptCount");
+    expect(evidence?.blockers).toContain(
+      `native-receipt.noEvmProof returned an invalid bounded receipts transcript: receiptTranscript[1] must be a 0x byte blob; schema must be ${NO_EVM_RECEIPT_PROOF_SCHEMA}; txIndex must be less than receiptCount.`,
     );
   });
 
@@ -1439,7 +1536,7 @@ describe("API execution-unit transformations", () => {
       "GET /api/v1/transactions/{hash}/native-receipt or lyth_nativeReceipt(txHash) must return txType 0x41, artifactHash, counters, and events for MRV receipt evidence.",
     );
     expect(evidence?.blockers).toContain(
-      "native-receipt.noEvmProof must return a verifier payload before Monoscan can render no-EVM proof evidence.",
+      "native-receipt.noEvmProof must return a bounded receipts transcript before Monoscan can render no-EVM receipt proof evidence.",
     );
   });
 
