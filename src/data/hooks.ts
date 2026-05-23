@@ -206,7 +206,7 @@ type MrcMetadataRpcClient = {
 
 export const MRC_METADATA_BALANCE_LIMIT = 8;
 
-export type MrcHolderStandard = "mrc721" | "mrc1155";
+export type MrcHolderStandard = "mrc721" | "mrc1155" | "mrc4626";
 
 export interface MrcHolderRecord {
   rank: number;
@@ -219,7 +219,7 @@ export interface MrcHoldersResponse {
   schemaVersion: number;
   standard: MrcHolderStandard;
   assetId: string;
-  tokenId: string;
+  tokenId: string | null;
   limit: number;
   holders: MrcHolderRecord[];
 }
@@ -238,7 +238,7 @@ type MrcHoldersRpcClient = {
   lythMrcHolders?: (
     standard: MrcHolderStandard,
     assetId: string,
-    tokenId: string,
+    tokenId: string | null,
     limit?: number,
   ) => Promise<MrcHoldersResponse>;
   call?: <T>(method: string, params?: unknown) => Promise<T>;
@@ -2461,14 +2461,28 @@ function boundedMrcHoldersLimit(limit = MRC_HOLDERS_BALANCE_LIMIT): number {
 }
 
 function normalizeMrcHolderStandard(standard: string | null | undefined): MrcHolderStandard | null {
-  return standard === "mrc721" || standard === "mrc1155" ? standard : null;
+  return standard === "mrc721" || standard === "mrc1155" || standard === "mrc4626" ? standard : null;
+}
+
+function mrcHolderBalanceIdentity(row: MrcMetadataBalanceRow): {
+  standard: MrcHolderStandard;
+  assetId: string;
+  tokenId: string | null;
+} | null {
+  const standard = normalizeMrcHolderStandard(row.mrc?.standard);
+  const assetId = row.mrc?.assetId ?? null;
+  if (!standard || !assetId) return null;
+  if (standard === "mrc4626") {
+    return { standard, assetId, tokenId: null };
+  }
+  const tokenId = row.mrc?.tokenId ?? null;
+  return tokenId ? { standard, assetId, tokenId } : null;
 }
 
 function mrcHoldersBalanceQueryKey(row: MrcMetadataBalanceRow): string | null {
-  const standard = normalizeMrcHolderStandard(row.mrc?.standard);
-  const assetId = row.mrc?.assetId ?? null;
-  const tokenId = row.mrc?.tokenId ?? null;
-  if (!standard || !assetId || !tokenId) return null;
+  const identity = mrcHolderBalanceIdentity(row);
+  if (!identity) return null;
+  const { standard, assetId, tokenId } = identity;
   return `${standard}:${assetId}:${tokenId}:${row.tokenId}`;
 }
 
@@ -2480,10 +2494,9 @@ function uniqueMrcHoldersBalanceRows(
   const seen = new Set<string>();
   const rowLimit = boundedMrcHoldersLimit(limit);
   for (const row of rows) {
-    const standard = normalizeMrcHolderStandard(row.mrc?.standard);
-    const assetId = row.mrc?.assetId ?? null;
-    const tokenId = row.mrc?.tokenId ?? null;
-    if (!standard || !assetId || !tokenId) continue;
+    const identity = mrcHolderBalanceIdentity(row);
+    if (!identity) continue;
+    const { standard, assetId, tokenId } = identity;
     const holderKey = `${standard}:${assetId}:${tokenId}`;
     if (seen.has(holderKey)) continue;
     seen.add(holderKey);
@@ -2507,15 +2520,20 @@ function unwrapMrcHoldersResponse(response: MrcHoldersResponse | MrcHoldersEnvel
 async function fetchMrcHoldersForIdentity(
   standard: MrcHolderStandard,
   assetId: string,
-  tokenId: string,
+  tokenId: string | null,
   limit: number,
   api: MrcHoldersApiClient,
   rpc: MrcHoldersRpcClient,
 ): Promise<MrcHoldersResponse | null> {
+  const tokenPathSegment = tokenId ?? "";
+  if (standard !== "mrc4626" && !tokenPathSegment) return null;
   try {
     if (typeof api.get !== "function") throw new Error("MRC holder REST client unavailable");
+    const path = standard === "mrc4626"
+      ? `/mrc/${encodeURIComponent(standard)}/${encodeURIComponent(assetId)}/holders`
+      : `/mrc/${encodeURIComponent(standard)}/${encodeURIComponent(assetId)}/${encodeURIComponent(tokenPathSegment)}/holders`;
     return unwrapMrcHoldersResponse(await api.get<MrcHoldersResponse | MrcHoldersEnvelope>(
-      `/mrc/${encodeURIComponent(standard)}/${encodeURIComponent(assetId)}/${encodeURIComponent(tokenId)}/holders`,
+      path,
       { limit },
     ));
   } catch {
@@ -2539,10 +2557,9 @@ export async function fetchMrcHoldersForTokenBalances(
   const rpc = clients.rpc ?? getRpcClient();
   const out: MrcHoldersByTokenBalance = {};
   await Promise.all(uniqueMrcHoldersBalanceRows(rows, rowLimit).map(async (row) => {
-    const standard = normalizeMrcHolderStandard(row.mrc?.standard);
-    const assetId = row.mrc?.assetId ?? null;
-    const tokenId = row.mrc?.tokenId ?? null;
-    if (!standard || !assetId || !tokenId) return;
+    const identity = mrcHolderBalanceIdentity(row);
+    if (!identity) return;
+    const { standard, assetId, tokenId } = identity;
     try {
       const response = await fetchMrcHoldersForIdentity(standard, assetId, tokenId, rowLimit, api, rpc);
       if (response && Array.isArray(response.holders)) {
