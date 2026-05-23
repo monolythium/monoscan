@@ -204,8 +204,10 @@ describe("live-SDK seam", () => {
 
   it("prefers the native receipt API and preserves explicit null noEvmProof", async () => {
     const txHash = `0x${"55".repeat(32)}`;
+    const receiptCommitment = `0x${"10".repeat(32)}`;
     const receipt = nativeReceiptFixture({
       txHash,
+      receiptCommitment,
       noEvmProof: null,
     });
     const apiSpy = vi
@@ -218,13 +220,16 @@ describe("live-SDK seam", () => {
     expect(apiSpy).toHaveBeenCalledWith(txHash);
     expect(rpcSpy).not.toHaveBeenCalled();
     expect(result?.txHash).toBe(txHash);
+    expect((result as Record<string, unknown> | null)?.receiptCommitment).toBe(receiptCommitment);
     expect((result as Record<string, unknown> | null)?.noEvmProof).toBeNull();
   });
 
   it("falls back to lyth_nativeReceipt when the native receipt API is unavailable", async () => {
     const txHash = `0x${"66".repeat(32)}`;
+    const receiptCommitment = `0x${"11".repeat(32)}`;
     const receipt = nativeReceiptFixture({
       txHash,
+      receiptCommitment,
       noEvmProof: { verifier: "fixture", digest: `0x${"77".repeat(32)}` },
     });
     const apiSpy = vi
@@ -238,6 +243,7 @@ describe("live-SDK seam", () => {
 
     expect(apiSpy).toHaveBeenCalledWith(txHash);
     expect(rpcSpy).toHaveBeenCalledWith(txHash);
+    expect((result as Record<string, unknown> | null)?.receiptCommitment).toBe(receiptCommitment);
     expect((result as Record<string, unknown> | null)?.noEvmProof)
       .toEqual({ verifier: "fixture", digest: `0x${"77".repeat(32)}` });
   });
@@ -1218,6 +1224,7 @@ describe("API execution-unit transformations", () => {
       schema: "riscv.receipt.v1",
       txType: MRV_NATIVE_RECEIPT_TX_TYPE,
       artifactHash: `0x${"aa".repeat(32)}`,
+      receiptCommitment: `0x${"13".repeat(32)}`,
       noEvmProof: null,
       counters: { cycles: 44, syscallUnits: 3, stateIoUnits: 2 },
       fee: {
@@ -1251,8 +1258,10 @@ describe("API execution-unit transformations", () => {
       includedBlock: 120,
       receiptTxType: MRV_NATIVE_RECEIPT_TX_TYPE,
       artifactHash: `0x${"aa".repeat(32)}`,
+      receiptCommitment: `0x${"13".repeat(32)}`,
       pqCheckpoint: "checkpoint #118",
     });
+    expect(evidence?.proof).toBeNull();
     expect(evidence?.extension).toMatchObject({
       kind: MRV_NATIVE_TX_EXTENSION_KIND,
       bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,

@@ -556,6 +556,7 @@ export interface MrvNativeTransactionEvidence {
   receiptTxType: number | null;
   receiptSchema: string | null;
   artifactHash: string | null;
+  receiptCommitment: string | null;
   includedBlock: number | null;
   reverted: boolean | null;
   eventCount: number | null;
@@ -817,6 +818,7 @@ export function mrvNativeTransactionEvidence(
   const receiptTxType = readNumberField(nativeReceipt, ["txType", "tx_type"]);
   const receiptSchema = readStringField(nativeReceipt, ["schema"]);
   const artifactHash = readStringField(nativeReceipt, ["artifactHash", "artifact_hash"]);
+  const receiptCommitment = readStringField(nativeReceipt, ["receiptCommitment", "receipt_commitment"]);
   const operation = findMrvOperationHint(readObjectField(decoded, ["decodedCalldata", "decoded_calldata"]))
     ?? findMrvOperationHint(decoded);
   const hasMrvReceipt = Boolean(nativeReceipt)
@@ -871,6 +873,7 @@ export function mrvNativeTransactionEvidence(
     receiptTxType,
     receiptSchema,
     artifactHash,
+    receiptCommitment,
     includedBlock,
     reverted: readBooleanField(nativeReceipt, ["reverted"]),
     eventCount: readNumberField(nativeReceipt, ["eventCount", "event_count"]),
