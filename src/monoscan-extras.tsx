@@ -48,6 +48,8 @@ import {
   useWalletDelegations,
   useWalletDelegationHistory,
   BRIDGE_ROUTE_DISCLOSURE_UPSTREAM_FIELD,
+  bridgeRouteDisclosureFailureDetails,
+  bridgeTrustDisclosureDisplaySlice,
   bridgeTrustDisclosuresFromAddressData,
   type MrcMetadataResponse,
   type BridgeTrustDisclosureRow,
@@ -260,6 +262,17 @@ function bridgeRouteIssueText(row: BridgeTrustDisclosureRow): string | null {
   return issues.length > 0 ? issues.join(" · ") : null;
 }
 
+function bridgeRouteRowKey(row: BridgeTrustDisclosureRow): string {
+  return [
+    row.source,
+    row.route.routeId,
+    row.route.bridge,
+    row.route.asset,
+    row.route.sourceChain,
+    row.route.destinationChain,
+  ].join("|");
+}
+
 const BridgeTrustDisclosuresCard = ({
   disclosures,
   unavailable = false,
@@ -285,11 +298,61 @@ const BridgeTrustDisclosuresCard = ({
     );
   }
 
+  const disclosureSlice = bridgeTrustDisclosureDisplaySlice(disclosures);
+  const preferred = disclosureSlice.preferred;
+  const multipleDisclosures = disclosures.length > 1;
+  const failureRows = multipleDisclosures
+    ? disclosureSlice.rows
+      .map((row) => ({ row, details: bridgeRouteDisclosureFailureDetails(row) }))
+      .filter((row) => row.details.length > 0)
+    : [];
+
   return (
     <Card
       title="Bridge trust disclosures"
-      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>upstream metadata</span>}
+      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>ranked {disclosureSlice.rows.length}/{disclosureSlice.totalCount}</span>}
     >
+      {preferred && (
+        <div style={{display:"grid",gap:10,marginBottom:12}}>
+          <div style={{display:"grid",gap:6,padding:"10px 12px",border:"1px solid rgba(255,255,255,0.08)",borderRadius:8,background:"rgba(255,255,255,0.025)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span className={`pill ${preferred.assessment.accepted ? bridgeRiskTone(preferred.assessment.riskTier) : "err"}`}>
+                {preferred.assessment.accepted ? "Preferred route" : "No accepted route"}
+              </span>
+              <span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+                {preferred.assessment.accepted ? `score ${preferred.assessment.score}` : "top-ranked disclosure is blocked"}
+              </span>
+            </div>
+            <div className="mono" style={{fontSize:12,color:"var(--fg-100)"}}>
+              {preferred.route.bridge || "Unnamed bridge"} · route {preferred.route.routeId || "missing"}
+            </div>
+            <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.6}}>
+              {preferred.route.sourceChain || "unknown"} → {preferred.route.destinationChain || "unknown"} · {preferred.route.asset || "asset missing"}
+            </div>
+            <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.6}}>
+              finality {preferred.route.finalityBlocks} blocks · cooldown {bridgeSecondsLabel(preferred.route.cooldownSeconds)} · breaker {preferred.route.circuitBreaker} · insurance {preferred.route.insuranceAtomic}
+            </div>
+          </div>
+
+          {failureRows.length > 0 && (
+            <div style={{display:"grid",gap:6,padding:"0 2px"}}>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>Disclosure failures</div>
+              {failureRows.map(({ row, details }) => (
+                <div key={`failure-${bridgeRouteRowKey(row)}`} className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.6}}>
+                  route {row.route.routeId || "missing"} · {details.join(" · ")}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {disclosureSlice.hiddenCount > 0 && (
+            <p className="mono" style={{fontSize:10,color:"var(--fg-500)",margin:0,lineHeight:1.6}}>
+              Showing top {disclosureSlice.rows.length} of {disclosureSlice.totalCount} ranked disclosures; {disclosureSlice.hiddenCount} lower-ranked disclosures omitted.
+            </p>
+          )}
+        </div>
+      )}
+
       <table className="ms-table ms-table--tight">
         <thead>
           <tr>
@@ -303,12 +366,19 @@ const BridgeTrustDisclosuresCard = ({
           </tr>
         </thead>
         <tbody>
-          {disclosures.map((row) => {
+          {disclosureSlice.rows.map((row) => {
             const issueText = bridgeRouteIssueText(row);
             return (
-              <tr key={`${row.source}-${row.route.routeId}`}>
+              <tr key={bridgeRouteRowKey(row)}>
                 <td className="mono" style={{fontSize:11}}>
-                  <div style={{color:"var(--fg-100)"}}>{row.route.bridge || "Unnamed bridge"}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",color:"var(--fg-100)"}}>
+                    <span>{row.route.bridge || "Unnamed bridge"}</span>
+                    {preferred && bridgeRouteRowKey(row) === bridgeRouteRowKey(preferred) && (
+                      <span className={`pill ${row.assessment.accepted ? "gold" : "err"}`} style={{fontSize:9,padding:"2px 6px"}}>
+                        {row.assessment.accepted ? "preferred" : "top ranked"}
+                      </span>
+                    )}
+                  </div>
                   <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>
                     {row.route.sourceChain || "unknown"} → {row.route.destinationChain || "unknown"} · {row.route.asset || "asset missing"}
                   </div>
