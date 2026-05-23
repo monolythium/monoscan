@@ -411,6 +411,7 @@ describe("live-SDK seam", () => {
         order_id: `0x${"89".repeat(32)}`,
         market_id: marketId,
         maker: "monoc1maker",
+        nonce: 7,
         side: "buy",
         price_lythoshi: "900",
         remaining_amount: "12",
@@ -454,10 +455,12 @@ describe("live-SDK seam", () => {
       kind: "spotOrder",
       marketId,
       account: "monoc1maker",
+      nonce: "7",
       side: "buy",
       price: "900",
       amount: "12",
     });
+    expect(rows.spotOrders[0]?.fields).not.toContainEqual(["nonce", "7"]);
     expect(rows.nftListings[0]).toMatchObject({
       kind: "nftListing",
       account: "monoc1seller",
@@ -487,10 +490,10 @@ describe("live-SDK seam", () => {
       .spyOn(RpcClient.prototype, "call")
       .mockResolvedValue(response);
 
-    const result = await fetchNativeMarketState();
+    const result = await fetchNativeMarketState({ account: "monoc1maker" });
 
-    expect(apiSpy).toHaveBeenCalledWith("/native-market-state", {});
-    expect(rpcSpy).toHaveBeenCalledWith("lyth_nativeMarketState", [{}]);
+    expect(apiSpy).toHaveBeenCalledWith("/native-market-state", { account: "monoc1maker" });
+    expect(rpcSpy).toHaveBeenCalledWith("lyth_nativeMarketState", [{ account: "monoc1maker" }]);
     expect(result).toBe(response);
   });
 

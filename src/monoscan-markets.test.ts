@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  addressToTypedBech32,
   buildNativeSpotLimitOrderForwarderInput,
   deriveClobMarketId,
 } from "@monolythium/core-sdk";
-import { buildMarketOrderWalletRequest } from "./monoscan-markets";
+import {
+  buildMarketOrderWalletRequest,
+  nextSpotOrderNonceForOwner,
+  ownerStateAccount,
+} from "./monoscan-markets";
 
 describe("buildMarketOrderWalletRequest", () => {
   const baseTokenId = `0x${"11".repeat(32)}`;
@@ -73,5 +78,31 @@ describe("buildMarketOrderWalletRequest", () => {
       price: "125",
       quantity: "50",
     })).toThrow("forwarder address is not configured");
+  });
+});
+
+describe("nextSpotOrderNonceForOwner", () => {
+  const ownerAddress = "0xabcdef0123456789abcdef0123456789abcdef01";
+  const ownerAccount = addressToTypedBech32("user", ownerAddress);
+  const otherAccount = addressToTypedBech32(
+    "user",
+    "0x9999999999999999999999999999999999999999",
+  );
+
+  it("derives the next owner-local nonce from indexed spot order rows", () => {
+    expect(ownerStateAccount(ownerAddress)).toBe(ownerAccount);
+    expect(nextSpotOrderNonceForOwner([
+      { account: ownerAccount, nonce: "7" },
+      { account: otherAccount, nonce: "100" },
+      { account: ownerAccount, nonce: "11" },
+      { account: ownerAccount, nonce: null },
+    ], ownerAddress)).toBe("12");
+  });
+
+  it("returns null when indexed rows do not carry an owner nonce", () => {
+    expect(nextSpotOrderNonceForOwner([
+      { account: ownerAccount, nonce: null },
+      { account: otherAccount, nonce: "3" },
+    ], ownerAddress)).toBeNull();
   });
 });
