@@ -59,6 +59,7 @@ import {
   type MrcHoldersResponse,
   type MrcAccountRecord,
   type MrcAccountResponse,
+  type MrcPolicyRecord,
   type MrcPolicySpendRecord,
   type BridgeTrustDisclosureRow,
   type MrvNativeTransactionEvidence,
@@ -203,6 +204,23 @@ function mrcAccountRecordSummary(record: MrcAccountRecord | null): string {
     `block ${Number(record.updatedAtBlock).toLocaleString()}`,
   ];
   return parts.join(" · ");
+}
+export function mrcPolicyBodySummary(policy: MrcPolicyRecord | null): string {
+  if (!policy) return "—";
+  const assetCount = policy.allowedAssets.length;
+  return [
+    policy.enabled ? "enabled" : "disabled",
+    `per-action ${policy.perActionLimit}`,
+    `window ${policy.windowLimit}`,
+    `${assetCount} allowed ${assetCount === 1 ? "asset" : "assets"}`,
+  ].join(" · ");
+}
+export function mrcPolicyAllowedAssetsSummary(policy: MrcPolicyRecord | null, limit = 3): string {
+  if (!policy) return "—";
+  if (policy.allowedAssets.length === 0) return "none";
+  const visible = policy.allowedAssets.slice(0, Math.max(1, limit)).map((asset) => _short(asset, 10));
+  const remaining = policy.allowedAssets.length - visible.length;
+  return remaining > 0 ? `${visible.join(", ")} +${remaining} more` : visible.join(", ");
 }
 function mrcAccountSummaryText(account: MrcAccountResponse | null): string {
   if (!account) return "—";
@@ -1097,6 +1115,7 @@ const WalletPage = ({ addr, go }: any) => {
   const liveAgentReputation = agentReputation.data ?? null;
   const liveMrcAccount = mrcAccount.data ?? null;
   const liveMrcSpendRows = liveMrcAccount?.policySpends ?? [];
+  const liveMrcPolicy = liveMrcAccount?.policyAccount?.policy ?? null;
   const profileActivityKind = profile.data?.activity?.kind ?? null;
   const liveActivityKind = profileActivityKind ? { kind: profileActivityKind, retention: profile.data?.activity?.retention ?? null } : (activityKind.data ?? null);
   const liveRetention = liveActivityKind?.retention && typeof liveActivityKind.retention === "object"
@@ -1168,6 +1187,8 @@ const WalletPage = ({ addr, go }: any) => {
               <div className="tx-kv">
                 <KV label="Smart account" value={mrcAccountRecordSummary(liveMrcAccount.smartAccount)} mono/>
                 <KV label="Policy account" value={mrcAccountRecordSummary(liveMrcAccount.policyAccount)} mono/>
+                <KV label="Policy body" value={mrcPolicyBodySummary(liveMrcPolicy)} mono/>
+                <KV label="Allowed assets" value={mrcPolicyAllowedAssetsSummary(liveMrcPolicy)} mono/>
                 <KV label="Spend rows" value={`${liveMrcSpendRows.length}/${liveMrcAccount.spendLimit}`} mono/>
               </div>
               {liveMrcSpendRows.length > 0 ? (
