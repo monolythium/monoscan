@@ -523,9 +523,9 @@ const Landing = ({ go }: any) => {
             {liveBlocks.data && liveBlocks.data.length > 0
               ? liveBlocks.data.slice(0, 8).map((b: any, i: number) => {
                   const num = Number(b.number ?? 0);
-                  const gas = Number(b.gas_used ?? b.gasUsed ?? 0);
+                  const executionUnits = Number(b.gas_used ?? b.gasUsed ?? 0);
                   const limit = Number(b.gas_limit ?? b.gasLimit ?? 1);
-                  const fillPct = limit > 0 ? (gas / limit) * 100 : 0;
+                  const fillPct = limit > 0 ? (executionUnits / limit) * 100 : 0;
                   const slot = (num % 28) + 1;
                   return (
                     <div
@@ -535,7 +535,7 @@ const Landing = ({ go }: any) => {
                     >
                       <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·{fmt(num)}</span>
                       <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>C-{String(slot).padStart(3,"0")}</span>
-                      <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{fmt(gas)} gas used</span>
+                      <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{fmt(executionUnits)} execution units</span>
                       <span className="mono" style={{color:"var(--fg-500)",fontSize:10.5}}>{fillPct.toFixed(1)}%</span>
                       <span className="pill ok" style={{padding:"2px 7px",fontSize:9.5}}>committed</span>
                     </div>

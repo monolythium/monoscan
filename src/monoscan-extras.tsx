@@ -50,11 +50,19 @@ const _fmt  = (n: any) => n.toLocaleString(undefined, { maximumFractionDigits: 2
 const _fmtI = (n: any) => Math.round(n).toLocaleString();
 const _abbr = (n: any) => n >= 1e9 ? `${(n/1e9).toFixed(2)}B` : n >= 1e6 ? `${(n/1e6).toFixed(2)}M` : n >= 1e3 ? `${(n/1e3).toFixed(1)}K` : _fmt(n);
 const _short = (a: any, n=10) => a && a.length > n*2+3 ? `${a.slice(0, n)}…${a.slice(-4)}` : a;
-const _fmtLyth = (wei: bigint | null | undefined) => {
-  if (wei === null || wei === undefined) return null;
-  const whole = wei / 1_000_000_000_000_000_000n;
-  const frac = (wei % 1_000_000_000_000_000_000n) / 1_000_000_000_000_000n;
-  return `${whole.toLocaleString()}.${frac.toString().padStart(3, "0")} LYTH`;
+const LYTHOSHI_PER_LYTH = 100_000_000n;
+const _fmtLythoshiAmount = (lythoshi: bigint) => {
+  const sign = lythoshi < 0n ? "-" : "";
+  const abs = lythoshi < 0n ? -lythoshi : lythoshi;
+  const whole = abs / LYTHOSHI_PER_LYTH;
+  const frac = abs % LYTHOSHI_PER_LYTH;
+  if (frac === 0n) return `${sign}${whole.toLocaleString()}`;
+  const fracText = frac.toString().padStart(8, "0").replace(/0+$/, "");
+  return `${sign}${whole.toLocaleString()}.${fracText}`;
+};
+const _fmtLyth = (lythoshi: bigint | null | undefined) => {
+  if (lythoshi === null || lythoshi === undefined) return null;
+  return `${_fmtLythoshiAmount(lythoshi)} LYTH`;
 };
 const _fmtLythRaw = (value: string | bigint | number | null | undefined) => {
   if (value === null || value === undefined || value === "") return null;
@@ -68,17 +76,14 @@ const _fmtRawToken = (value: string | bigint | number | null | undefined) => {
   if (value === null || value === undefined || value === "") return "—";
   try {
     const big = BigInt(value);
-    const whole = big / 1_000_000_000_000_000_000n;
-    const frac = (big % 1_000_000_000_000_000_000n) / 1_000_000_000_000_000n;
-    if (whole > 0n) return `${whole.toLocaleString()}.${frac.toString().padStart(3, "0")}`;
-    return big.toLocaleString();
+    return _fmtLythoshiAmount(big);
   } catch {
     return String(value);
   }
 };
 const _rawToLythNumber = (value: string | bigint | number | null | undefined) => {
   if (value === null || value === undefined || value === "") return 0;
-  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value / Number(LYTHOSHI_PER_LYTH) : 0;
   try {
     const text = String(value);
     if (text.includes(".")) {
@@ -86,14 +91,16 @@ const _rawToLythNumber = (value: string | bigint | number | null | undefined) =>
       return Number.isFinite(n) ? n : 0;
     }
     const big = BigInt(value);
-    const whole = Number(big / 1_000_000_000_000_000_000n);
-    const frac = Number((big % 1_000_000_000_000_000_000n) / 1_000_000_000_000_000n) / 1000;
+    const whole = Number(big / LYTHOSHI_PER_LYTH);
+    const frac = Number(big % LYTHOSHI_PER_LYTH) / Number(LYTHOSHI_PER_LYTH);
     return whole + frac;
   } catch {
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
   }
 };
+const _fmtExecutionUnitPrice = (price: bigint | null | undefined) =>
+  price === null || price === undefined ? null : `${price.toLocaleString()} lythoshi / execution unit`;
 const _ageFromTs = (timestamp: number | null | undefined) => {
   if (!timestamp) return "—";
   const ms = timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000;
@@ -206,12 +213,12 @@ const StatsPage = ({ go }: any) => {
   const formatMetricValue = (sample: any) => sample
     ? `${Number(sample.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}${sample.unit ? ` ${sample.unit}` : ""}`
     : "—";
-  const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
-    ? Number(feeStats.data.gasPrice) / 1e9
-    : null;
-  const gasPriceSub = feeStats.data?.gasPriceSource === "eth_feeHistory"
+  const executionUnitPrice = _fmtExecutionUnitPrice(feeStats.data?.gasPrice);
+  const feePriceSub = feeStats.data?.gasPriceSource === "eth_feeHistory"
     ? "derived from fee history"
-    : feeStats.data?.gasPriceSource ?? "live fee endpoint";
+    : feeStats.data?.gasPriceSource === "eth_gasPrice"
+      ? "live fee endpoint"
+      : "live fee endpoint";
 
   return (
     <div className="ms-page ms-stats">
@@ -266,7 +273,7 @@ const StatsPage = ({ go }: any) => {
           tone="neutral"
         />
         <StatCounter label="Smart contracts deployed" value={_fmt(t.contracts)} sub={`${t.tokensListed} listed tokens`} tone="neutral"/>
-        <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub={feeStats.data?.baseFeePerGas.length ? `${gasPriceSub} · ${feeStats.data.baseFeePerGas.length} samples` : gasPriceSub} tone="neutral"/>
+        <StatCounter label="Execution price" value={executionUnitPrice ?? "—"} sub={feeStats.data?.baseFeePerGas.length ? `${feePriceSub} · ${feeStats.data.baseFeePerGas.length} samples` : feePriceSub} tone="neutral"/>
         <StatCounter label="Protocol surfaces" value={activePrecompiles !== null ? `${activePrecompiles}` : "—"} sub={precompiles.data ? `${precompiles.data.length} precompiles reported` : "live precompile registry"} tone="neutral"/>
         <StatCounter
           label="Peer health"
@@ -605,7 +612,7 @@ const WalletPage = ({ addr, go }: any) => {
   const liveBalanceNumber = profileBalance
     ? _rawToLythNumber(profileBalance)
     : live.data?.balance
-      ? Number(live.data.balance / 1_000_000_000_000_000_000n)
+      ? _rawToLythNumber(live.data.balance)
       : 0;
   const zeroFlow = Array.from({ length: 30 }, (_, day) => ({ day, in: 0, out: 0, stake: 0, reward: 0 }));
   const w = fixtureWallet ?? {
@@ -978,7 +985,7 @@ const TransactionsPage = ({ go }: any) => {
         from: tx.from,
         to: tx.to,
         valueLabel: `${_fmt(tx.amount)} ${tx.denom}`,
-        gasLabel: tx.gasUsed ? _fmt(tx.gasUsed) : "—",
+        executionLabel: tx.gasUsed ? _fmt(tx.gasUsed) : "—",
         methodLabel: tx.kindLabel ?? tx.kind ?? "transaction",
         status: tx.status ?? "ok",
         source: "fixture",
@@ -995,7 +1002,7 @@ const TransactionsPage = ({ go }: any) => {
       from: tx.from,
       to: tx.to ?? "contract creation",
       valueLabel: `${_fmtRawToken(tx.value)} LYTH`,
-      gasLabel: _fmt(tx.gasLimit),
+      executionLabel: _fmt(tx.gasLimit),
       methodLabel: input && input !== "0x" ? `${input.slice(0, 10)} call` : "transfer",
       status: "ok",
       source: "live",
@@ -1097,7 +1104,7 @@ const TransactionsPage = ({ go }: any) => {
                 <th>From</th>
                 <th>To</th>
                 <th style={{textAlign:"right"}}>Value</th>
-                <th style={{textAlign:"right"}}>Gas limit</th>
+                <th style={{textAlign:"right"}}>Execution limit</th>
                 <th style={{textAlign:"right"}}>Age</th>
               </tr>
             </thead>
@@ -1129,7 +1136,7 @@ const TransactionsPage = ({ go }: any) => {
                     </a>
                   </td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)"}}>{tx.valueLabel}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>{tx.gasLabel}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>{tx.executionLabel}</td>
                   <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>{tx.when}</td>
                 </tr>
               ))}
@@ -1145,8 +1152,8 @@ const TransactionsPage = ({ go }: any) => {
 /* =====================================================
    TRANSACTION DETAIL PAGE
    Tries `eth_getTransactionByHash` + receipt for live sender, recipient,
-   status, block, value, and gas first; falls back to the mock fixture for
-   the rich attestation panel until the indexer trace lands.
+   status, block, value, and execution fields first; falls back to the mock
+   fixture for the rich attestation panel until the indexer trace lands.
 ===================================================== */
 const TxPage = ({ hash, go }: any) => {
   const live = useTxByHashLive(hash);
@@ -1177,9 +1184,9 @@ const TxPage = ({ hash, go }: any) => {
     : [];
 
   // Merge live receipt over the fixture so the UI always renders a complete
-  // shape. `lyth_decodeTx` now provides decoded calldata, logs, status, gas,
-  // and PQ-finality metadata; the signature timing chart remains fixture-only
-  // until the chain exposes per-signer timing.
+  // shape. `lyth_decodeTx` now provides decoded calldata, logs, status,
+  // execution-unit usage, and PQ-finality metadata; the signature timing chart
+  // remains fixture-only until the chain exposes per-signer timing.
   const tx = liveTx || liveReceipt
     ? {
         ...(fixture ?? {
@@ -1213,7 +1220,7 @@ const TxPage = ({ hash, go }: any) => {
         hash: liveTx?.hash ?? liveReceipt?.tx_hash ?? fixture?.hash ?? hash,
         from: liveTx?.from ?? fixture?.from ?? "—",
         to: liveTx?.to ?? fixture?.to ?? "—",
-        amount: liveTx?.value ? Number(BigInt(liveTx.value)) / 1e18 : (fixture?.amount ?? 0),
+        amount: liveTx?.value ? _rawToLythNumber(liveTx.value) : (fixture?.amount ?? 0),
         gasLimit: liveTx?.gas ? Number(BigInt(liveTx.gas)) : (fixture?.gasLimit ?? 0),
         nonce: liveTx?.nonce ? Number(BigInt(liveTx.nonce)) : (fixture?.nonce ?? 0),
         kindLabel: decodedMethod ?? fixture?.kindLabel ?? "Transfer",
@@ -1352,8 +1359,8 @@ const TxPage = ({ hash, go }: any) => {
         <Card title="Fees & execution">
           <div className="tx-kv">
             <KV label="Fee" value={`${tx.fee.toFixed(4)} ${tx.feeDenom}`} mono/>
-            <KV label="Gas used" value={`${_fmt(tx.gasUsed)} / ${_fmt(tx.gasLimit)}`}/>
-            <KV label="Gas efficiency" value={tx.gasLimit > 0 ? `${((tx.gasUsed/tx.gasLimit)*100).toFixed(1)}%` : "—"}/>
+            <KV label="Execution units" value={`${_fmt(tx.gasUsed)} / ${_fmt(tx.gasLimit)}`}/>
+            <KV label="Execution utilization" value={tx.gasLimit > 0 ? `${((tx.gasUsed/tx.gasLimit)*100).toFixed(1)}%` : "—"}/>
             <KV label="Effective rate" value={tx.amount > 0 ? `${((tx.fee/tx.amount)*10000).toFixed(2)} bp` : "—"} />
             {liveDecoded?.errorCode && <KV label="Error code" value={liveDecoded.errorCode} mono/>}
           </div>
@@ -1503,7 +1510,7 @@ const RoundPage = ({ round, go }: any) => {
                   <span className="mono tx-kv__v">{liveHeader.state_root ?? liveHeader.stateRoot ?? "—"}</span>
                 </div>
                 <div className="tx-kv__row">
-                  <span className="mono tx-kv__k">Gas used / limit</span>
+                  <span className="mono tx-kv__k">Execution units used / limit</span>
                   <span className="mono tx-kv__v">
                     {Number(liveHeader.gas_used ?? liveHeader.gasUsed ?? 0).toLocaleString()}
                     {" / "}
@@ -1789,12 +1796,12 @@ const ProtocolPage = ({ go }: any) => {
   const surfaceRows = Object.entries(operatorCapabilities.data?.surfaces ?? {});
   const availableSurfaceCount = surfaceRows.filter(([, cap]: any) => cap.status === "available").length;
   const upgrade = upgradeStatus.data;
-  const gasPriceGwei = feeStats.data?.gasPrice !== null && feeStats.data?.gasPrice !== undefined
-    ? Number(feeStats.data.gasPrice) / 1e9
-    : null;
-  const gasPriceSub = feeStats.data?.gasPriceSource === "eth_feeHistory"
-    ? "derived from eth_feeHistory"
-    : feeStats.data?.gasPriceSource ?? "eth_gasPrice";
+  const executionUnitPrice = _fmtExecutionUnitPrice(feeStats.data?.gasPrice);
+  const feePriceSub = feeStats.data?.gasPriceSource === "eth_feeHistory"
+    ? "derived from fee history"
+    : feeStats.data?.gasPriceSource === "eth_gasPrice"
+      ? "live fee endpoint"
+      : "live fee endpoint";
   const indexerHeight = network.data?.indexerHeight ?? null;
   const key = encryptionKey.data;
   return (
@@ -1802,11 +1809,11 @@ const ProtocolPage = ({ go }: any) => {
       <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/stats")} style={{marginBottom:16}}>← Statistics</button>
       <h1 className="ms-h1">Protocol status</h1>
       <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
-        Live fee, capability gates, PQ checkpoint rows, and operator exit ledger from the public testnet RPC.
+        Live execution fees, capability gates, PQ checkpoint rows, and operator exit ledger from the public testnet RPC.
       </p>
       <section className="stats-counters">
-        <StatCounter label="Gas price" value={gasPriceGwei !== null ? `${gasPriceGwei.toFixed(2)} gwei` : "—"} sub={gasPriceSub} tone="neutral"/>
-        <StatCounter label="Fee samples" value={`${feeStats.data?.baseFeePerGas.length ?? 0}`} sub={feeStats.data?.oldestBlock ? `oldest ${feeStats.data.oldestBlock}` : "eth_feeHistory"} tone="neutral"/>
+        <StatCounter label="Execution price" value={executionUnitPrice ?? "—"} sub={feePriceSub} tone="neutral"/>
+        <StatCounter label="Fee samples" value={`${feeStats.data?.baseFeePerGas.length ?? 0}`} sub={feeStats.data?.oldestBlock ? `oldest ${feeStats.data.oldestBlock}` : "fee history"} tone="neutral"/>
         <StatCounter label="Active precompiles" value={`${rows.filter((p:any)=>p.active ?? p.enabled).length}`} sub={`${rows.length} reported`} tone="neutral"/>
         <StatCounter
           label="Capabilities"
