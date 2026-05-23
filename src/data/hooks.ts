@@ -37,6 +37,7 @@ import {
   type ApiTransactionView,
   type AddressFlowResponse,
   type AddressProfileResponse,
+  type AgentReputationResponse,
   type BlsCertificateResponse,
   type BlockHeader,
   type CapabilitiesResponse,
@@ -118,6 +119,10 @@ export interface PendingRewardsLive {
 
 interface PendingRewardsEnvelope {
   data: PendingRewardsLive;
+}
+
+interface AgentReputationEnvelope {
+  data: AgentReputationResponse;
 }
 
 type PendingRewardsApiClient = ReturnType<typeof getApiClient> & {
@@ -1426,6 +1431,28 @@ export function useAddressFlow(addr: string | undefined, limit = 250) {
           .addressFlow(addr as string, rowLimit)
           .then((response) => response.data)
           .catch(() => getRpcClient().lythAddressFlow(addr as string, rowLimit));
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useAgentReputation(provider: string | undefined, categoryId = 0) {
+  const scopedCategoryId = Number.isFinite(categoryId) && categoryId >= 0 ? Math.trunc(categoryId) : 0;
+  return useQuery<AgentReputationResponse | null>({
+    queryKey: QK.agentReputation(provider ?? "", scopedCategoryId),
+    enabled: Boolean(provider) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getApiClient()
+          .get<AgentReputationEnvelope>(
+            `/agents/${encodeURIComponent(provider as string)}/reputation`,
+            { categoryId: scopedCategoryId },
+          )
+          .then((response) => response.data)
+          .catch(() => getRpcClient().lythAgentReputation(provider as string, scopedCategoryId));
       } catch {
         return null;
       }

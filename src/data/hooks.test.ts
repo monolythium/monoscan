@@ -17,6 +17,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentReputationResponse } from "@monolythium/core-sdk";
 import {
   HEAD_POLL_MS,
   apiBlockToRpcHeader,
@@ -89,6 +90,7 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythPendingRewards).toBe("function");
     expect(typeof proto.lythGetAddressActivity).toBe("function");
     expect(typeof proto.lythCapabilities).toBe("function");
+    expect(typeof proto.lythAgentReputation).toBe("function");
     expect(typeof proto.lythGetLatestCheckpoint).toBe("function");
     expect(typeof proto.lythGetClusterResignations).toBe("function");
     expect(typeof proto.lythGetBlsRoundCertificate).toBe("function");
@@ -119,6 +121,32 @@ describe("live-SDK seam", () => {
     // re-appear it means a downstream regression dragged the v0 names
     // back. Treat as a hard fail.
     expect((proto as Record<string, unknown>).protocoreCurrentRound).toBeUndefined();
+  });
+
+  it("keeps the typed agent reputation response available to UI hooks", () => {
+    const response: AgentReputationResponse = {
+      schemaVersion: 1,
+      provider: "mono1zg69v7y6hn00qyfzxdz92enh3zv64w7vajvdc4",
+      categoryId: 0,
+      categoryScope: "global",
+      record: {
+        provider: "mono1zg69v7y6hn00qyfzxdz92enh3zv64w7vajvdc4",
+        categoryId: 0,
+        blockHeight: 123,
+        speedSumX10: 460,
+        qualitySumX10: 450,
+        communicationSumX10: 440,
+        accuracySumX10: 430,
+        sampleCount: 5,
+        avgSpeedX10: 92,
+        avgQualityX10: 90,
+        avgCommunicationX10: 88,
+        avgAccuracyX10: 86,
+      },
+    };
+
+    expect(response.record?.sampleCount).toBe(5);
+    expect(response.record?.avgAccuracyX10).toBe(86);
   });
 });
 
