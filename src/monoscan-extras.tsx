@@ -2148,6 +2148,8 @@ const GetMonolythiumPage = ({ go }: any) => {
   const [contactLastName, setContactLastName] = useStateX("");
   const [email, setEmail] = useStateX("");
   const [phone, setPhone] = useStateX("");
+  const [telegramHandle, setTelegramHandle] = useStateX("");
+  const [twitterHandle, setTwitterHandle] = useStateX("");
   const [addressLine1, setAddressLine1] = useStateX("");
   const [addressLine2, setAddressLine2] = useStateX("");
   const [city, setCity] = useStateX("");
@@ -2161,9 +2163,14 @@ const GetMonolythiumPage = ({ go }: any) => {
   const validAmount = amountUsd >= GET_LYTH_MIN_USD && amountUsd <= GET_LYTH_MAX_USD;
   const trimmedEmail = email.trim();
   const trimmedPhone = phone.trim();
+  const trimmedTelegram = telegramHandle.trim().replace(/^@+/, "");
+  const trimmedTwitter = twitterHandle.trim().replace(/^@+/, "");
   const validEmail = trimmedEmail === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail);
   const validPhone = trimmedPhone === "" || /^[+\d][\d\s().-]{5,}$/.test(trimmedPhone);
-  const hasContact = (trimmedEmail !== "" && validEmail) || (trimmedPhone !== "" && validPhone);
+  const validTelegram = trimmedTelegram === "" || /^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(trimmedTelegram);
+  const validTwitter = trimmedTwitter === "" || /^[A-Za-z0-9_]{1,15}$/.test(trimmedTwitter);
+  // Sales-contact rule: at least one of email or telegram must be present and valid.
+  const hasContact = (trimmedEmail !== "" && validEmail) || (trimmedTelegram !== "" && validTelegram);
   const validIdentity = buyerType === "individual"
     ? (firstName.trim().length > 0 && lastName.trim().length > 0)
     : (companyName.trim().length > 0 && jurisdiction.trim().length > 0 && contactFirstName.trim().length > 0 && contactLastName.trim().length > 0);
@@ -2246,7 +2253,7 @@ const GetMonolythiumPage = ({ go }: any) => {
 
   const startCheckout = async () => {
     if (!canPrepare) {
-      window.__msToast?.("Complete the form: amount, identity, contact (email or phone), address, and the age confirmation.");
+      window.__msToast?.("Complete the form: amount, identity, contact (email or Telegram), address, and the age confirmation.");
       return;
     }
     setBusy(true);
@@ -2265,6 +2272,8 @@ const GetMonolythiumPage = ({ go }: any) => {
           contactLastName: buyerType === "company" ? contactLastName.trim() : undefined,
           email: trimmedEmail || undefined,
           phone: trimmedPhone || undefined,
+          telegramHandle: trimmedTelegram || undefined,
+          twitterHandle: trimmedTwitter || undefined,
           addressLine1: addressLine1.trim(),
           addressLine2: addressLine2.trim() || undefined,
           city: city.trim(),
@@ -2444,17 +2453,33 @@ const GetMonolythiumPage = ({ go }: any) => {
 
             <div className="get-row" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <label className="get-field">
-                <span>Email{!trimmedPhone ? " *" : ""}</span>
+                <span>Email{!trimmedTelegram ? " *" : ""}</span>
                 <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" type="email" autoComplete="email"/>
                 <small className={email && !validEmail ? "is-warn" : ""}>
-                  {!trimmedEmail && !trimmedPhone ? "Email or phone — provide at least one." : "Used for reservation receipts."}
+                  {!trimmedEmail && !trimmedTelegram ? "Email or Telegram — provide at least one for sale-related contact." : "Used for reservation receipts."}
                 </small>
               </label>
               <label className="get-field">
-                <span>Phone{!trimmedEmail ? " *" : ""}</span>
+                <span>Telegram{!trimmedEmail ? " *" : ""}</span>
+                <input value={telegramHandle} onChange={e=>setTelegramHandle(e.target.value)} placeholder="@yourhandle"/>
+                <small className={telegramHandle && !validTelegram ? "is-warn" : ""}>
+                  Primary sale-contact channel. 5–32 chars, letters/digits/underscore.
+                </small>
+              </label>
+            </div>
+            <div className="get-row" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <label className="get-field">
+                <span>Phone <small className="cap" style={{opacity:0.6,marginLeft:6}}>optional</small></span>
                 <input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+1 555 555 5555" type="tel" autoComplete="tel"/>
                 <small className={phone && !validPhone ? "is-warn" : ""}>
                   Include country code.
+                </small>
+              </label>
+              <label className="get-field">
+                <span>Twitter / X <small className="cap" style={{opacity:0.6,marginLeft:6}}>optional</small></span>
+                <input value={twitterHandle} onChange={e=>setTwitterHandle(e.target.value)} placeholder="@yourhandle"/>
+                <small className={twitterHandle && !validTwitter ? "is-warn" : ""}>
+                  Handle only — without the URL.
                 </small>
               </label>
             </div>
@@ -2565,7 +2590,7 @@ const GetMonolythiumPage = ({ go }: any) => {
             </label>
 
             <p style={{fontSize:11,lineHeight:1.55,color:"var(--fg-500, #888)",margin:"4px 2px 0"}}>
-              Your information is collected by Mono Labs R&amp;D LLC (San Francisco, CA) to process your allocation, contact you about your reservation, and meet identity-verification obligations. By submitting, you consent to this use of your information.
+              Your information is collected by Mono Labs R&amp;D LLC (San Francisco, CA) to process your allocation, contact you about your reservation, and meet identity-verification obligations. By submitting, you consent to this use of your information. See the <a href="https://docs.monolythium.com/resources/privacy-policy" target="_blank" rel="noopener noreferrer" style={{color:"var(--gold, #F2B441)",textDecoration:"underline"}}>Privacy Policy</a> for details.
             </p>
 
             <div className="get-actions">
