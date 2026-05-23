@@ -46,7 +46,9 @@ import {
   useVerticesAtRound,
   useWalletDelegations,
   useWalletDelegationHistory,
+  bridgeTrustDisclosuresFromAddressData,
   type MrcMetadataResponse,
+  type BridgeTrustDisclosureRow,
   nativeReceiptEventRows,
 } from "./data/hooks";
 import { getLythTokenId } from "./sdk/client";
@@ -214,6 +216,103 @@ const AgentReputationCard = ({ reputation }: { reputation: AgentReputationRespon
           No reputation records reported for this provider category.
         </p>
       )}
+    </Card>
+  );
+};
+
+function bridgeRiskTone(tier: string): string {
+  switch (tier) {
+    case "low":
+      return "ok";
+    case "medium":
+    case "high":
+      return "warn";
+    default:
+      return "err";
+  }
+}
+
+function bridgeSecondsLabel(seconds: number): string {
+  if (!Number.isFinite(seconds)) return "0s";
+  if (seconds > 0 && seconds % 86_400 === 0) return `${seconds / 86_400}d`;
+  if (seconds > 0 && seconds % 3_600 === 0) return `${seconds / 3_600}h`;
+  if (seconds > 0 && seconds % 60 === 0) return `${seconds / 60}m`;
+  return `${seconds}s`;
+}
+
+function bridgeRouteIssueText(row: BridgeTrustDisclosureRow): string | null {
+  const issues = row.assessment.blockedReasons.length > 0
+    ? row.assessment.blockedReasons
+    : row.assessment.warnings;
+  return issues.length > 0 ? issues.join(" · ") : null;
+}
+
+const BridgeTrustDisclosuresCard = ({ disclosures }: { disclosures: readonly BridgeTrustDisclosureRow[] }) => {
+  if (disclosures.length === 0) return null;
+
+  return (
+    <Card
+      title="Bridge trust disclosures"
+      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>upstream metadata</span>}
+    >
+      <table className="ms-table ms-table--tight">
+        <thead>
+          <tr>
+            <th>Route</th>
+            <th>Verifier</th>
+            <th style={{textAlign:"right"}}>Drain cap</th>
+            <th>Finality</th>
+            <th>Controls</th>
+            <th style={{textAlign:"right"}}>Insurance</th>
+            <th>Risk</th>
+          </tr>
+        </thead>
+        <tbody>
+          {disclosures.map((row) => {
+            const issueText = bridgeRouteIssueText(row);
+            return (
+              <tr key={`${row.source}-${row.route.routeId}`}>
+                <td className="mono" style={{fontSize:11}}>
+                  <div style={{color:"var(--fg-100)"}}>{row.route.bridge || "Unnamed bridge"}</div>
+                  <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>
+                    {row.route.sourceChain || "unknown"} → {row.route.destinationChain || "unknown"} · {row.route.asset || "asset missing"}
+                  </div>
+                  <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>route {row.route.routeId || "missing"} · {row.source}</div>
+                </td>
+                <td className="mono" style={{fontSize:11}}>
+                  {row.route.verifier.model || "missing"}
+                  <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>
+                    threshold {row.route.verifier.threshold}/{row.route.verifier.participantCount}
+                  </div>
+                </td>
+                <td className="mono num" style={{textAlign:"right"}}>{row.route.drainCapAtomic}</td>
+                <td className="mono" style={{fontSize:11}}>
+                  {row.route.finalityBlocks} blocks
+                  <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>cooldown {bridgeSecondsLabel(row.route.cooldownSeconds)}</div>
+                </td>
+                <td className="mono" style={{fontSize:11}}>
+                  breaker {row.route.circuitBreaker}
+                  <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>admin {row.route.adminControl}</div>
+                </td>
+                <td className="mono num" style={{textAlign:"right"}}>{row.route.insuranceAtomic}</td>
+                <td>
+                  <span className={`pill ${bridgeRiskTone(row.assessment.riskTier)}`}>
+                    {row.assessment.riskTier}
+                  </span>
+                  <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:4}}>
+                    {row.assessment.accepted ? `score ${row.assessment.score}` : "not accepted"}
+                  </div>
+                  {issueText && (
+                    <div style={{fontSize:10,color:"var(--fg-500)",marginTop:4,maxWidth:260}}>
+                      {issueText}
+                    </div>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </Card>
   );
 };
@@ -769,6 +868,10 @@ const WalletPage = ({ addr, go }: any) => {
     ? profile.data.tokenBalances
     : (tokenBalances.data ?? [])) as IndexedTokenBalanceRow[];
   const tokenBalanceMetadata = useMrcMetadataForTokenBalances(liveTokenBalances);
+  const bridgeTrustDisclosures = useMemoX(
+    () => bridgeTrustDisclosuresFromAddressData(profile.data, liveTokenBalances),
+    [profile.data, liveTokenBalances],
+  );
   const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
   const liveAgentReputation = agentReputation.data ?? null;
   const profileActivityKind = profile.data?.activity?.kind ?? null;
@@ -887,6 +990,12 @@ const WalletPage = ({ addr, go }: any) => {
             </Card>
           )}
           {liveAgentReputation && <AgentReputationCard reputation={liveAgentReputation}/>}
+        </section>
+      )}
+
+      {bridgeTrustDisclosures.length > 0 && (
+        <section>
+          <BridgeTrustDisclosuresCard disclosures={bridgeTrustDisclosures}/>
         </section>
       )}
 
@@ -2898,4 +3007,4 @@ const Step = ({ label, value, active }: any) => (
 );
 
 /* Named exports — replaces the legacy window-attach pattern. */
-export { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, GetMonolythiumPage };
+export { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, GetMonolythiumPage, BridgeTrustDisclosuresCard };

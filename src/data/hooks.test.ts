@@ -24,10 +24,13 @@ import {
   apiBlockTransactionsToRows,
   apiReceiptToRpcReceipt,
   apiTxToRpcTx,
+  assessBridgeTrustDisclosures,
+  bridgeTrustDisclosuresFromAddressData,
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
   fetchMrcMetadataForTokenBalances,
   mrcMetadataBalanceQueryKeys,
+  normalizeBridgeRouteDisclosure,
   nativeReceiptEventRows,
   queryClient,
   txFeedToRows,
@@ -262,6 +265,77 @@ describe("MRC token-balance metadata enrichment", () => {
 
     expect(calls).toEqual([["lyth_mrcMetadata", [assetId]]]);
     expect(metadata["balance-a"].metadata?.symbol).toBe("NAT");
+  });
+});
+
+describe("bridge trust disclosure normalization", () => {
+  const validDisclosure = {
+    routeId: "eth-usdc-mainnet",
+    bridge: "ThirdParty Light Client",
+    asset: "USDC",
+    sourceChain: "ethereum",
+    destinationChain: "monolythium",
+    verifier: {
+      model: "zk-light-client",
+      participantCount: 12,
+      threshold: 8,
+    },
+    drainCapAtomic: "250000000000",
+    finalityBlocks: 64,
+    cooldownSeconds: 7200,
+    adminControl: "consensusOnly",
+    circuitBreaker: "armed",
+    insuranceAtomic: "500000000000",
+  };
+
+  it("normalizes and assesses a valid upstream route disclosure", () => {
+    const rows = bridgeTrustDisclosuresFromAddressData({
+      address: "mono1bridgeuser",
+      bridgeRouteDisclosures: [validDisclosure],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].route.bridge).toBe("ThirdParty Light Client");
+    expect(rows[0].route.verifier.threshold).toBe(8);
+    expect(rows[0].route.drainCapAtomic).toBe("250000000000");
+    expect(rows[0].route.finalityBlocks).toBe(64);
+    expect(rows[0].route.cooldownSeconds).toBe(7200);
+    expect(rows[0].route.circuitBreaker).toBe("armed");
+    expect(rows[0].route.insuranceAtomic).toBe("500000000000");
+    expect(rows[0].assessment.accepted).toBe(true);
+    expect(rows[0].assessment.riskTier).toBe("low");
+  });
+
+  it("keeps invalid disclosure data blocked instead of treating it as accepted", () => {
+    const rows = assessBridgeTrustDisclosures([{
+      source: "tokenBalance:bad",
+      value: {
+        ...validDisclosure,
+        routeId: "bad-route",
+        verifier: { model: "single-signer", participantCount: 1, threshold: 1 },
+        drainCapAtomic: "0",
+        cooldownSeconds: 0,
+        circuitBreaker: "disabled",
+        insuranceAtomic: "0",
+      },
+    }]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].assessment.accepted).toBe(false);
+    expect(rows[0].assessment.riskTier).toBe("blocked");
+    expect(rows[0].assessment.blockedReasons).toContain("verifier set must not be 1-of-1");
+    expect(rows[0].assessment.blockedReasons).toContain("per-asset drain cap missing or zero");
+    expect(rows[0].assessment.blockedReasons).toContain("route cooldown missing");
+    expect(rows[0].assessment.blockedReasons).toContain("route circuit breaker missing");
+    expect(rows[0].assessment.blockedReasons).toContain("slashable insurance pool missing or zero");
+  });
+
+  it("does not synthesize a route when upstream disclosure metadata is absent", () => {
+    expect(normalizeBridgeRouteDisclosure({ bridge: true })).toBeNull();
+    expect(bridgeTrustDisclosuresFromAddressData({
+      address: "mono1plain",
+      tokenBalances: [{ tokenId: "plain", balance: "1", updatedAtBlock: 1 }],
+    })).toEqual([]);
   });
 });
 
