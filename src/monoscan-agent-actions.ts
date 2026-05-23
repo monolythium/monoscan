@@ -42,11 +42,13 @@ import {
   type EncodeNativeAgentRevokeConsentArgs,
   type EncodeNativeAgentSetAvailabilityArgs,
   type EncodeNativeAgentSetSpendingPolicyArgs,
+  type NativeAgentStateResponse,
 } from "@monolythium/core-sdk";
 import { getNativeAgentForwarderAddress } from "./sdk/client";
 
 const NATIVE_AGENT_FORWARDER_MAX_CYCLES = "22000";
 const NATIVE_AGENT_MRV_EXECUTION_UNIT_LIMIT_HEX = "0x200000";
+const U64_MAX = (1n << 64n) - 1n;
 
 export interface NativeAgentWalletRequest {
   method: "monolythium_submitMrvNativeCall";
@@ -493,6 +495,173 @@ export function nativeAgentActionInitialValues(
       field.defaultValue ?? "",
     ]),
   );
+}
+
+type NativeAgentNonceStateRowsKey =
+  | "issuers"
+  | "attestations"
+  | "consents"
+  | "services"
+  | "arbiters"
+  | "spendingPolicies"
+  | "escrows";
+
+interface NativeAgentIndexedNonceSource {
+  rowsKey: NativeAgentNonceStateRowsKey;
+  accountValueKey: string;
+  accountRowKeys: string[];
+  idValueKey?: string;
+  idRowKeys?: string[];
+}
+
+const NATIVE_AGENT_INDEXED_NONCE_SOURCES: Partial<Record<NativeAgentActionKind, NativeAgentIndexedNonceSource>> = {
+  registerIssuer: {
+    rowsKey: "issuers",
+    accountValueKey: "issuer",
+    accountRowKeys: ["issuer", "account"],
+  },
+  issueAttestation: {
+    rowsKey: "attestations",
+    accountValueKey: "issuer",
+    accountRowKeys: ["issuer", "account"],
+    idValueKey: "issuerId",
+    idRowKeys: ["issuerId", "issuer_id"],
+  },
+  grantConsent: {
+    rowsKey: "consents",
+    accountValueKey: "subject",
+    accountRowKeys: ["subject", "account"],
+  },
+  listService: {
+    rowsKey: "services",
+    accountValueKey: "provider",
+    accountRowKeys: ["provider", "account"],
+  },
+  registerArbiter: {
+    rowsKey: "arbiters",
+    accountValueKey: "arbiter",
+    accountRowKeys: ["arbiter", "account"],
+  },
+  setSpendingPolicy: {
+    rowsKey: "spendingPolicies",
+    accountValueKey: "owner",
+    accountRowKeys: ["owner", "account"],
+  },
+  createEscrow: {
+    rowsKey: "escrows",
+    accountValueKey: "buyer",
+    accountRowKeys: ["buyer", "account"],
+  },
+};
+
+function nativeAgentIndexedNonceSource(
+  kind: NativeAgentActionKind,
+): NativeAgentIndexedNonceSource | null {
+  return NATIVE_AGENT_INDEXED_NONCE_SOURCES[kind] ?? null;
+}
+
+function nativeAgentNormalizedString(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "bigint") return value.toString();
+  return null;
+}
+
+function nativeAgentNormalizedAccount(value: unknown): string | null {
+  return nativeAgentNormalizedString(value)?.toLowerCase() ?? null;
+}
+
+function nativeAgentStateRecords(
+  state: NativeAgentStateResponse,
+  rowsKey: NativeAgentNonceStateRowsKey,
+): Record<string, unknown>[] {
+  const rows = (state as unknown as Record<string, unknown>)[rowsKey];
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((row): row is Record<string, unknown> =>
+    typeof row === "object" && row !== null && !Array.isArray(row),
+  );
+}
+
+function nativeAgentRowString(row: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = nativeAgentNormalizedString(row[key]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function nativeAgentRowAccount(row: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = nativeAgentNormalizedAccount(row[key]);
+    if (value !== null) return value;
+  }
+  return null;
+}
+
+function nativeAgentIndexedNonce(value: unknown): bigint | null {
+  if (typeof value === "bigint") {
+    return value >= 0n && value <= U64_MAX ? value : null;
+  }
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    return BigInt(value);
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (/^0x[0-9a-fA-F]+$/.test(trimmed)) {
+    const parsed = BigInt(trimmed);
+    return parsed <= U64_MAX ? parsed : null;
+  }
+  if (/^[0-9]+$/.test(trimmed)) {
+    const parsed = BigInt(trimmed);
+    return parsed <= U64_MAX ? parsed : null;
+  }
+  return null;
+}
+
+export function nativeAgentActionNonceAccount(
+  kind: NativeAgentActionKind,
+  values: Record<string, string>,
+): string | null {
+  const source = nativeAgentIndexedNonceSource(kind);
+  if (!source) return null;
+  return nativeAgentNormalizedAccount(values[source.accountValueKey]);
+}
+
+export function nativeAgentActionIndexedNonce(
+  kind: NativeAgentActionKind,
+  values: Record<string, string>,
+  state: NativeAgentStateResponse | null | undefined,
+): string | null {
+  const source = nativeAgentIndexedNonceSource(kind);
+  const account = nativeAgentActionNonceAccount(kind, values);
+  if (!source || !account || !state) return null;
+
+  const idValue = source.idValueKey
+    ? nativeAgentNormalizedString(values[source.idValueKey])
+    : null;
+  const rows = nativeAgentStateRecords(state, source.rowsKey).filter((row) => {
+    if (nativeAgentRowAccount(row, source.accountRowKeys) !== account) return false;
+    if (idValue && source.idRowKeys) {
+      return nativeAgentRowString(row, source.idRowKeys) === idValue;
+    }
+    return true;
+  });
+
+  if (rows.length === 0) return "0";
+
+  let maxNonce: bigint | null = null;
+  for (const row of rows) {
+    const nonce = nativeAgentIndexedNonce(row["nonce"]);
+    if (nonce === null) continue;
+    if (maxNonce === null || nonce > maxNonce) maxNonce = nonce;
+  }
+
+  if (maxNonce === null || maxNonce >= U64_MAX) return null;
+  return (maxNonce + 1n).toString();
 }
 
 export function buildNativeAgentCallWalletRequest(

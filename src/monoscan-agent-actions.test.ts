@@ -53,7 +53,9 @@ import {
   buildNativeAgentSetSpendingPolicyWalletRequest,
   buildNativeAgentStartEscrowWalletRequest,
   buildNativeAgentSubmitEscrowWalletRequest,
+  nativeAgentActionIndexedNonce,
   nativeAgentActionInitialValues,
+  nativeAgentActionNonceAccount,
   NATIVE_AGENT_ACTIONS,
   type NativeAgentWalletRequest,
 } from "./monoscan-agent-actions";
@@ -77,6 +79,90 @@ function capabilitiesWithAgentForwarder(
     },
   };
 }
+
+function nativeAgentState(overrides: Record<string, unknown[]> = {}) {
+  return {
+    schemaVersion: 1,
+    limit: 100,
+    filters: { includePolicySpends: false },
+    issuers: [],
+    attestations: [],
+    consents: [],
+    services: [],
+    availability: [],
+    arbiters: [],
+    reputationReviews: [],
+    spendingPolicies: [],
+    policySpends: [],
+    escrows: [],
+    source: { indexerProvider: "test", projection: "native-agent-current-state" },
+    ...overrides,
+  } as any;
+}
+
+describe("native agent indexed nonce helpers", () => {
+  const owner = "0x1111111111111111111111111111111111111111";
+  const issuerId = `0x${"aa".repeat(32)}`;
+
+  it("resolves nonce owner accounts for nonce-scoped actions only", () => {
+    expect(nativeAgentActionNonceAccount("registerIssuer", { issuer: owner })).toBe(owner);
+    expect(nativeAgentActionNonceAccount("createEscrow", { buyer: owner.toUpperCase() })).toBe(owner);
+    expect(nativeAgentActionNonceAccount("revokeConsent", { subject: owner })).toBeNull();
+  });
+
+  it("derives the next nonce from matching indexed rows", () => {
+    const state = nativeAgentState({
+      issuers: [
+        { issuer: owner, nonce: "4" },
+        { issuer: owner.toUpperCase(), nonce: "0x07" },
+        { issuer: "0x2222222222222222222222222222222222222222", nonce: "50" },
+      ],
+    });
+
+    expect(nativeAgentActionIndexedNonce(
+      "registerIssuer",
+      { issuer: owner },
+      state,
+    )).toBe("8");
+  });
+
+  it("keeps issuer-attestation nonce derivation scoped to the issuer id", () => {
+    const state = nativeAgentState({
+      attestations: [
+        { issuer: owner, issuerId, nonce: "2" },
+        { issuer: owner, issuerId, nonce: "9" },
+        { issuer: owner, issuerId: `0x${"bb".repeat(32)}`, nonce: "30" },
+      ],
+    });
+
+    expect(nativeAgentActionIndexedNonce(
+      "issueAttestation",
+      { issuer: owner, issuerId },
+      state,
+    )).toBe("10");
+  });
+
+  it("returns the first nonce for an indexed account with no previous rows", () => {
+    expect(nativeAgentActionIndexedNonce(
+      "listService",
+      { provider: owner },
+      nativeAgentState({ services: [] }),
+    )).toBe("0");
+  });
+
+  it("does not guess when matching rows omit parseable nonce data", () => {
+    expect(nativeAgentActionIndexedNonce(
+      "setSpendingPolicy",
+      { owner },
+      nativeAgentState({ spendingPolicies: [{ owner, controller: owner }] }),
+    )).toBeNull();
+    expect(nativeAgentActionIndexedNonce(
+      "createEscrow",
+      { buyer: owner },
+      nativeAgentState({ escrows: [{ buyer: owner, nonce: "18446744073709551615" }] }),
+    )).toBeNull();
+  });
+});
 
 describe("native agent wallet request builders", () => {
   const forwarderContractAddress = "0x2222222222222222222222222222222222222222";
