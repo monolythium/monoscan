@@ -51,6 +51,7 @@ import {
   type MrcMetadataResponse,
   type BridgeTrustDisclosureRow,
   nativeReceiptEventRows,
+  nativeReceiptMarketEventRows,
 } from "./data/hooks";
 import { getLythTokenId } from "./sdk/client";
 import type { AgentReputationRecord, AgentReputationResponse } from "@monolythium/core-sdk";
@@ -1491,6 +1492,7 @@ const TxPage = ({ hash, go }: any) => {
   const liveDecoded: any = live.data?.decoded ?? null;
   const liveNativeReceipt = nativeReceipt.data ?? null;
   const nativeEventRows = nativeReceiptEventRows(liveNativeReceipt);
+  const nativeMarketEventRows = nativeReceiptMarketEventRows(liveNativeReceipt);
   const indexedStatus = txStatus.data ?? null;
   const fixture = TXS[hash];
   const decodedCalldata = liveDecoded?.decodedCalldata && typeof liveDecoded.decodedCalldata === "object"
@@ -1816,6 +1818,27 @@ const TxPage = ({ hash, go }: any) => {
                   <KV label="Topic" value={event.eventTopic} mono/>
                   <KV label="Family" value={event.family ?? "—"} mono/>
                   <KV label="Payload hash" value={event.payloadHash ?? "—"} mono/>
+                  {event.decodedFields.map(([k,v])=>(
+                    <KV key={k} label={k} value={v} mono/>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Card>
+        </section>
+      )}
+
+      {nativeMarketEventRows.length > 0 && (
+        <section>
+          <Card title="Native market events" right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>decoded receipt</span>}>
+            {nativeMarketEventRows.map((event)=>(
+              <div key={`${event.logIndex}-${event.eventTopic}-market`} className="tx-log">
+                <div className="mono tx-log__topic">
+                  {event.eventName ?? event.eventTopic}
+                </div>
+                <div className="tx-kv" style={{marginTop:8}}>
+                  <KV label="Emitter" value={event.address} mono/>
+                  <KV label="Family" value={event.family ?? "—"} mono/>
                   {event.decodedFields.map(([k,v])=>(
                     <KV key={k} label={k} value={v} mono/>
                   ))}
