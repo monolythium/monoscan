@@ -178,6 +178,13 @@ function reputationAverageLabel(value: number): string {
   const score = value / 10;
   return `${score % 1 === 0 ? score.toFixed(0) : score.toFixed(1)} / 10`;
 }
+
+export function redemptionTicketStatusText(mature: boolean | null | undefined): string {
+  if (mature === true) return "Cooldown complete · payout unavailable";
+  if (mature === false) return "Cooldown active";
+  return "Cooldown state pending";
+}
+
 const AgentReputationCard = ({ reputation }: { reputation: AgentReputationResponse }) => {
   const record: AgentReputationRecord | null = reputation.record ?? null;
   const hasSamples = Boolean(record && record.sampleCount > 0);
@@ -868,7 +875,7 @@ const WalletPage = ({ addr, go }: any) => {
   const livePendingRewardRows = livePendingRewards?.rows ?? [];
   const liveRedemptionQueue = redemptionQueue.data ?? null;
   const liveRedemptionTickets = liveRedemptionQueue?.tickets ?? [];
-  const liveMatureRedemptions = liveRedemptionTickets.filter((row) => row.mature === true).length;
+  const liveCooldownCompleteRedemptions = liveRedemptionTickets.filter((row) => row.mature === true).length;
   const liveDelegationHistory = delegationHistory.data ?? [];
   const liveTokenBalances = (profile.data?.tokenBalances?.length
     ? profile.data.tokenBalances
@@ -936,7 +943,7 @@ const WalletPage = ({ addr, go }: any) => {
               />
               <KV
                 label="Redemption queue"
-                value={liveRedemptionQueue ? `${liveRedemptionTickets.length}/${liveRedemptionQueue.count} tickets${liveMatureRedemptions ? ` · ${liveMatureRedemptions} mature` : ""}` : "—"}
+                value={liveRedemptionQueue ? `${liveRedemptionTickets.length}/${liveRedemptionQueue.count} tickets${liveCooldownCompleteRedemptions ? ` · ${liveCooldownCompleteRedemptions} cooldown complete` : ""}` : "—"}
                 mono
               />
               <KV label="Activity index" value={liveActivityKind ? `${liveActivityKind.kind}${earliestRetained ? ` · retained from block ${Number(earliestRetained).toLocaleString()}` : ""}` : "—"}/>
@@ -1004,12 +1011,12 @@ const WalletPage = ({ addr, go }: any) => {
             <Card title="Redemption queue" right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>redemption-queue</span>}>
               <div className="tx-kv">
                 <KV label="Tickets" value={`${liveRedemptionTickets.length}/${liveRedemptionQueue.count}`} mono/>
-                <KV label="Mature" value={`${liveMatureRedemptions}`} mono/>
+                <KV label="Cooldown complete" value={`${liveCooldownCompleteRedemptions}`} mono/>
                 <KV label="Block" value={liveRedemptionQueue.block === null ? "—" : String(liveRedemptionQueue.block)} mono/>
               </div>
               {liveRedemptionTickets.length > 0 ? (
                 <table className="ms-table">
-                  <thead><tr><th>Cluster</th><th style={{textAlign:"right"}}>Weight</th><th style={{textAlign:"right"}}>Queued</th><th style={{textAlign:"right"}}>Matures</th><th>Status</th></tr></thead>
+                  <thead><tr><th>Cluster</th><th style={{textAlign:"right"}}>Weight</th><th style={{textAlign:"right"}}>Queued</th><th style={{textAlign:"right"}}>Cooldown ends</th><th>Status</th></tr></thead>
                   <tbody>
                     {liveRedemptionTickets.map((row)=>(
                       <tr key={`${row.index}-${row.cluster}-${row.maturityHeight}`} onClick={()=>go(`#/cluster/${Number(row.cluster)+1}`)}>
@@ -1018,7 +1025,7 @@ const WalletPage = ({ addr, go }: any) => {
                         <td className="mono num" style={{textAlign:"right"}}>{row.createdHeight.toLocaleString()}</td>
                         <td className="mono num" style={{textAlign:"right"}}>{row.maturityHeight.toLocaleString()}</td>
                         <td className="mono" style={{color:row.mature === true ? "var(--gold)" : "var(--fg-500)"}}>
-                          {row.mature === true ? "Mature" : row.mature === false ? "Cooldown" : "Pending"}
+                          {redemptionTicketStatusText(row.mature)}
                         </td>
                       </tr>
                     ))}
