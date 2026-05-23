@@ -35,9 +35,11 @@ import {
   bridgeTrustDisclosuresFromAddressData,
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
+  fetchBridgeRouteDisclosures,
   fetchNativeMarketEvents,
   fetchTxNativeReceipt,
   fetchMrcMetadataForTokenBalances,
+  mergeBridgeTrustDisclosures,
   MRV_NATIVE_RECEIPT_TX_TYPE,
   MRV_NATIVE_TX_EXTENSION_BODY_HEX,
   MRV_NATIVE_TX_EXTENSION_KIND,
@@ -322,6 +324,82 @@ describe("live-SDK seam", () => {
     expect(apiSpy).toHaveBeenCalledWith("/native-market-events", filter);
     expect(rpcSpy).toHaveBeenCalledWith("lyth_nativeMarketEvents", [filter]);
     expect(result).toBe(response);
+  });
+
+  it("reads bridge route discovery from the dedicated API path", async () => {
+    const response = {
+      schemaVersion: 1,
+      limit: 5,
+      routes: [{
+        routeId: "eth-usdc-mainnet",
+        bridge: "ThirdParty Light Client",
+        asset: "USDC",
+        sourceChain: "ethereum",
+        destinationChain: "monolythium",
+        verifier: {
+          model: "zk-light-client",
+          participantCount: 12,
+          threshold: 8,
+        },
+        drainCapAtomic: "250000000000",
+        finalityBlocks: 64,
+        cooldownSeconds: 7200,
+        adminControl: "consensusOnly",
+        circuitBreaker: "armed",
+        insuranceAtomic: "500000000000",
+      }],
+      source: { routeProvider: "bridge_routes" },
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "get")
+      .mockResolvedValue(apiEnvelope(response));
+    const rpcSpy = vi.spyOn(RpcClient.prototype, "call");
+
+    const result = await fetchBridgeRouteDisclosures(5);
+
+    expect(apiSpy).toHaveBeenCalledWith("/bridge/routes", { limit: 5 });
+    expect(rpcSpy).not.toHaveBeenCalled();
+    expect(result).toHaveLength(1);
+    expect(result?.[0].route.routeId).toBe("eth-usdc-mainnet");
+    expect(result?.[0].source).toBe("bridgeRoutes[0]");
+    expect(result?.[0].assessment.accepted).toBe(true);
+  });
+
+  it("falls back to lyth_bridgeRoutes when bridge route discovery API is unavailable", async () => {
+    const response = {
+      routes: [{
+        route_id: "sol-usdt-mainnet",
+        bridge_name: "Consensus Relay",
+        asset_id: "USDT",
+        from_chain: "solana",
+        to_chain: "monolythium",
+        verifier_config: {
+          type: "committee",
+          signer_count: 9,
+          required_signers: 6,
+        },
+        drain_cap_atomic: "9000000000",
+        finality_delay_blocks: 32,
+        cooldown_seconds: 3600,
+        mono_admin_control: "none",
+        breaker: "armed",
+        slashable_insurance_atomic: "1000000000",
+      }],
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "get")
+      .mockRejectedValue(new Error("api unavailable"));
+    const rpcSpy = vi
+      .spyOn(RpcClient.prototype, "call")
+      .mockResolvedValue(response);
+
+    const result = await fetchBridgeRouteDisclosures(5);
+
+    expect(apiSpy).toHaveBeenCalledWith("/bridge/routes", { limit: 5 });
+    expect(rpcSpy).toHaveBeenCalledWith("lyth_bridgeRoutes", [{ limit: 5 }]);
+    expect(result?.[0].route.routeId).toBe("sol-usdt-mainnet");
+    expect(result?.[0].route.bridge).toBe("Consensus Relay");
+    expect(result?.[0].assessment.accepted).toBe(true);
   });
 
   it("keeps the typed agent reputation response available to UI hooks", () => {
@@ -667,6 +745,28 @@ describe("bridge trust disclosure normalization", () => {
     expect(slice.rows.map((row) => row.route.routeId)).toEqual(["healthy-route", "short-cooldown"]);
     expect(slice.hiddenCount).toBe(1);
     expect(slice.totalCount).toBe(3);
+  });
+
+  it("merges address and route-discovery disclosures without duplicating routes", () => {
+    const addressRows = assessBridgeTrustDisclosures([
+      { source: "addressProfile[0]", value: validDisclosure },
+    ]);
+    const discoveryRows = assessBridgeTrustDisclosures([
+      { source: "bridgeRoutes[0]", value: validDisclosure },
+      {
+        source: "bridgeRoutes[1]",
+        value: {
+          ...validDisclosure,
+          routeId: "eth-usdc-slow",
+          cooldownSeconds: 86_400,
+        },
+      },
+    ]);
+
+    const rows = mergeBridgeTrustDisclosures([...addressRows, ...discoveryRows]);
+
+    expect(rows.map((row) => row.route.routeId)).toEqual(["eth-usdc-mainnet", "eth-usdc-slow"]);
+    expect(rows[0].source).toBe("addressProfile[0]");
   });
 
   it("reports bridge cooldown, finality, circuit-breaker, and insurance failure details from disclosures", () => {
