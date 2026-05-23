@@ -31,6 +31,7 @@ import {
   fetchMrcMetadataForTokenBalances,
   mrcMetadataBalanceQueryKeys,
   normalizeBridgeRouteDisclosure,
+  normalizeRedemptionQueueResponse,
   nativeReceiptEventRows,
   queryClient,
   txFeedToRows,
@@ -97,6 +98,7 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythGetAddressLabel).toBe("function");
     expect(typeof proto.lythGetDelegationHistory).toBe("function");
     expect(typeof proto.lythPendingRewards).toBe("function");
+    expect(typeof (proto.lythRedemptionQueue ?? proto.call)).toBe("function");
     expect(typeof proto.lythGetAddressActivity).toBe("function");
     expect(typeof proto.lythCapabilities).toBe("function");
     expect(typeof proto.lythAgentReputation).toBe("function");
@@ -158,6 +160,84 @@ describe("live-SDK seam", () => {
 
     expect(response.record?.sampleCount).toBe(5);
     expect(response.record?.avgAccuracyX10).toBe(86);
+  });
+
+  it("normalizes native redemption queue tickets without inventing amounts", () => {
+    const queue = normalizeRedemptionQueueResponse({
+      wallet: "mono1zg69v7y6hn00qyfzxdz92enh3zv64w7vajvdc4",
+      tickets: [
+        {
+          index: 0,
+          cluster: 7,
+          weightBps: 2500,
+          createdHeight: 10,
+          maturityHeight: 20,
+          mature: false,
+        },
+        {
+          index: 1,
+          cluster: 8,
+          weight_bps: "500",
+          created_height: "11",
+          maturity_height: "12",
+          mature: "true",
+          amountLythoshi: "999",
+        },
+      ],
+      count: 2,
+      returned: 2,
+      block: 20,
+    });
+
+    expect(queue).toEqual({
+      wallet: "mono1zg69v7y6hn00qyfzxdz92enh3zv64w7vajvdc4",
+      tickets: [
+        {
+          index: 0,
+          cluster: 7,
+          weightBps: 2500,
+          createdHeight: 10,
+          maturityHeight: 20,
+          mature: false,
+        },
+        {
+          index: 1,
+          cluster: 8,
+          weightBps: 500,
+          createdHeight: 11,
+          maturityHeight: 12,
+          mature: true,
+        },
+      ],
+      count: 2,
+      returned: 2,
+      block: 20,
+    });
+  });
+
+  it("drops malformed native redemption queue ticket rows", () => {
+    const queue = normalizeRedemptionQueueResponse({
+      data: {
+        wallet: "mono1bad",
+        tickets: [
+          { index: 0, cluster: 1, weightBps: 100, createdHeight: 1, maturityHeight: 9 },
+          { index: 1, cluster: 2, weightBps: 100, createdHeight: 1 },
+        ],
+      },
+    });
+
+    expect(queue?.tickets).toEqual([
+      {
+        index: 0,
+        cluster: 1,
+        weightBps: 100,
+        createdHeight: 1,
+        maturityHeight: 9,
+        mature: null,
+      },
+    ]);
+    expect(queue?.count).toBe(1);
+    expect(normalizeRedemptionQueueResponse(null)).toBeNull();
   });
 });
 
