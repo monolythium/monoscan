@@ -56,6 +56,7 @@ import {
   bridgeTrustDisclosureDisplaySlice,
   bridgeTrustDisclosuresFromAddressData,
   mergeBridgeTrustDisclosures,
+  nativeAgentStateDisplayRowsAll,
   nativeAgentStateRows,
   type MrcMetadataResponse,
   type MrcHoldersResponse,
@@ -63,6 +64,7 @@ import {
   type MrcAccountResponse,
   type MrcPolicyRecord,
   type MrcPolicySpendRecord,
+  type NativeAgentStateDisplayRows,
   type NativeAgentStateDisplayRow,
   type BridgeTrustDisclosureRow,
   type MrvNativeTransactionEvidence,
@@ -299,6 +301,13 @@ const AgentReputationCard = ({ reputation }: { reputation: AgentReputationRespon
 };
 
 function nativeAgentKindLabel(kind: NativeAgentStateDisplayRow["kind"]): string {
+  if (kind === "issuer") return "Issuer";
+  if (kind === "attestation") return "Attestation";
+  if (kind === "consent") return "Consent";
+  if (kind === "service") return "Service";
+  if (kind === "availability") return "Availability";
+  if (kind === "arbiter") return "Arbiter";
+  if (kind === "reputationReview") return "Review";
   if (kind === "spendingPolicy") return "Policy";
   if (kind === "policySpend") return "Spend";
   return "Escrow";
@@ -308,14 +317,10 @@ const NativeAgentStateCard = ({
   rows,
   loading,
 }: {
-  rows: {
-    spendingPolicies: NativeAgentStateDisplayRow[];
-    policySpends: NativeAgentStateDisplayRow[];
-    escrows: NativeAgentStateDisplayRow[];
-  };
+  rows: NativeAgentStateDisplayRows;
   loading: boolean;
 }) => {
-  const allRows = [...rows.spendingPolicies, ...rows.policySpends, ...rows.escrows];
+  const allRows = nativeAgentStateDisplayRowsAll(rows);
   return (
     <Card
       title="Native agent state"
@@ -328,6 +333,7 @@ const NativeAgentStateCard = ({
               <th>Type</th>
               <th>ID</th>
               <th>Account</th>
+              <th>Counterparty</th>
               <th>Status</th>
               <th style={{textAlign:"right"}}>Amount</th>
               <th style={{textAlign:"right"}}>Updated</th>
@@ -339,6 +345,7 @@ const NativeAgentStateCard = ({
                 <td>{nativeAgentKindLabel(row.kind)}</td>
                 <td className="mono" title={row.primaryId ?? ""}>{row.primaryId ? _short(row.primaryId, 10) : "—"}</td>
                 <td className="mono" title={row.account ?? ""}>{row.account ? _short(row.account, 12) : "—"}</td>
+                <td className="mono" title={row.counterparty ?? ""}>{row.counterparty ? _short(row.counterparty, 12) : "—"}</td>
                 <td className="mono">{row.status ?? "—"}</td>
                 <td className="mono num" style={{textAlign:"right"}}>{row.amount ?? "—"}</td>
                 <td className="mono num" style={{textAlign:"right"}}>
@@ -350,7 +357,7 @@ const NativeAgentStateCard = ({
         </table>
       ) : (
         <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"12px 16px 0"}}>
-          {loading ? "Reading /api/v1/native-agent-state..." : "No native agent policy or escrow rows reported for this account."}
+          {loading ? "Reading /api/v1/native-agent-state..." : "No native agent state rows reported for this account."}
         </p>
       )}
     </Card>
@@ -1178,9 +1185,7 @@ const WalletPage = ({ addr, go }: any) => {
   const liveAgentReputation = agentReputation.data ?? null;
   const liveNativeAgentRows = nativeAgentStateRows(nativeAgentState.data);
   const hasLiveNativeAgentState =
-    liveNativeAgentRows.spendingPolicies.length > 0
-    || liveNativeAgentRows.policySpends.length > 0
-    || liveNativeAgentRows.escrows.length > 0
+    nativeAgentStateDisplayRowsAll(liveNativeAgentRows).length > 0
     || nativeAgentState.isLoading
     || nativeAgentState.isFetched;
   const liveMrcAccount = mrcAccount.data ?? null;

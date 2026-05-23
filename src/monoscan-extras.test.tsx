@@ -23,9 +23,28 @@ import {
   mrvNativeTransactionEvidence,
   verifyNoEvmReceiptProofConsistency,
   type MrcMetadataResponse,
+  type NativeAgentStateDisplayRows,
   type NativeAgentStateDisplayRow,
   type NoEvmReceiptProofTranscript,
 } from "./data/hooks";
+
+function nativeAgentRows(
+  overrides: Partial<NativeAgentStateDisplayRows> = {},
+): NativeAgentStateDisplayRows {
+  return {
+    issuers: [],
+    attestations: [],
+    consents: [],
+    services: [],
+    availability: [],
+    arbiters: [],
+    reputationReviews: [],
+    spendingPolicies: [],
+    policySpends: [],
+    escrows: [],
+    ...overrides,
+  };
+}
 
 function noEvmReceiptProofTranscript(
   overrides: Partial<NoEvmReceiptProofTranscript> = {},
@@ -123,7 +142,7 @@ describe("MRC policy-account display labels", () => {
 
 describe("NativeAgentStateCard", () => {
   it("renders live native agent rows without placeholder state", () => {
-    const row: NativeAgentStateDisplayRow = {
+    const policyRow: NativeAgentStateDisplayRow = {
       kind: "spendingPolicy",
       primaryId: `0x${"aa".repeat(32)}`,
       account: "mono1agentowner",
@@ -134,29 +153,42 @@ describe("NativeAgentStateCard", () => {
       blockHeight: 42,
       fields: [],
     };
+    const serviceRow: NativeAgentStateDisplayRow = {
+      kind: "service",
+      primaryId: `0x${"bb".repeat(32)}`,
+      account: "mono1agentprovider",
+      counterparty: null,
+      assetId: null,
+      status: "active",
+      amount: null,
+      blockHeight: 43,
+      fields: [],
+    };
 
     const html = renderToStaticMarkup(
       <NativeAgentStateCard
-        rows={{ spendingPolicies: [row], policySpends: [], escrows: [] }}
+        rows={nativeAgentRows({ spendingPolicies: [policyRow], services: [serviceRow] })}
         loading={false}
       />,
     );
 
     expect(html).toContain("Native agent state");
     expect(html).toContain("Policy");
+    expect(html).toContain("Service");
     expect(html).toContain("mono1agentowner");
-    expect(html).not.toContain("No native agent policy or escrow rows");
+    expect(html).toContain("mono1agentprovider");
+    expect(html).not.toContain("No native agent state rows");
   });
 
   it("renders an explicit empty state when the node returns no rows", () => {
     const html = renderToStaticMarkup(
       <NativeAgentStateCard
-        rows={{ spendingPolicies: [], policySpends: [], escrows: [] }}
+        rows={nativeAgentRows()}
         loading={false}
       />,
     );
 
-    expect(html).toContain("No native agent policy or escrow rows reported for this account.");
+    expect(html).toContain("No native agent state rows reported for this account.");
   });
 });
 
