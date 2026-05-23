@@ -247,12 +247,20 @@ type MrcHoldersRpcClient = {
 export const MRC_HOLDERS_BALANCE_LIMIT = 6;
 export const MRC_ACCOUNT_POLICY_SPEND_LIMIT = 6;
 
+export interface MrcPolicyRecord {
+  enabled: boolean;
+  perActionLimit: string;
+  windowLimit: string;
+  allowedAssets: string[];
+}
+
 export interface MrcAccountRecord {
   kind: string;
   account: string;
   controller: string | null;
   recovery: string | null;
   policyHash: string | null;
+  policy: MrcPolicyRecord | null;
   nonce: string | null;
   updatedAtBlock: number;
 }
@@ -2838,8 +2846,24 @@ function normalizeMrcAccountRecord(value: unknown): MrcAccountRecord | null {
     controller: readStringField(row, ["controller"]),
     recovery: readStringField(row, ["recovery"]),
     policyHash: readStringField(row, ["policyHash", "policy_hash"]),
+    policy: normalizeMrcPolicyRecord(readObjectField(row, ["policy", "policyBody", "policy_body"])),
     nonce: readStringField(row, ["nonce"]),
     updatedAtBlock,
+  };
+}
+
+function normalizeMrcPolicyRecord(value: unknown): MrcPolicyRecord | null {
+  const row = unknownRecord(value);
+  if (!row) return null;
+  const enabled = readBooleanField(row, ["enabled"]);
+  const perActionLimit = readStringField(row, ["perActionLimit", "per_action_limit"]);
+  const windowLimit = readStringField(row, ["windowLimit", "window_limit"]);
+  if (enabled === null || !perActionLimit || !windowLimit) return null;
+  return {
+    enabled,
+    perActionLimit,
+    windowLimit,
+    allowedAssets: readStringListField(row, ["allowedAssets", "allowed_assets"]),
   };
 }
 

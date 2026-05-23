@@ -1164,6 +1164,12 @@ describe("MRC account lookup", () => {
         controller: null,
         recovery,
         policy_hash: policyHash,
+        policy: {
+          enabled: true,
+          per_action_limit: 20n,
+          window_limit: "100",
+          allowed_assets: [assetId],
+        },
         nonce: null,
         updated_at_block: 99,
       },
@@ -1190,6 +1196,7 @@ describe("MRC account lookup", () => {
         controller,
         recovery: null,
         policyHash,
+        policy: null,
         nonce: "9",
         updatedAtBlock: 100,
       },
@@ -1199,6 +1206,12 @@ describe("MRC account lookup", () => {
         controller: null,
         recovery,
         policyHash,
+        policy: {
+          enabled: true,
+          perActionLimit: "20",
+          windowLimit: "100",
+          allowedAssets: [assetId],
+        },
         nonce: null,
         updatedAtBlock: 99,
       },
@@ -1211,6 +1224,35 @@ describe("MRC account lookup", () => {
         updatedAtBlock: 101,
       }],
     });
+  });
+
+  it("tolerates legacy policy-account rows without policy bodies", () => {
+    const result = normalizeMrcAccountResponse(mrcAccountPayload({
+      smartAccount: null,
+      policyAccount: {
+        kind: "policy_account",
+        account,
+        controller,
+        recovery: null,
+        policyHash,
+        policy: null,
+        nonce: null,
+        updatedAtBlock: 200,
+      },
+      policySpends: [],
+    }));
+
+    expect(result?.policyAccount).toEqual({
+      kind: "policy_account",
+      account,
+      controller,
+      recovery: null,
+      policyHash,
+      policy: null,
+      nonce: null,
+      updatedAtBlock: 200,
+    });
+    expect(result?.policySpends).toEqual([]);
   });
 
   it("reads MRC account data from the REST path before RPC fallback", async () => {

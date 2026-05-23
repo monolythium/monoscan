@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   BridgeTrustDisclosuresCard,
   MrvNativeEvidenceCard,
+  mrcPolicyAllowedAssetsSummary,
+  mrcPolicyBodySummary,
   redemptionTicketStatusText,
   tokenBalanceMetadataLines,
   tokenBalancePrimaryWithMetadata,
@@ -98,6 +100,22 @@ describe("token-balance MRC display labels", () => {
 
     expect(tokenBalancePrimaryWithMetadata(addressProfileVaultBalance, metadata)).toBe("Vault Shares (vLYTH)");
     expect(tokenBalanceMetadataLines(addressProfileVaultBalance, metadata)).toContain("MRC-4626 vault shares");
+  });
+});
+
+describe("MRC policy-account display labels", () => {
+  it("summarizes policy bodies and legacy null bodies", () => {
+    const policy = {
+      enabled: true,
+      perActionLimit: "20",
+      windowLimit: "100",
+      allowedAssets: [`0x${"aa".repeat(32)}`, `0x${"bb".repeat(32)}`],
+    };
+
+    expect(mrcPolicyBodySummary(policy)).toBe("enabled · per-action 20 · window 100 · 2 allowed assets");
+    expect(mrcPolicyAllowedAssetsSummary(policy, 1)).toBe(`0x${"aa".repeat(4)}…${"aa".repeat(2)} +1 more`);
+    expect(mrcPolicyBodySummary(null)).toBe("—");
+    expect(mrcPolicyAllowedAssetsSummary(null)).toBe("—");
   });
 });
 
