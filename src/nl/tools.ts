@@ -124,8 +124,8 @@ export async function get_block(input: GetBlockInput): Promise<GetBlockResult> {
       parent_hash: live.parent_hash,
       round: Number(live.number),
       timestamp_iso: new Date(Number(live.timestamp) * 1000).toISOString().replace(/\.\d{3}Z$/, "Z"),
-      gas_used: Number(live.gas_used),
-      gas_limit: Number(live.gas_limit),
+      gas_used: Number(live.executionUnitsUsed),
+      gas_limit: Number(live.executionUnitLimit),
       status: "committed",
     };
   } catch {

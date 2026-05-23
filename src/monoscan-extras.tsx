@@ -33,6 +33,7 @@ import {
   useNetworkStatus,
   useOperatorCapabilities,
   usePeerSummary,
+  usePendingRewards,
   useRichList,
   useSearch,
   useTokenBalances,
@@ -602,6 +603,7 @@ const WalletPage = ({ addr, go }: any) => {
   const addressFlow = useAddressFlow(addr, 250);
   const activityKind = useAddressActivityKind(addr);
   const delegations = useWalletDelegations(addr);
+  const pendingRewards = usePendingRewards(addr);
   const delegationHistory = useWalletDelegationHistory(addr, 20);
   const tokenBalances = useTokenBalances(addr);
   const addressLabel = useAddressLabel(addr);
@@ -642,6 +644,8 @@ const WalletPage = ({ addr, go }: any) => {
   const livePolicy = live.data?.policy ?? null;
   const liveActivity = live.data?.activity ?? [];
   const liveDelegations = delegations.data?.rows ?? [];
+  const livePendingRewards = pendingRewards.data ?? null;
+  const livePendingRewardRows = livePendingRewards?.rows ?? [];
   const liveDelegationHistory = delegationHistory.data ?? [];
   const liveTokenBalances = profile.data?.tokenBalances?.length ? profile.data.tokenBalances : (tokenBalances.data ?? []);
   const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
@@ -688,12 +692,17 @@ const WalletPage = ({ addr, go }: any) => {
         </div>
       </section>
 
-      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || codeValue !== null || profileAccount) && (
+      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || codeValue !== null || profileAccount) && (
         <section className="tx-split">
           <Card title="Live account">
             <div className="tx-kv">
               <KV label="Balance" value={liveBalance ?? "—"} mono/>
               <KV label="Nonce" value={liveNonce !== null ? `${liveNonce}` : "—"} mono/>
+              <KV
+                label="Pending rewards"
+                value={livePendingRewards ? `${_fmtLythRaw(livePendingRewards.totalAmountLythoshi)}${livePendingRewards.autoCompound ? " · auto-compound" : ""}` : "—"}
+                mono
+              />
               <KV label="Activity index" value={liveActivityKind ? `${liveActivityKind.kind}${earliestRetained ? ` · retained from block ${Number(earliestRetained).toLocaleString()}` : ""}` : "—"}/>
               <KV label="Policy" value={livePolicy ? `${livePolicy.mode}${livePolicy.explicit ? " · explicit" : ""}` : "—"}/>
               <KV label="Label" value={liveLabel ? `${liveLabel.category}${liveLabel.displayName ? ` · ${liveLabel.displayName}` : ""}` : "—"}/>
@@ -703,14 +712,22 @@ const WalletPage = ({ addr, go }: any) => {
           <Card title="Live delegations">
             {liveDelegations.length > 0 ? (
               <table className="ms-table">
-                <thead><tr><th>Cluster</th><th style={{textAlign:"right"}}>Weight</th></tr></thead>
+                <thead><tr><th>Cluster</th><th style={{textAlign:"right"}}>Weight</th>{livePendingRewards && <th style={{textAlign:"right"}}>Pending</th>}</tr></thead>
                 <tbody>
-                  {liveDelegations.map((row:any)=>(
-                    <tr key={row.cluster} onClick={()=>go(`#/cluster/${Number(row.cluster)+1}`)}>
-                      <td className="mono">C-{String(Number(row.cluster)+1).padStart(3,"0")}</td>
-                      <td className="mono num" style={{textAlign:"right"}}>{row.weightBps} bps</td>
-                    </tr>
-                  ))}
+                  {liveDelegations.map((row:any)=>{
+                    const rewardRow = livePendingRewardRows.find((reward:any)=>Number(reward.cluster) === Number(row.cluster));
+                    return (
+                      <tr key={row.cluster} onClick={()=>go(`#/cluster/${Number(row.cluster)+1}`)}>
+                        <td className="mono">C-{String(Number(row.cluster)+1).padStart(3,"0")}</td>
+                        <td className="mono num" style={{textAlign:"right"}}>{row.weightBps} bps</td>
+                        {livePendingRewards && (
+                          <td className="mono num" style={{textAlign:"right",color:"var(--gold)"}}>
+                            {rewardRow ? _fmtLythRaw(rewardRow.unsettledAmountLythoshi) : "0 LYTH"}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             ) : (
@@ -719,6 +736,34 @@ const WalletPage = ({ addr, go }: any) => {
               </p>
             )}
           </Card>
+          {livePendingRewards && (
+            <Card title="Pending rewards" right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>pending-rewards</span>}>
+              <div className="tx-kv">
+                <KV label="Claimable" value={_fmtLythRaw(livePendingRewards.totalAmountLythoshi)} mono/>
+                <KV label="Settled" value={_fmtLythRaw(livePendingRewards.settledPendingLythoshi)} mono/>
+                <KV label="Unsettled" value={_fmtLythRaw(livePendingRewards.unsettledAmountLythoshi)} mono/>
+                <KV label="Auto-compound" value={livePendingRewards.autoCompound ? "Enabled" : "Disabled"}/>
+              </div>
+              {livePendingRewardRows.length > 0 ? (
+                <table className="ms-table">
+                  <thead><tr><th>Cluster</th><th style={{textAlign:"right"}}>Weight</th><th style={{textAlign:"right"}}>Unsettled</th></tr></thead>
+                  <tbody>
+                    {livePendingRewardRows.map((row:any)=>(
+                      <tr key={row.cluster} onClick={()=>go(`#/cluster/${Number(row.cluster)+1}`)}>
+                        <td className="mono">C-{String(Number(row.cluster)+1).padStart(3,"0")}</td>
+                        <td className="mono num" style={{textAlign:"right"}}>{row.weightBps} bps</td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--gold)"}}>{_fmtLythRaw(row.unsettledAmountLythoshi)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"12px 16px 0"}}>
+                  No unsettled cluster reward rows reported.
+                </p>
+              )}
+            </Card>
+          )}
         </section>
       )}
 
@@ -1234,7 +1279,7 @@ const TxPage = ({ hash, go }: any) => {
             ? (liveReceipt.status === 1 ? "ok" : liveReceipt.status === -1 ? "pending" : "failed")
             : (fixture?.status ?? "ok")),
         gasUsed: Number(
-          liveReceipt?.gas_used ?? fixture?.gasUsed ?? 0,
+          liveReceipt?.executionUnitsUsed ?? fixture?.gasUsed ?? 0,
         ),
         round: Number(
           liveReceipt?.block_number ??
@@ -1512,9 +1557,9 @@ const RoundPage = ({ round, go }: any) => {
                 <div className="tx-kv__row">
                   <span className="mono tx-kv__k">Execution units used / limit</span>
                   <span className="mono tx-kv__v">
-                    {Number(liveHeader.gas_used ?? liveHeader.gasUsed ?? 0).toLocaleString()}
+                    {Number(liveHeader.executionUnitsUsed ?? liveHeader.gas_used ?? liveHeader.gasUsed ?? 0).toLocaleString()}
                     {" / "}
-                    {Number(liveHeader.gas_limit ?? liveHeader.gasLimit ?? 0).toLocaleString()}
+                    {Number(liveHeader.executionUnitLimit ?? liveHeader.gas_limit ?? liveHeader.gasLimit ?? 0).toLocaleString()}
                   </span>
                 </div>
                 <div className="tx-kv__row">

@@ -62,6 +62,7 @@ describe("live-SDK seam", () => {
     expect(typeof apiProto.addressActivity).toBe("function");
     expect(typeof apiProto.addressProfile).toBe("function");
     expect(typeof apiProto.addressFlow).toBe("function");
+    expect(typeof apiProto.addressPendingRewards).toBe("function");
     expect(typeof apiProto.clusters).toBe("function");
     expect(typeof apiProto.operator).toBe("function");
     expect(typeof apiProto.search).toBe("function");
@@ -85,6 +86,7 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythGetTokenBalances).toBe("function");
     expect(typeof proto.lythGetAddressLabel).toBe("function");
     expect(typeof proto.lythGetDelegationHistory).toBe("function");
+    expect(typeof proto.lythPendingRewards).toBe("function");
     expect(typeof proto.lythGetAddressActivity).toBe("function");
     expect(typeof proto.lythCapabilities).toBe("function");
     expect(typeof proto.lythGetLatestCheckpoint).toBe("function");
@@ -133,8 +135,8 @@ describe("API execution-unit transformations", () => {
       basePricePerCycleLythoshi: "4",
     } as any);
 
-    expect(header.gas_used).toBe(123_456n);
-    expect(header.gas_limit).toBe(30_000_000n);
+    expect(header.executionUnitsUsed).toBe(123_456n);
+    expect(header.executionUnitLimit).toBe(30_000_000n);
   });
 
   it("maps new API transaction and receipt lythoshi fields to the RPC detail shape", () => {
@@ -168,7 +170,7 @@ describe("API execution-unit transformations", () => {
     expect(tx.gas).toBe("0xa410");
     expect(tx.maxFeePerGas).toBe("0x37");
     expect(tx.maxPriorityFeePerGas).toBe("0x7");
-    expect(receipt.gas_used).toBe(21_111n);
+    expect(receipt.executionUnitsUsed).toBe(21_111n);
   });
 
   it("maps new decoded transaction fields with older payload fallbacks", () => {
@@ -194,7 +196,7 @@ describe("API execution-unit transformations", () => {
     };
 
     expect(decodedTxToRpcTx(decoded as any).gas).toBe("0xa410");
-    expect(decodedTxToRpcReceipt(decoded as any).gas_used).toBe(21_111n);
+    expect(decodedTxToRpcReceipt(decoded as any).executionUnitsUsed).toBe(21_111n);
 
     expect(decodedTxToRpcTx({ ...decoded, valueLythoshi: undefined, executionUnitLimit: undefined, value: "0x2a", gasLimit: 21_000n } as any).value).toBe("0x2a");
   });
