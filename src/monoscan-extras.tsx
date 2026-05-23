@@ -100,6 +100,41 @@ const _rawToLythNumber = (value: string | bigint | number | null | undefined) =>
     return Number.isFinite(n) ? n : 0;
   }
 };
+type MrcTokenBalanceIdentity = {
+  standard?: string | null;
+  assetId?: string | null;
+  tokenId?: string | null;
+};
+type IndexedTokenBalanceRow = {
+  tokenId: string;
+  balance: string | number | bigint;
+  updatedAtBlock: string | number | bigint;
+  mrc?: MrcTokenBalanceIdentity | null;
+};
+function tokenBalanceStandardLabel(standard: string | null | undefined): string {
+  switch (standard) {
+    case "mrc20":
+      return "MRC-20";
+    case "mrc721":
+      return "MRC-721";
+    case "mrc1155":
+      return "MRC-1155";
+    default:
+      return "Indexed";
+  }
+}
+function tokenBalancePrimary(row: IndexedTokenBalanceRow): string {
+  const mrc = row.mrc ?? null;
+  if (!mrc) return _short(row.tokenId, 14);
+  return `${tokenBalanceStandardLabel(mrc.standard)} · ${_short(mrc.assetId ?? row.tokenId, 10)}`;
+}
+function tokenBalanceSecondary(row: IndexedTokenBalanceRow): string | null {
+  const mrc = row.mrc ?? null;
+  if (!mrc) return null;
+  const parts = [`balance key ${_short(row.tokenId, 8)}`];
+  if (mrc.tokenId) parts.unshift(`token ${_short(mrc.tokenId, 8)}`);
+  return parts.join(" · ");
+}
 const _fmtExecutionUnitPrice = (price: bigint | null | undefined) =>
   price === null || price === undefined ? null : `${price.toLocaleString()} lythoshi / execution unit`;
 const _ageFromTs = (timestamp: number | null | undefined) => {
@@ -647,7 +682,9 @@ const WalletPage = ({ addr, go }: any) => {
   const livePendingRewards = pendingRewards.data ?? null;
   const livePendingRewardRows = livePendingRewards?.rows ?? [];
   const liveDelegationHistory = delegationHistory.data ?? [];
-  const liveTokenBalances = profile.data?.tokenBalances?.length ? profile.data.tokenBalances : (tokenBalances.data ?? []);
+  const liveTokenBalances = (profile.data?.tokenBalances?.length
+    ? profile.data.tokenBalances
+    : (tokenBalances.data ?? [])) as IndexedTokenBalanceRow[];
   const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
   const profileActivityKind = profile.data?.activity?.kind ?? null;
   const liveActivityKind = profileActivityKind ? { kind: profileActivityKind, retention: profile.data?.activity?.retention ?? null } : (activityKind.data ?? null);
@@ -772,15 +809,23 @@ const WalletPage = ({ addr, go }: any) => {
           <Card title="Indexed token balances">
             {liveTokenBalances.length > 0 ? (
               <table className="ms-table">
-                <thead><tr><th>Token id</th><th style={{textAlign:"right"}}>Balance</th><th style={{textAlign:"right"}}>Updated</th></tr></thead>
+                <thead><tr><th>Asset</th><th style={{textAlign:"right"}}>Balance</th><th style={{textAlign:"right"}}>Updated</th></tr></thead>
                 <tbody>
-                  {liveTokenBalances.map((row:any)=>(
+                  {liveTokenBalances.map((row: IndexedTokenBalanceRow)=>{
+                    const secondary = tokenBalanceSecondary(row);
+                    return (
                     <tr key={row.tokenId}>
-                      <td className="mono" style={{fontSize:11}}>{_short(row.tokenId, 14)}</td>
-                      <td className="mono num" style={{textAlign:"right"}}>{row.balance}</td>
+                      <td className="mono" style={{fontSize:11}}>
+                        {tokenBalancePrimary(row)}
+                        {secondary && (
+                          <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>{secondary}</div>
+                        )}
+                      </td>
+                      <td className="mono num" style={{textAlign:"right"}}>{String(row.balance)}</td>
                       <td className="mono num" style={{textAlign:"right"}}>{Number(row.updatedAtBlock).toLocaleString()}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             ) : (
