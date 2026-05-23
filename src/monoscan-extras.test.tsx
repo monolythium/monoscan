@@ -122,6 +122,31 @@ describe("BridgeTrustDisclosuresCard", () => {
     expect(html).toContain("score 100");
   });
 
+  it("renders route binding metadata and keeps discovery-only bridge actions disabled", () => {
+    const rows = bridgeTrustDisclosuresFromAddressData({
+      routeSelectionReady: false,
+      quoteReady: false,
+      submitReady: false,
+      blockedReasons: ["bridge route selection requires transfer intent"],
+      bridgeRouteDisclosures: [{
+        ...validDisclosure,
+        routeId: "catalogue-usdc-mainnet",
+        bridgeId: "bridge-catalogue-1",
+        wrappedAsset: "mrc:wrapped-usdc",
+      }],
+    });
+
+    const html = renderToStaticMarkup(<BridgeTrustDisclosuresCard disclosures={rows}/>);
+
+    expect(html).toContain("bridgeId bridge-catalogue-1");
+    expect(html).toContain("wrappedAsset mrc:wrapped-usdc");
+    expect(html).toContain("Discovery only");
+    expect(html).toContain("selection blocked · quote disabled · submit disabled");
+    expect(html).toContain("bridge route selection requires transfer intent");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Quote<\/button>/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Submit<\/button>/);
+  });
+
   it("renders deterministic preferred route and bounded failure details when multiple disclosures are present", () => {
     const rows = bridgeTrustDisclosuresFromAddressData({
       bridgeRouteDisclosures: [

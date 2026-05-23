@@ -264,6 +264,30 @@ function bridgeRouteIssueText(row: BridgeTrustDisclosureRow): string | null {
   return issues.length > 0 ? issues.join(" · ") : null;
 }
 
+function bridgeRouteBindingText(row: BridgeTrustDisclosureRow): string | null {
+  const parts: string[] = [];
+  if (row.route.bridgeId) parts.push(`bridgeId ${_short(row.route.bridgeId, 12)}`);
+  if (row.route.wrappedAsset) parts.push(`wrappedAsset ${_short(row.route.wrappedAsset, 12)}`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function bridgeRouteReadinessText(row: BridgeTrustDisclosureRow): string | null {
+  const readiness = row.readiness;
+  if (!readiness) return null;
+  return [
+    `selection ${readiness.routeSelectionReady ? "ready" : "blocked"}`,
+    `quote ${readiness.quoteReady ? "ready" : "disabled"}`,
+    `submit ${readiness.submitReady ? "ready" : "disabled"}`,
+  ].join(" · ");
+}
+
+function bridgeRouteReadinessIssueText(row: BridgeTrustDisclosureRow): string | null {
+  const readiness = row.readiness;
+  if (!readiness) return null;
+  const issues = readiness.blockedReasons.length > 0 ? readiness.blockedReasons : readiness.warnings;
+  return issues.length > 0 ? issues.join(" · ") : null;
+}
+
 function bridgeRouteRowKey(row: BridgeTrustDisclosureRow): string {
   return [
     row.source,
@@ -302,6 +326,9 @@ const BridgeTrustDisclosuresCard = ({
 
   const disclosureSlice = bridgeTrustDisclosureDisplaySlice(disclosures);
   const preferred = disclosureSlice.preferred;
+  const preferredBinding = preferred ? bridgeRouteBindingText(preferred) : null;
+  const preferredReadinessText = preferred ? bridgeRouteReadinessText(preferred) : null;
+  const preferredReadinessIssueText = preferred ? bridgeRouteReadinessIssueText(preferred) : null;
   const multipleDisclosures = disclosures.length > 1;
   const failureRows = multipleDisclosures
     ? disclosureSlice.rows
@@ -331,9 +358,35 @@ const BridgeTrustDisclosuresCard = ({
             <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.6}}>
               {preferred.route.sourceChain || "unknown"} → {preferred.route.destinationChain || "unknown"} · {preferred.route.asset || "asset missing"}
             </div>
+            {preferredBinding && (
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.6}}>
+                {preferredBinding}
+              </div>
+            )}
             <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.6}}>
-              finality {preferred.route.finalityBlocks} blocks · cooldown {bridgeSecondsLabel(preferred.route.cooldownSeconds)} · breaker {preferred.route.circuitBreaker} · insurance {preferred.route.insuranceAtomic}
+              finality {preferred.route.finalityBlocks} blocks · cooldown {bridgeSecondsLabel(preferred.route.cooldownSeconds)} · admin {preferred.route.adminControl} · breaker {preferred.route.circuitBreaker} · insurance {preferred.route.insuranceAtomic}
             </div>
+            {preferredReadinessText && (
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:2}}>
+                <span className={`pill ${preferred?.readiness?.routeSelectionReady ? "ok" : "warn"}`}>
+                  {preferred?.readiness?.routeSelectionReady ? "Selection ready" : "Discovery only"}
+                </span>
+                <button type="button" disabled style={{fontSize:10,padding:"4px 8px",borderRadius:6,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.04)",color:"var(--fg-500)"}}>
+                  Quote
+                </button>
+                <button type="button" disabled style={{fontSize:10,padding:"4px 8px",borderRadius:6,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.04)",color:"var(--fg-500)"}}>
+                  Submit
+                </button>
+                <span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+                  {preferredReadinessText}
+                </span>
+              </div>
+            )}
+            {preferredReadinessIssueText && (
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.6}}>
+                {preferredReadinessIssueText}
+              </div>
+            )}
           </div>
 
           {failureRows.length > 0 && (
@@ -370,6 +423,8 @@ const BridgeTrustDisclosuresCard = ({
         <tbody>
           {disclosureSlice.rows.map((row) => {
             const issueText = bridgeRouteIssueText(row);
+            const bindingText = bridgeRouteBindingText(row);
+            const readinessText = bridgeRouteReadinessText(row);
             return (
               <tr key={bridgeRouteRowKey(row)}>
                 <td className="mono" style={{fontSize:11}}>
@@ -384,6 +439,9 @@ const BridgeTrustDisclosuresCard = ({
                   <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>
                     {row.route.sourceChain || "unknown"} → {row.route.destinationChain || "unknown"} · {row.route.asset || "asset missing"}
                   </div>
+                  {bindingText && (
+                    <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>{bindingText}</div>
+                  )}
                   <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>route {row.route.routeId || "missing"} · {row.source}</div>
                 </td>
                 <td className="mono" style={{fontSize:11}}>
@@ -412,6 +470,11 @@ const BridgeTrustDisclosuresCard = ({
                   {issueText && (
                     <div style={{fontSize:10,color:"var(--fg-500)",marginTop:4,maxWidth:260}}>
                       {issueText}
+                    </div>
+                  )}
+                  {readinessText && (
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:4,maxWidth:260}}>
+                      {readinessText}
                     </div>
                   )}
                 </td>
