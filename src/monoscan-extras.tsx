@@ -21,6 +21,7 @@ import {
   useBlsRoundCertificate,
   useBlockByHash,
   useBlockByNumber,
+  useBridgeRouteDisclosures,
   useCapabilities,
   useChainStats,
   useClusterResignations,
@@ -51,6 +52,7 @@ import {
   bridgeRouteDisclosureFailureDetails,
   bridgeTrustDisclosureDisplaySlice,
   bridgeTrustDisclosuresFromAddressData,
+  mergeBridgeTrustDisclosures,
   type MrcMetadataResponse,
   type BridgeTrustDisclosureRow,
   type MrvNativeTransactionEvidence,
@@ -290,7 +292,7 @@ const BridgeTrustDisclosuresCard = ({
         <div style={{display:"grid",gap:8,padding:"2px 0"}}>
           <span className="pill err" style={{width:"fit-content"}}>Disclosure unavailable</span>
           <p className="mono" style={{fontSize:11,color:"var(--fg-500)",margin:0,lineHeight:1.6}}>
-            No bridgeRouteDisclosure or bridgeRouteDisclosures metadata was returned by upstream address or token-balance data.
+            No bridgeRouteDisclosure, bridgeRouteDisclosures, or bridge route discovery metadata was returned by upstream data.
             Monoscan will not mark any bridge route as safe without {BRIDGE_ROUTE_DISCLOSURE_UPSTREAM_FIELD}.
           </p>
         </div>
@@ -977,11 +979,15 @@ const WalletPage = ({ addr, go }: any) => {
     ? profile.data.tokenBalances
     : (tokenBalances.data ?? [])) as IndexedTokenBalanceRow[];
   const tokenBalanceMetadata = useMrcMetadataForTokenBalances(liveTokenBalances);
+  const bridgeRouteDiscovery = useBridgeRouteDisclosures();
   const bridgeTrustDisclosures = useMemoX(
-    () => bridgeTrustDisclosuresFromAddressData(profile.data, tokenBalances.data ?? []),
-    [profile.data, tokenBalances.data],
+    () => mergeBridgeTrustDisclosures([
+      ...bridgeTrustDisclosuresFromAddressData(profile.data, tokenBalances.data ?? []),
+      ...(bridgeRouteDiscovery.data ?? []),
+    ]),
+    [profile.data, tokenBalances.data, bridgeRouteDiscovery.data],
   );
-  const bridgeTrustDisclosureChecked = profile.isFetched && tokenBalances.isFetched;
+  const bridgeTrustDisclosureChecked = profile.isFetched && tokenBalances.isFetched && bridgeRouteDiscovery.isFetched;
   const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
   const liveAgentReputation = agentReputation.data ?? null;
   const profileActivityKind = profile.data?.activity?.kind ?? null;

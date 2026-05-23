@@ -205,7 +205,7 @@ type MrcMetadataRpcClient = {
 export const MRC_METADATA_BALANCE_LIMIT = 8;
 /** Upstream metadata contract required before Monoscan can show bridge route trust rows. */
 export const BRIDGE_ROUTE_DISCLOSURE_UPSTREAM_FIELD =
-  "AddressProfileResponse.bridgeRouteDisclosures or TokenBalanceRecord.bridgeRouteDisclosure(s)";
+  "AddressProfileResponse.bridgeRouteDisclosures, TokenBalanceRecord.bridgeRouteDisclosure(s), or /api/v1/bridge/routes";
 
 export type BridgeAdminControl = "none" | "consensusOnly" | "operatorKey" | "unknown";
 export type BridgeCircuitBreakerState = "armed" | "paused" | "disabled" | "unknown";
@@ -251,6 +251,11 @@ type CoreBridgeHelpers = {
 };
 
 const sdkBridgeHelpers = CoreSdk as unknown as CoreBridgeHelpers;
+
+type BridgeRoutesRpcClient = {
+  lythBridgeRoutes?: (query?: { limit?: number }) => Promise<unknown>;
+  call?: <T>(method: string, params?: unknown) => Promise<T>;
+};
 
 /* -------------------------------------------------------------------------- */
 /* bigint → number helpers.                                                    */
@@ -2109,6 +2114,7 @@ export interface BridgeTrustDisclosureRow {
 }
 
 export const BRIDGE_TRUST_DISCLOSURE_DISPLAY_LIMIT = 5;
+export const BRIDGE_ROUTES_DISCOVERY_LIMIT = 25;
 
 export interface BridgeTrustDisclosureDisplaySlice {
   preferred: BridgeTrustDisclosureRow | null;
@@ -2204,6 +2210,25 @@ function bridgeDisclosureValues(value: unknown, source: string): BridgeRouteDisc
       out.push({ value: raw, source });
     }
   }
+  return out;
+}
+
+function bridgeRouteDiscoverySources(value: unknown, source: string): BridgeRouteDisclosureSource[] {
+  const out: BridgeRouteDisclosureSource[] = [];
+  const raw = unknownRecord(value);
+  const data = raw?.data ?? value;
+  const dataRecord = unknownRecord(data);
+  const routes: unknown[] = Array.isArray(data)
+    ? data
+    : Array.isArray(dataRecord?.routes)
+      ? dataRecord.routes
+      : Array.isArray(dataRecord?.bridgeRoutes)
+        ? dataRecord.bridgeRoutes
+        : [];
+
+  routes.forEach((route, index) => {
+    out.push({ value: route, source: `${source}[${index}]` });
+  });
   return out;
 }
 
@@ -2376,6 +2401,23 @@ export function assessBridgeTrustDisclosures(
   }));
 }
 
+export function mergeBridgeTrustDisclosures(
+  disclosures: readonly BridgeTrustDisclosureRow[],
+): BridgeTrustDisclosureRow[] {
+  const sourceByKey = new Map<string, string>();
+  const routeByKey = new Map<string, BridgeRouteDisclosure>();
+  for (const row of disclosures) {
+    const key = bridgeRouteDisclosureKey(row.route);
+    if (!sourceByKey.has(key)) sourceByKey.set(key, row.source);
+    if (!routeByKey.has(key)) routeByKey.set(key, row.route);
+  }
+  return rankBridgeRoutesWithSdkFallback([...routeByKey.values()]).map(({ route, assessment }) => ({
+    route,
+    assessment,
+    source: sourceByKey.get(bridgeRouteDisclosureKey(route)) ?? "upstream",
+  }));
+}
+
 export function bridgeTrustDisclosureDisplaySlice(
   disclosures: readonly BridgeTrustDisclosureRow[],
   limit = BRIDGE_TRUST_DISCLOSURE_DISPLAY_LIMIT,
@@ -2436,6 +2478,40 @@ export function bridgeTrustDisclosuresFromAddressData(
   });
 
   return assessBridgeTrustDisclosures(sources);
+}
+
+function boundedBridgeRoutesLimit(limit = BRIDGE_ROUTES_DISCOVERY_LIMIT): number {
+  return Math.max(1, Math.min(Math.trunc(limit), 100));
+}
+
+export async function fetchBridgeRouteDisclosures(
+  limit = BRIDGE_ROUTES_DISCOVERY_LIMIT,
+): Promise<BridgeTrustDisclosureRow[] | null> {
+  const rowLimit = boundedBridgeRoutesLimit(limit);
+  try {
+    const response = await getApiClient()
+      .get<unknown>("/bridge/routes", { limit: rowLimit })
+      .catch(async () => {
+        const rpc = getRpcClient() as unknown as BridgeRoutesRpcClient;
+        if (typeof rpc.lythBridgeRoutes === "function") {
+          return rpc.lythBridgeRoutes({ limit: rowLimit });
+        }
+        return rpc.call?.<unknown>("lyth_bridgeRoutes", [{ limit: rowLimit }]) ?? null;
+      });
+    return assessBridgeTrustDisclosures(bridgeRouteDiscoverySources(response, "bridgeRoutes"));
+  } catch {
+    return null;
+  }
+}
+
+export function useBridgeRouteDisclosures(limit = BRIDGE_ROUTES_DISCOVERY_LIMIT) {
+  const rowLimit = boundedBridgeRoutesLimit(limit);
+  return useQuery<BridgeTrustDisclosureRow[] | null>({
+    queryKey: QK.bridgeRoutes(rowLimit),
+    enabled: isRpcConfigured(),
+    queryFn: () => fetchBridgeRouteDisclosures(rowLimit),
+    staleTime: 60_000,
+  });
 }
 
 export function useRichList(tokenId: string | undefined, limit = 30) {

@@ -201,7 +201,7 @@ describe("BridgeTrustDisclosuresCard", () => {
 
     expect(html).toContain("Bridge trust disclosures");
     expect(html).toContain("Disclosure unavailable");
-    expect(html).toContain("No bridgeRouteDisclosure or bridgeRouteDisclosures metadata");
+    expect(html).toContain("No bridgeRouteDisclosure, bridgeRouteDisclosures, or bridge route discovery metadata");
     expect(html).toContain("will not mark any bridge route as safe");
   });
 
