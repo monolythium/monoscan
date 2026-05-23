@@ -148,23 +148,60 @@ function readNumberField(value: unknown, keys: string[]): number | null {
   return null;
 }
 
+function readRequiredNumberField(value: unknown, keys: string[]): number {
+  const n = readNumberField(value, keys);
+  if (n === null) {
+    throw new Error(`missing numeric field: ${keys.join(" | ")}`);
+  }
+  return n;
+}
+
+function readStringField(value: unknown, keys: string[]): string | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  for (const key of keys) {
+    const raw = row[key];
+    if (typeof raw === "string" && raw.trim() !== "") return raw;
+    if (typeof raw === "bigint") return raw.toString();
+    if (typeof raw === "number" && Number.isFinite(raw)) return Math.trunc(raw).toString();
+  }
+  return null;
+}
+
+function readRequiredStringField(value: unknown, keys: string[]): string {
+  const s = readStringField(value, keys);
+  if (s === null) {
+    throw new Error(`missing string field: ${keys.join(" | ")}`);
+  }
+  return s;
+}
+
+function readObjectField(value: unknown, keys: string[]): unknown | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  for (const key of keys) {
+    if (row[key] !== undefined) return row[key];
+  }
+  return null;
+}
+
 function indexerHeightFromUnknown(value: unknown): number | null {
   return readNumberField(value, ["currentHeight", "current_height", "height"]);
 }
 
-function apiBlockToRpcHeader(block: ApiBlockHeader): BlockHeader {
+export function apiBlockToRpcHeader(block: ApiBlockHeader): BlockHeader {
   return {
     number: numToBig(block.height),
     hash: block.blockHash,
     parent_hash: block.parentHash,
     state_root: block.stateRoot,
     timestamp: numToBig(block.timestamp),
-    gas_used: numToBig(block.gasUsed),
-    gas_limit: numToBig(block.gasLimit),
+    gas_used: numToBig(readRequiredNumberField(block, ["executionUnitsUsed", "gasUsed", "gas_used"])),
+    gas_limit: numToBig(readRequiredNumberField(block, ["executionUnitLimit", "gasLimit", "gas_limit"])),
   };
 }
 
-function apiTxToRpcTx(tx: ApiTransactionView, chainId: number): TransactionView {
+export function apiTxToRpcTx(tx: ApiTransactionView, chainId: number): TransactionView {
   return {
     hash: tx.txHash,
     blockHash: tx.blockHash,
@@ -173,24 +210,24 @@ function apiTxToRpcTx(tx: ApiTransactionView, chainId: number): TransactionView 
     from: tx.from,
     to: tx.to,
     nonce: decimalToHexQuantity(tx.nonce),
-    value: decimalToHexQuantity(tx.value),
-    gas: decimalToHexQuantity(tx.gasLimit),
-    maxFeePerGas: decimalToHexQuantity(tx.maxFeePerGas),
-    maxPriorityFeePerGas: decimalToHexQuantity(tx.maxPriorityFeePerGas),
+    value: decimalToHexQuantity(readRequiredStringField(tx, ["valueLythoshi", "value"])),
+    gas: decimalToHexQuantity(readRequiredNumberField(tx, ["executionUnitLimit", "gasLimit", "gas"])),
+    maxFeePerGas: decimalToHexQuantity(readRequiredStringField(tx, ["maxExecutionFeeLythoshi", "maxFeePerGas"])),
+    maxPriorityFeePerGas: decimalToHexQuantity(readRequiredStringField(tx, ["priorityTipLythoshi", "maxPriorityFeePerGas"])),
     input: tx.input,
     type: "0x2",
     chainId: decimalToHexQuantity(chainId),
   };
 }
 
-function apiReceiptToRpcReceipt(receipt: ApiTransactionReceipt): TransactionReceipt {
+export function apiReceiptToRpcReceipt(receipt: ApiTransactionReceipt): TransactionReceipt {
   return {
     tx_hash: receipt.txHash,
     block_hash: receipt.blockHash,
     block_number: numToBig(receipt.blockHeight),
     tx_index: receipt.txIndex,
     status: receipt.status,
-    gas_used: numToBig(receipt.gasUsed),
+    gas_used: numToBig(readRequiredNumberField(receipt, ["executionUnitsUsed", "gasUsed", "gas_used"])),
   };
 }
 
@@ -206,7 +243,7 @@ function decodedInputHex(decoded: DecodeTxResponse): string {
   return "0x";
 }
 
-function decodedTxToRpcTx(decoded: DecodeTxResponse, chainId = 0): TransactionView {
+export function decodedTxToRpcTx(decoded: DecodeTxResponse, chainId = 0): TransactionView {
   return {
     hash: decoded.txHash,
     blockHash: decoded.blockHash,
@@ -215,24 +252,24 @@ function decodedTxToRpcTx(decoded: DecodeTxResponse, chainId = 0): TransactionVi
     from: decoded.from,
     to: decoded.to,
     nonce: decimalToHexQuantity(decoded.nonce),
-    value: decoded.value,
-    gas: decimalToHexQuantity(decoded.gasLimit),
-    maxFeePerGas: decoded.maxFeePerGas,
-    maxPriorityFeePerGas: decoded.maxPriorityFeePerGas,
+    value: decimalToHexQuantity(readRequiredStringField(decoded, ["valueLythoshi", "value"])),
+    gas: decimalToHexQuantity(readRequiredStringField(decoded, ["executionUnitLimit", "gasLimit"])),
+    maxFeePerGas: decimalToHexQuantity(readRequiredStringField(decoded, ["maxExecutionFeeLythoshi", "maxFeePerGas"])),
+    maxPriorityFeePerGas: decimalToHexQuantity(readRequiredStringField(decoded, ["priorityTipLythoshi", "maxPriorityFeePerGas"])),
     input: decodedInputHex(decoded),
     type: "0x2",
     chainId: decimalToHexQuantity(chainId),
   };
 }
 
-function decodedTxToRpcReceipt(decoded: DecodeTxResponse): TransactionReceipt {
+export function decodedTxToRpcReceipt(decoded: DecodeTxResponse): TransactionReceipt {
   return {
     tx_hash: decoded.txHash,
     block_hash: decoded.blockHash,
     block_number: numToBig(Number(decoded.blockNumber)),
     tx_index: decoded.txIndex,
     status: decoded.status === "success" ? 1 : decoded.status === "reverted" ? 0 : -1,
-    gas_used: numToBig(Number(decoded.gasUsed ?? 0n)),
+    gas_used: numToBig(readNumberField(decoded, ["executionUnitsUsed", "gasUsed"]) ?? 0),
   };
 }
 
@@ -607,7 +644,8 @@ export interface LatestTransactionRow {
   from: string;
   to: string | null;
   value: string;
-  gasLimit: number;
+  executionUnitLimit: number;
+  fee: unknown | null;
   input: string;
 }
 
@@ -620,7 +658,7 @@ export interface LatestTransactionsDigest {
   source: "lyth_txFeed" | "block_scan";
 }
 
-function apiBlockTransactionsToRows(page: ApiBlockTransactionsData): LatestTransactionRow[] {
+export function apiBlockTransactionsToRows(page: ApiBlockTransactionsData): LatestTransactionRow[] {
   return page.transactions.map((tx) => ({
     hash: tx.txHash,
     blockNumber: tx.blockHeight,
@@ -629,13 +667,14 @@ function apiBlockTransactionsToRows(page: ApiBlockTransactionsData): LatestTrans
     txIndex: tx.txIndex,
     from: tx.from,
     to: tx.to,
-    value: tx.value,
-    gasLimit: tx.gasLimit,
+    value: readRequiredStringField(tx, ["valueLythoshi", "value"]),
+    executionUnitLimit: readRequiredNumberField(tx, ["executionUnitLimit", "gasLimit", "gas"]),
+    fee: readObjectField(tx, ["fee"]),
     input: tx.input,
   }));
 }
 
-function txFeedToRows(feed: TxFeedResponse): LatestTransactionRow[] {
+export function txFeedToRows(feed: TxFeedResponse): LatestTransactionRow[] {
   return feed.transactions.map((tx) => ({
     hash: tx.txHash,
     blockNumber: tx.blockNumber,
@@ -645,7 +684,8 @@ function txFeedToRows(feed: TxFeedResponse): LatestTransactionRow[] {
     from: tx.from,
     to: tx.to,
     value: tx.value,
-    gasLimit: tx.gasLimit,
+    executionUnitLimit: readRequiredNumberField(tx, ["executionUnitLimit", "gasLimit", "gas"]),
+    fee: readObjectField(tx, ["fee"]),
     input: tx.input,
   }));
 }

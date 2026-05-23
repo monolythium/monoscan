@@ -1002,7 +1002,7 @@ const TransactionsPage = ({ go }: any) => {
       from: tx.from,
       to: tx.to ?? "contract creation",
       valueLabel: `${_fmtRawToken(tx.value)} LYTH`,
-      executionLabel: _fmt(tx.gasLimit),
+      executionLabel: _fmt(tx.executionUnitLimit ?? tx.gasLimit ?? 0),
       methodLabel: input && input !== "0x" ? `${input.slice(0, 10)} call` : "transfer",
       status: "ok",
       source: "live",
