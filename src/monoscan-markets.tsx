@@ -13,8 +13,12 @@ import {
   buildNativeNftBuyListingForwarderInput,
   buildNativeNftCancelListingForwarderInput,
   buildNativeNftCreateListingForwarderInput,
+  buildNativeNftPlaceAuctionBidForwarderInput,
+  buildNativeNftSettleAuctionForwarderInput,
+  buildNativeNftSweepExpiredListingsForwarderInput,
   buildNativeSpotLimitOrderForwarderInput,
   type NativeNftAssetStandard,
+  type NativeNftListingKind,
   type SpotLimitOrderSide,
 } from "@monolythium/core-sdk";
 import { MARKETS } from "./data/mock";
@@ -198,6 +202,7 @@ export interface NftListingCreateWalletRequestArgs {
   quantity: string;
   paymentAsset: string | null | undefined;
   price: string;
+  kind?: NativeNftListingKind;
   expiresAtBlock: string | number | bigint;
   forwarderContractAddress: string | null | undefined;
   maxCycles?: string | number | bigint;
@@ -207,6 +212,32 @@ export interface NftListingCreateWalletRequestArgs {
 export interface NftListingCancelWalletRequestArgs {
   listingId: string | null | undefined;
   callerAddress: string | null | undefined;
+  forwarderContractAddress: string | null | undefined;
+  maxCycles?: string | number | bigint;
+  executionUnitLimitHex?: string;
+}
+
+export interface NftAuctionBidWalletRequestArgs {
+  listingId: string | null | undefined;
+  bidderAddress: string | null | undefined;
+  amount: string;
+  currentBlock: string | number | bigint | null | undefined;
+  forwarderContractAddress: string | null | undefined;
+  maxCycles?: string | number | bigint;
+  executionUnitLimitHex?: string;
+}
+
+export interface NftAuctionSettleWalletRequestArgs {
+  listingId: string | null | undefined;
+  currentBlock: string | number | bigint | null | undefined;
+  forwarderContractAddress: string | null | undefined;
+  maxCycles?: string | number | bigint;
+  executionUnitLimitHex?: string;
+}
+
+export interface NftListingSweepWalletRequestArgs {
+  listingIds: readonly string[];
+  currentBlock: string | number | bigint | null | undefined;
   forwarderContractAddress: string | null | undefined;
   maxCycles?: string | number | bigint;
   executionUnitLimitHex?: string;
@@ -322,7 +353,7 @@ export function buildNftListingCreateWalletRequest(
     quantity: args.quantity.trim(),
     paymentAsset,
     price: args.price.trim(),
-    kind: "fixed-price",
+    kind: args.kind ?? "fixed-price",
     expiresAtBlock: args.expiresAtBlock,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
   return {
@@ -355,6 +386,106 @@ export function buildNftListingCancelWalletRequest(
   const forwarderInput = buildNativeNftCancelListingForwarderInput({
     listingId,
     caller,
+  }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  return {
+    method: "monolythium_submitMrvNativeCall",
+    params: [{
+      contractAddress: forwarder,
+      input: forwarderInput.input,
+      executionUnitLimitHex:
+        args.executionUnitLimitHex ?? NATIVE_MARKET_MRV_EXECUTION_UNIT_LIMIT_HEX,
+      valueWeiHex: "0x0",
+    }],
+  };
+}
+
+export function buildNftAuctionBidWalletRequest(
+  args: NftAuctionBidWalletRequestArgs,
+): NftListingActionWalletRequest {
+  const listingId = args.listingId?.trim();
+  if (!listingId) {
+    throw new Error("Native NFT listing id is required before placing an auction bid.");
+  }
+  const bidder = args.bidderAddress?.trim();
+  if (!bidder) {
+    throw new Error("Wallet account is required before placing an auction bid.");
+  }
+  if (args.currentBlock === null || args.currentBlock === undefined) {
+    throw new Error("Live chain head is required before placing an auction bid.");
+  }
+  const forwarder = args.forwarderContractAddress?.trim();
+  if (!forwarder) {
+    throw new Error("MRV native market forwarder address is not configured.");
+  }
+  const amount = args.amount.trim();
+  if (!amount) {
+    throw new Error("Auction bid amount is required before placing an auction bid.");
+  }
+  const forwarderInput = buildNativeNftPlaceAuctionBidForwarderInput({
+    listingId,
+    bidder,
+    amount,
+    currentBlock: args.currentBlock,
+  }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  return {
+    method: "monolythium_submitMrvNativeCall",
+    params: [{
+      contractAddress: forwarder,
+      input: forwarderInput.input,
+      executionUnitLimitHex:
+        args.executionUnitLimitHex ?? NATIVE_MARKET_MRV_EXECUTION_UNIT_LIMIT_HEX,
+      valueWeiHex: "0x0",
+    }],
+  };
+}
+
+export function buildNftAuctionSettleWalletRequest(
+  args: NftAuctionSettleWalletRequestArgs,
+): NftListingActionWalletRequest {
+  const listingId = args.listingId?.trim();
+  if (!listingId) {
+    throw new Error("Native NFT listing id is required before settling an auction.");
+  }
+  if (args.currentBlock === null || args.currentBlock === undefined) {
+    throw new Error("Live chain head is required before settling an auction.");
+  }
+  const forwarder = args.forwarderContractAddress?.trim();
+  if (!forwarder) {
+    throw new Error("MRV native market forwarder address is not configured.");
+  }
+  const forwarderInput = buildNativeNftSettleAuctionForwarderInput({
+    listingId,
+    currentBlock: args.currentBlock,
+  }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  return {
+    method: "monolythium_submitMrvNativeCall",
+    params: [{
+      contractAddress: forwarder,
+      input: forwarderInput.input,
+      executionUnitLimitHex:
+        args.executionUnitLimitHex ?? NATIVE_MARKET_MRV_EXECUTION_UNIT_LIMIT_HEX,
+      valueWeiHex: "0x0",
+    }],
+  };
+}
+
+export function buildNftListingSweepWalletRequest(
+  args: NftListingSweepWalletRequestArgs,
+): NftListingActionWalletRequest {
+  const listingIds = args.listingIds.map((id) => id.trim()).filter(Boolean);
+  if (listingIds.length === 0) {
+    throw new Error("At least one native NFT listing id is required before sweeping listings.");
+  }
+  if (args.currentBlock === null || args.currentBlock === undefined) {
+    throw new Error("Live chain head is required before sweeping listings.");
+  }
+  const forwarder = args.forwarderContractAddress?.trim();
+  if (!forwarder) {
+    throw new Error("MRV native market forwarder address is not configured.");
+  }
+  const forwarderInput = buildNativeNftSweepExpiredListingsForwarderInput({
+    listingIds,
+    currentBlock: args.currentBlock,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
   return {
     method: "monolythium_submitMrvNativeCall",
@@ -492,6 +623,18 @@ const NativeMarketStateTable = ({ title, rows, empty }: any) => (
   </div>
 );
 
+const _nativeNftListingKindText = (row: NativeMarketStateDisplayRow): string => {
+  const field = row.fields.find(([key]) =>
+    key === "listingKind" || key === "listing_kind" || key === "kind"
+  );
+  return field?.[1]?.toLowerCase() ?? "";
+};
+
+const _isNativeNftAuctionListing = (row: NativeMarketStateDisplayRow): boolean => {
+  const kind = _nativeNftListingKindText(row);
+  return kind.includes("auction") || kind.includes("english");
+};
+
 const NativeNftListingsTable = ({
   rows,
   empty,
@@ -518,6 +661,10 @@ const NativeNftListingsTable = ({
     quantity: "1",
     paymentAsset: `0x${"00".repeat(32)}`,
     price: "1",
+    listingKind: "fixed-price" as "fixed-price" | "english-auction",
+    auctionReserve: "1",
+    auctionEndBlock: "0",
+    minBidIncrementBps: "500",
     nonce: "0",
     expiresAtBlock: "0",
   });
@@ -526,6 +673,7 @@ const NativeNftListingsTable = ({
     message?: string;
     txHash?: string | null;
   }>({ state: "idle" });
+  const [auctionBidAmount, setAuctionBidAmount] = useState("1");
 
   const updateCreateForm = (key: keyof typeof createForm, value: string) => {
     setCreateForm((current) => ({ ...current, [key]: value }));
@@ -541,6 +689,15 @@ const NativeNftListingsTable = ({
       setCreateSubmit({ state: "submitting", message: "awaiting wallet" });
       const accounts = await provider.request({ method: "eth_requestAccounts", params: [] });
       const sellerAddress = _walletAccount(accounts);
+      const listingKind: NativeNftListingKind = createForm.listingKind === "english-auction"
+        ? {
+            english: {
+              reserve: createForm.auctionReserve.trim() || createForm.price.trim(),
+              endBlock: createForm.auctionEndBlock.trim(),
+              minBidIncrementBps: createForm.minBidIncrementBps.trim() || "0",
+            },
+          }
+        : "fixed-price";
       const request = buildNftListingCreateWalletRequest({
         sellerAddress,
         listingNonce: createForm.nonce.trim() || "0",
@@ -550,6 +707,7 @@ const NativeNftListingsTable = ({
         quantity: createForm.quantity,
         paymentAsset: createForm.paymentAsset,
         price: createForm.price,
+        kind: listingKind,
         expiresAtBlock: createForm.expiresAtBlock.trim() || "0",
         forwarderContractAddress: forwarderAddress,
       });
@@ -629,6 +787,96 @@ const NativeNftListingsTable = ({
     }
   };
 
+  const submitAuctionBid = async (row: NativeMarketStateDisplayRow) => {
+    try {
+      const provider = typeof window !== "undefined" ? window.monolythium : undefined;
+      if (!provider?.request) {
+        throw new Error("Monolythium wallet provider not detected.");
+      }
+      setBuySubmit({ listingId: row.primaryId, state: "submitting", message: "awaiting wallet" });
+      const accounts = await provider.request({ method: "eth_requestAccounts", params: [] });
+      const bidderAddress = _walletAccount(accounts);
+      const request = buildNftAuctionBidWalletRequest({
+        listingId: row.primaryId,
+        bidderAddress,
+        amount: auctionBidAmount,
+        currentBlock: latestBlock,
+        forwarderContractAddress: forwarderAddress,
+      });
+      const result = await provider.request(request);
+      const txHash = _walletTxHash(result);
+      setBuySubmit({
+        listingId: row.primaryId,
+        state: "success",
+        txHash,
+        message: txHash ? `bid submitted ${_shortHash(txHash, 10, 6)}` : "bid submitted",
+      });
+      window.__msToast?.(txHash ? `NFT auction bid submitted ${_shortHash(txHash, 10, 6)}` : "NFT auction bid submitted");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "NFT auction bid failed.";
+      setBuySubmit({ listingId: row.primaryId, state: "error", message });
+      if (typeof window !== "undefined") window.__msToast?.(message);
+    }
+  };
+
+  const submitAuctionSettle = async (row: NativeMarketStateDisplayRow) => {
+    try {
+      const provider = typeof window !== "undefined" ? window.monolythium : undefined;
+      if (!provider?.request) {
+        throw new Error("Monolythium wallet provider not detected.");
+      }
+      setBuySubmit({ listingId: row.primaryId, state: "submitting", message: "awaiting wallet" });
+      await provider.request({ method: "eth_requestAccounts", params: [] });
+      const request = buildNftAuctionSettleWalletRequest({
+        listingId: row.primaryId,
+        currentBlock: latestBlock,
+        forwarderContractAddress: forwarderAddress,
+      });
+      const result = await provider.request(request);
+      const txHash = _walletTxHash(result);
+      setBuySubmit({
+        listingId: row.primaryId,
+        state: "success",
+        txHash,
+        message: txHash ? `settle submitted ${_shortHash(txHash, 10, 6)}` : "settle submitted",
+      });
+      window.__msToast?.(txHash ? `NFT auction settle submitted ${_shortHash(txHash, 10, 6)}` : "NFT auction settle submitted");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "NFT auction settle failed.";
+      setBuySubmit({ listingId: row.primaryId, state: "error", message });
+      if (typeof window !== "undefined") window.__msToast?.(message);
+    }
+  };
+
+  const submitSweep = async (row: NativeMarketStateDisplayRow) => {
+    try {
+      const provider = typeof window !== "undefined" ? window.monolythium : undefined;
+      if (!provider?.request) {
+        throw new Error("Monolythium wallet provider not detected.");
+      }
+      setBuySubmit({ listingId: row.primaryId, state: "submitting", message: "awaiting wallet" });
+      await provider.request({ method: "eth_requestAccounts", params: [] });
+      const request = buildNftListingSweepWalletRequest({
+        listingIds: row.primaryId ? [row.primaryId] : [],
+        currentBlock: latestBlock,
+        forwarderContractAddress: forwarderAddress,
+      });
+      const result = await provider.request(request);
+      const txHash = _walletTxHash(result);
+      setBuySubmit({
+        listingId: row.primaryId,
+        state: "success",
+        txHash,
+        message: txHash ? `sweep submitted ${_shortHash(txHash, 10, 6)}` : "sweep submitted",
+      });
+      window.__msToast?.(txHash ? `NFT listing sweep submitted ${_shortHash(txHash, 10, 6)}` : "NFT listing sweep submitted");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "NFT listing sweep failed.";
+      setBuySubmit({ listingId: row.primaryId, state: "error", message });
+      if (typeof window !== "undefined") window.__msToast?.(message);
+    }
+  };
+
   const canCreateListing = Boolean(
     forwarderAddress &&
     createForm.collectionId.trim() &&
@@ -636,6 +884,10 @@ const NativeNftListingsTable = ({
     createForm.paymentAsset.trim() &&
     createForm.quantity.trim() &&
     createForm.price.trim() &&
+    (createForm.listingKind !== "english-auction" ||
+      (createForm.auctionReserve.trim() &&
+        createForm.auctionEndBlock.trim() &&
+        createForm.minBidIncrementBps.trim())) &&
     createSubmit.state !== "submitting",
   );
 
@@ -652,6 +904,17 @@ const NativeNftListingsTable = ({
           >
             <option value="mrc721">MRC-721</option>
             <option value="mrc1155">MRC-1155</option>
+          </select>
+        </label>
+        <label className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+          Sale type
+          <select
+            value={createForm.listingKind}
+            onChange={(event)=>updateCreateForm("listingKind", event.currentTarget.value as "fixed-price" | "english-auction")}
+            style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",borderRadius:6,border:"1px solid var(--fg-700)",background:"rgba(255,255,255,0.03)",color:"var(--fg-200)"}}
+          >
+            <option value="fixed-price">Fixed price</option>
+            <option value="english-auction">English auction</option>
           </select>
         </label>
         {[
@@ -673,6 +936,30 @@ const NativeNftListingsTable = ({
             />
           </label>
         ))}
+        {createForm.listingKind === "english-auction" && ([
+          ["auctionReserve", "Reserve"],
+          ["auctionEndBlock", "Auction end"],
+          ["minBidIncrementBps", "Min bump bps"],
+        ] as const).map(([key, label])=>(
+          <label key={key} className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+            {label}
+            <input
+              value={createForm[key]}
+              onChange={(event)=>updateCreateForm(key, event.currentTarget.value)}
+              className="mono"
+              style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",borderRadius:6,border:"1px solid var(--fg-700)",background:"rgba(255,255,255,0.03)",color:"var(--fg-200)"}}
+            />
+          </label>
+        ))}
+        <label className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+          Auction bid
+          <input
+            value={auctionBidAmount}
+            onChange={(event)=>setAuctionBidAmount(event.currentTarget.value)}
+            className="mono"
+            style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",borderRadius:6,border:"1px solid var(--fg-700)",background:"rgba(255,255,255,0.03)",color:"var(--fg-200)"}}
+          />
+        </label>
         <button
           className="mono"
           disabled={!canCreateListing}
@@ -721,13 +1008,40 @@ const NativeNftListingsTable = ({
           <tbody>
             {rows.map((row, i)=> {
               const activeSubmit = buySubmit.listingId === row.primaryId ? buySubmit : null;
+              const isAuctionListing = _isNativeNftAuctionListing(row);
               const canBuy = Boolean(
+                row.primaryId &&
+                latestBlock !== null &&
+                forwarderAddress &&
+                !isAuctionListing &&
+                row.status !== "filled" &&
+                row.status !== "cancelled" &&
+                row.status !== "expired",
+              );
+              const canAuctionBid = Boolean(
+                isAuctionListing &&
                 row.primaryId &&
                 latestBlock !== null &&
                 forwarderAddress &&
                 row.status !== "filled" &&
                 row.status !== "cancelled" &&
-                row.status !== "expired",
+                row.status !== "expired" &&
+                activeSubmit?.state !== "submitting",
+              );
+              const canAuctionSettle = Boolean(
+                isAuctionListing &&
+                row.primaryId &&
+                latestBlock !== null &&
+                forwarderAddress &&
+                row.status !== "filled" &&
+                row.status !== "cancelled" &&
+                activeSubmit?.state !== "submitting",
+              );
+              const canSweepListing = Boolean(
+                row.primaryId &&
+                latestBlock !== null &&
+                forwarderAddress &&
+                activeSubmit?.state !== "submitting",
               );
               return (
                 <tr key={`${row.kind}-${row.primaryId ?? row.collectionId ?? i}`}>
@@ -752,7 +1066,7 @@ const NativeNftListingsTable = ({
                     )}
                   </td>
                   <td style={{textAlign:"right"}}>
-                    <div style={{display:"inline-flex",gap:6}}>
+                    <div style={{display:"inline-flex",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
                       <button
                         className="mono"
                         disabled={!canBuy || activeSubmit?.state === "submitting"}
@@ -790,6 +1104,54 @@ const NativeNftListingsTable = ({
                         }}
                       >
                         Cancel
+                      </button>
+                      <button
+                        className="mono"
+                        disabled={!canAuctionBid}
+                        onClick={()=>submitAuctionBid(row)}
+                        style={{
+                          padding:"5px 10px",
+                          borderRadius:6,
+                          border:"1px solid var(--fg-700)",
+                          background:canAuctionBid ? "rgba(242,180,65,0.12)" : "rgba(255,255,255,0.03)",
+                          color:canAuctionBid ? "var(--gold)" : "var(--fg-500)",
+                          cursor:canAuctionBid ? "pointer" : "not-allowed",
+                          fontSize:10.5,
+                        }}
+                      >
+                        Bid
+                      </button>
+                      <button
+                        className="mono"
+                        disabled={!canAuctionSettle}
+                        onClick={()=>submitAuctionSettle(row)}
+                        style={{
+                          padding:"5px 10px",
+                          borderRadius:6,
+                          border:"1px solid var(--fg-700)",
+                          background:canAuctionSettle ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.03)",
+                          color:canAuctionSettle ? "var(--fg-300)" : "var(--fg-500)",
+                          cursor:canAuctionSettle ? "pointer" : "not-allowed",
+                          fontSize:10.5,
+                        }}
+                      >
+                        Settle
+                      </button>
+                      <button
+                        className="mono"
+                        disabled={!canSweepListing}
+                        onClick={()=>submitSweep(row)}
+                        style={{
+                          padding:"5px 10px",
+                          borderRadius:6,
+                          border:"1px solid var(--fg-700)",
+                          background:canSweepListing ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.03)",
+                          color:canSweepListing ? "var(--fg-300)" : "var(--fg-500)",
+                          cursor:canSweepListing ? "pointer" : "not-allowed",
+                          fontSize:10.5,
+                        }}
+                      >
+                        Sweep
                       </button>
                     </div>
                   </td>
