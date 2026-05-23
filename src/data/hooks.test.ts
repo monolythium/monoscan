@@ -365,6 +365,101 @@ describe("live-SDK seam", () => {
     expect(result?.[0].assessment.accepted).toBe(true);
   });
 
+  it("reads mono-core BridgeRoutesResponse envelopes with discovery-only disclosures", async () => {
+    const route = {
+      routeId: "eth-usdc-mainnet",
+      bridge: "ThirdParty Light Client",
+      asset: "USDC",
+      sourceChain: "ethereum",
+      destinationChain: "monolythium",
+      verifier: {
+        model: "zk-light-client",
+        participantCount: 12,
+        threshold: 8,
+      },
+      drainCapAtomic: "250000000000",
+      finalityBlocks: 64,
+      cooldownSeconds: 7200,
+      adminControl: "consensusOnly",
+      circuitBreaker: "armed",
+      insuranceAtomic: "500000000000",
+    };
+    const bridgeDisclosureOnlyRoute = {
+      ...route,
+      routeId: "arb-usdc-mainnet",
+      sourceChain: "arbitrum",
+      finalityBlocks: 32,
+    };
+    const response = {
+      selection: {
+        selected: null,
+        candidates: [],
+        blockedReasons: ["bridge route selection requires transfer intent"],
+      },
+      routeSelectionReady: false,
+      quoteReady: false,
+      submitReady: false,
+      blockedReasons: ["bridge route selection requires transfer intent"],
+      warnings: [],
+      routes: [route],
+      bridgeRouteDisclosures: [route, bridgeDisclosureOnlyRoute],
+      source: {
+        routeCount: 2,
+        globalRouteIndexAvailable: false,
+        routeDisclosureSource: "request.routeDisclosures_or_indexer.tokenBalances",
+      },
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "get")
+      .mockResolvedValue(apiEnvelope(response));
+
+    const result = await fetchBridgeRouteDisclosures(5);
+
+    expect(apiSpy).toHaveBeenCalledWith("/bridge/routes", { limit: 5 });
+    expect(result).toHaveLength(2);
+    const routeIds = new Set(result?.map((row) => row.route.routeId));
+    expect(routeIds).toEqual(new Set(["eth-usdc-mainnet", "arb-usdc-mainnet"]));
+    expect(result?.find((row) => row.route.routeId === "eth-usdc-mainnet")?.source)
+      .toBe("bridgeRoutes[0]");
+    expect(result?.find((row) => row.route.routeId === "arb-usdc-mainnet")?.source)
+      .toBe("bridgeRoutes.bridgeRouteDisclosures[1]");
+    expect(result?.every((row) => row.assessment.accepted)).toBe(true);
+  });
+
+  it("reads bridgeRouteDisclosures-only discovery responses from API envelopes", async () => {
+    const response = {
+      routeSelectionReady: false,
+      quoteReady: false,
+      submitReady: false,
+      bridgeRouteDisclosures: [{
+        routeId: "base-usdc-mainnet",
+        bridge: "Committee Relay",
+        asset: "USDC",
+        sourceChain: "base",
+        destinationChain: "monolythium",
+        verifier: {
+          model: "committee",
+          participantCount: 9,
+          threshold: 6,
+        },
+        drainCapAtomic: "250000000000",
+        finalityBlocks: 48,
+        cooldownSeconds: 7200,
+        adminControl: "none",
+        circuitBreaker: "armed",
+        insuranceAtomic: "500000000000",
+      }],
+    };
+    vi.spyOn(ApiClient.prototype, "get").mockResolvedValue(apiEnvelope(response));
+
+    const result = await fetchBridgeRouteDisclosures(5);
+
+    expect(result).toHaveLength(1);
+    expect(result?.[0].route.routeId).toBe("base-usdc-mainnet");
+    expect(result?.[0].source).toBe("bridgeRoutes.bridgeRouteDisclosures[0]");
+    expect(result?.[0].assessment.accepted).toBe(true);
+  });
+
   it("falls back to lyth_bridgeRoutes when bridge route discovery API is unavailable", async () => {
     const response = {
       routes: [{
