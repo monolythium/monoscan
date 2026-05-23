@@ -33,10 +33,16 @@ const _toBig = (v: string | bigint | number | null | undefined): bigint => {
   return BigInt(v);
 };
 
-const _formatLyth = (wei: bigint): string => {
-  const whole = wei / 1_000_000_000_000_000_000n;
-  const frac = (wei % 1_000_000_000_000_000_000n) / 1_000_000_000_000_000n;
-  return `${whole}.${frac.toString().padStart(3, "0")}`;
+const LYTHOSHI_PER_LYTH = 100_000_000n;
+
+const _formatLyth = (lythoshi: bigint): string => {
+  const sign = lythoshi < 0n ? "-" : "";
+  const abs = lythoshi < 0n ? -lythoshi : lythoshi;
+  const whole = abs / LYTHOSHI_PER_LYTH;
+  const frac = abs % LYTHOSHI_PER_LYTH;
+  if (frac === 0n) return `${sign}${whole}`;
+  const fracText = frac.toString().padStart(8, "0").replace(/0+$/, "");
+  return `${sign}${whole}.${fracText}`;
 };
 
 /** Deterministic pseudo-random in [0, 1) — keyed off an integer. */
@@ -86,8 +92,8 @@ export async function get_block(input: GetBlockInput): Promise<GetBlockResult> {
   const seed = n;
   const cluster = ((seed % 28) + 1).toString().padStart(3, "0");
   const txCount = 14 + Math.floor(_rand(seed) * 60);
-  const gasLimit = 30_000_000;
-  const gasUsed = Math.floor(gasLimit * (0.18 + _rand(seed + 1) * 0.4));
+  const executionUnitLimit = 30_000_000;
+  const executionUnitsUsed = Math.floor(executionUnitLimit * (0.18 + _rand(seed + 1) * 0.4));
   const fallback: GetBlockResult = {
     number: n,
     hash: _shortHash(n),
@@ -98,8 +104,8 @@ export async function get_block(input: GetBlockInput): Promise<GetBlockResult> {
       .toISOString()
       .replace(/\.\d{3}Z$/, "Z"),
     tx_count: txCount,
-    gas_used: gasUsed,
-    gas_limit: gasLimit,
+    gas_used: executionUnitsUsed,
+    gas_limit: executionUnitLimit,
     bls_agg_ms: 1.2 + _rand(seed + 2) * 0.9,
     dac_coverage: 0.94 + _rand(seed + 3) * 0.05,
     status: "committed",
@@ -662,7 +668,7 @@ export const TOOL_CATALOG: ReadonlyArray<{
 }> = [
   {
     name: "get_block",
-    description: "Fetch a block by number or hash. Returns committed state, gas, transaction count, BLS aggregation, DAC coverage.",
+    description: "Fetch a block by number or hash. Returns committed state, execution-unit usage, transaction count, BLS aggregation, DAC coverage.",
     input_schema: {
       type: "object",
       properties: {
