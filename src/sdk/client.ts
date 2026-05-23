@@ -58,6 +58,12 @@ export function getEnvNativeMarketForwarderAddress(): string | null {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
+export function getEnvNativeAgentForwarderAddress(): string | null {
+  const configured = import.meta.env.VITE_MONOSCAN_MRV_NATIVE_AGENT_FORWARDER as string | undefined;
+  const trimmed = configured?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
 export function getNativeMarketForwarderAddress(
   capabilities?: CapabilitiesResponse | null,
   requestBytes?: number | null,
@@ -72,6 +78,22 @@ export function getNativeMarketForwarderAddress(
     return match?.contractAddress ?? null;
   }
   return getEnvNativeMarketForwarderAddress();
+}
+
+export function getNativeAgentForwarderAddress(
+  capabilities?: CapabilitiesResponse | null,
+  requestBytes?: number | null,
+): string | null {
+  const rows = capabilities?.nativeModuleForwarders?.agent ?? [];
+  if (rows.length > 0) {
+    const match = rows.find((row) =>
+      row.module === "agent" &&
+      HEX20_RE.test(row.contractAddress) &&
+      (requestBytes === null || requestBytes === undefined || row.requestBytes === requestBytes)
+    );
+    return match?.contractAddress ?? null;
+  }
+  return getEnvNativeAgentForwarderAddress();
 }
 
 let _marketIds: Record<string, string> | null = null;
