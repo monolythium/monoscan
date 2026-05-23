@@ -123,6 +123,27 @@ interface PendingRewardsEnvelope {
   data: PendingRewardsLive;
 }
 
+export interface RedemptionQueueTicketLive {
+  index: number;
+  cluster: number;
+  weightBps: number;
+  createdHeight: number;
+  maturityHeight: number;
+  mature: boolean | null;
+}
+
+export interface RedemptionQueueLive {
+  wallet: string;
+  tickets: RedemptionQueueTicketLive[];
+  count: number;
+  returned: number;
+  block: unknown;
+}
+
+interface RedemptionQueueEnvelope {
+  data: unknown;
+}
+
 interface AgentReputationEnvelope {
   data: AgentReputationResponse;
 }
@@ -133,6 +154,15 @@ type PendingRewardsApiClient = ReturnType<typeof getApiClient> & {
 
 type PendingRewardsRpcClient = RpcClient & {
   lythPendingRewards?: (wallet: string, block?: "latest") => Promise<PendingRewardsLive>;
+};
+
+type RedemptionQueueApiClient = ReturnType<typeof getApiClient> & {
+  addressRedemptionQueue?: (address: string, block?: "latest") => Promise<RedemptionQueueEnvelope>;
+};
+
+type RedemptionQueueRpcClient = RpcClient & {
+  lythRedemptionQueue?: (wallet: string, block?: "latest") => Promise<unknown>;
+  call?: <T>(method: string, params?: unknown) => Promise<T>;
 };
 
 export interface MrcMetadataBalanceIdentity {
@@ -311,8 +341,62 @@ function unknownRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function readBooleanField(value: unknown, keys: string[]): boolean | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  for (const key of keys) {
+    const raw = row[key];
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "string") {
+      const normalized = raw.trim().toLowerCase();
+      if (normalized === "true") return true;
+      if (normalized === "false") return false;
+    }
+  }
+  return null;
+}
+
 function indexerHeightFromUnknown(value: unknown): number | null {
   return readNumberField(value, ["currentHeight", "current_height", "height"]);
+}
+
+function normalizeRedemptionQueueTicket(value: unknown, fallbackIndex: number): RedemptionQueueTicketLive | null {
+  const row = unknownRecord(value);
+  if (!row) return null;
+  const cluster = readNumberField(row, ["cluster", "clusterId", "cluster_id"]);
+  const weightBps = readNumberField(row, ["weightBps", "weight_bps"]);
+  const createdHeight = readNumberField(row, ["createdHeight", "created_height"]);
+  const maturityHeight = readNumberField(row, ["maturityHeight", "maturity_height"]);
+  if (cluster === null || weightBps === null || createdHeight === null || maturityHeight === null) {
+    return null;
+  }
+  return {
+    index: readNumberField(row, ["index", "ticketIndex", "ticket_index"]) ?? fallbackIndex,
+    cluster,
+    weightBps,
+    createdHeight,
+    maturityHeight,
+    mature: readBooleanField(row, ["mature", "isMature", "is_mature"]),
+  };
+}
+
+export function normalizeRedemptionQueueResponse(value: unknown): RedemptionQueueLive | null {
+  const envelope = unknownRecord(value);
+  const root = unknownRecord(envelope?.data ?? value);
+  if (!root) return null;
+  const rawTickets = readObjectField(root, ["tickets", "rows"]);
+  const ticketRows = Array.isArray(rawTickets)
+    ? rawTickets
+        .map((ticket, index) => normalizeRedemptionQueueTicket(ticket, index))
+        .filter((ticket): ticket is RedemptionQueueTicketLive => ticket !== null)
+    : [];
+  return {
+    wallet: readStringField(root, ["wallet", "address"]) ?? "",
+    tickets: ticketRows,
+    count: readNumberField(root, ["count", "total"]) ?? ticketRows.length,
+    returned: readNumberField(root, ["returned", "returnedCount", "returned_count"]) ?? ticketRows.length,
+    block: readObjectField(root, ["block"]) ?? null,
+  };
 }
 
 export function apiBlockToRpcHeader(block: ApiBlockHeader): BlockHeader {
@@ -1492,6 +1576,40 @@ export function usePendingRewards(addr: string | undefined) {
           return typeof rpc.lythPendingRewards === "function"
             ? await rpc.lythPendingRewards(addr as string, "latest")
             : null;
+        } catch {
+          return null;
+        }
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useRedemptionQueue(addr: string | undefined) {
+  return useQuery<RedemptionQueueLive | null>({
+    queryKey: QK.redemptionQueue(addr ?? ""),
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        const api = getApiClient() as RedemptionQueueApiClient;
+        const response =
+          typeof api.addressRedemptionQueue === "function"
+            ? await api.addressRedemptionQueue(addr as string, "latest")
+            : await api.get<RedemptionQueueEnvelope>(
+                `/addresses/${encodeURIComponent(addr as string)}/redemption-queue`,
+                { block: "latest" },
+              );
+        return normalizeRedemptionQueueResponse(response);
+      } catch {
+        try {
+          const rpc = getRpcClient() as RedemptionQueueRpcClient;
+          const response =
+            typeof rpc.lythRedemptionQueue === "function"
+              ? await rpc.lythRedemptionQueue(addr as string, "latest")
+              : typeof rpc.call === "function"
+                ? await rpc.call("lyth_redemptionQueue", [addr as string, "latest"])
+                : null;
+          return normalizeRedemptionQueueResponse(response);
         } catch {
           return null;
         }

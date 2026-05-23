@@ -36,6 +36,7 @@ import {
   useOperatorCapabilities,
   usePeerSummary,
   usePendingRewards,
+  useRedemptionQueue,
   useRichList,
   useSearch,
   useTokenBalances,
@@ -820,6 +821,7 @@ const WalletPage = ({ addr, go }: any) => {
   const activityKind = useAddressActivityKind(addr);
   const delegations = useWalletDelegations(addr);
   const pendingRewards = usePendingRewards(addr);
+  const redemptionQueue = useRedemptionQueue(addr);
   const delegationHistory = useWalletDelegationHistory(addr, 20);
   const tokenBalances = useTokenBalances(addr);
   const addressLabel = useAddressLabel(addr);
@@ -863,6 +865,9 @@ const WalletPage = ({ addr, go }: any) => {
   const liveDelegations = delegations.data?.rows ?? [];
   const livePendingRewards = pendingRewards.data ?? null;
   const livePendingRewardRows = livePendingRewards?.rows ?? [];
+  const liveRedemptionQueue = redemptionQueue.data ?? null;
+  const liveRedemptionTickets = liveRedemptionQueue?.tickets ?? [];
+  const liveMatureRedemptions = liveRedemptionTickets.filter((row) => row.mature === true).length;
   const liveDelegationHistory = delegationHistory.data ?? [];
   const liveTokenBalances = (profile.data?.tokenBalances?.length
     ? profile.data.tokenBalances
@@ -917,7 +922,7 @@ const WalletPage = ({ addr, go }: any) => {
         </div>
       </section>
 
-      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || codeValue !== null || profileAccount || liveAgentReputation) && (
+      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || liveRedemptionQueue || codeValue !== null || profileAccount || liveAgentReputation) && (
         <section className="tx-split">
           <Card title="Live account">
             <div className="tx-kv">
@@ -926,6 +931,11 @@ const WalletPage = ({ addr, go }: any) => {
               <KV
                 label="Pending rewards"
                 value={livePendingRewards ? `${_fmtLythRaw(livePendingRewards.totalAmountLythoshi)}${livePendingRewards.autoCompound ? " · auto-compound" : ""}` : "—"}
+                mono
+              />
+              <KV
+                label="Redemption queue"
+                value={liveRedemptionQueue ? `${liveRedemptionTickets.length}/${liveRedemptionQueue.count} tickets${liveMatureRedemptions ? ` · ${liveMatureRedemptions} mature` : ""}` : "—"}
                 mono
               />
               <KV label="Activity index" value={liveActivityKind ? `${liveActivityKind.kind}${earliestRetained ? ` · retained from block ${Number(earliestRetained).toLocaleString()}` : ""}` : "—"}/>
@@ -985,6 +995,37 @@ const WalletPage = ({ addr, go }: any) => {
               ) : (
                 <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"12px 16px 0"}}>
                   No unsettled cluster reward rows reported.
+                </p>
+              )}
+            </Card>
+          )}
+          {liveRedemptionQueue && (
+            <Card title="Redemption queue" right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>redemption-queue</span>}>
+              <div className="tx-kv">
+                <KV label="Tickets" value={`${liveRedemptionTickets.length}/${liveRedemptionQueue.count}`} mono/>
+                <KV label="Mature" value={`${liveMatureRedemptions}`} mono/>
+                <KV label="Block" value={liveRedemptionQueue.block === null ? "—" : String(liveRedemptionQueue.block)} mono/>
+              </div>
+              {liveRedemptionTickets.length > 0 ? (
+                <table className="ms-table">
+                  <thead><tr><th>Cluster</th><th style={{textAlign:"right"}}>Weight</th><th style={{textAlign:"right"}}>Queued</th><th style={{textAlign:"right"}}>Matures</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {liveRedemptionTickets.map((row)=>(
+                      <tr key={`${row.index}-${row.cluster}-${row.maturityHeight}`} onClick={()=>go(`#/cluster/${Number(row.cluster)+1}`)}>
+                        <td className="mono">C-{String(Number(row.cluster)+1).padStart(3,"0")}</td>
+                        <td className="mono num" style={{textAlign:"right"}}>{row.weightBps} bps</td>
+                        <td className="mono num" style={{textAlign:"right"}}>{row.createdHeight.toLocaleString()}</td>
+                        <td className="mono num" style={{textAlign:"right"}}>{row.maturityHeight.toLocaleString()}</td>
+                        <td className="mono" style={{color:row.mature === true ? "var(--gold)" : "var(--fg-500)"}}>
+                          {row.mature === true ? "Mature" : row.mature === false ? "Cooldown" : "Pending"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"12px 16px 0"}}>
+                  No pending redemption tickets reported for this address.
                 </p>
               )}
             </Card>
