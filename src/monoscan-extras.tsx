@@ -2060,6 +2060,9 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
   const receiptValue = evidence.receiptState === "present"
     ? `${mrvEvidenceStateText(evidence.receiptState)} · txType ${evidence.receiptTxType === null ? "not exposed" : _hexByte(evidence.receiptTxType)} · ${evidence.artifactHash ? _short(evidence.artifactHash, 18) : "artifact hash missing"}`
     : "missing · native MRV receipt not returned";
+  const receiptCommitmentValue = evidence.receiptCommitment
+    ? `present · ${_short(evidence.receiptCommitment, 18)} · native-receipt.receiptCommitment`
+    : null;
   const resultValue = evidence.receiptState === "present"
     ? `${evidence.reverted ? "reverted" : "committed"} · events ${evidence.eventCount ?? "—"} · native deltas ${evidence.nativeDeltaCount ?? "—"}`
     : "—";
@@ -2081,6 +2084,7 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
         <KV label="Included" value={includedValue} mono/>
         <KV label="Receipt" value={receiptValue} mono/>
         {evidence.receiptSchema && <KV label="Receipt schema" value={evidence.receiptSchema} mono/>}
+        {receiptCommitmentValue && <KV label="Receipt commitment" value={receiptCommitmentValue} mono/>}
         <KV label="Execution result" value={resultValue} mono/>
         {evidence.pqCheckpoint && <KV label="PQ checkpoint" value={evidence.pqCheckpoint} mono/>}
         <KV label="No-EVM proof" value={proofValue} mono/>
