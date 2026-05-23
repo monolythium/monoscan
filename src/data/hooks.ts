@@ -573,6 +573,11 @@ export interface NativeMarketEventDisplayRow extends NativeReceiptEventDisplayRo
 export const MRV_NATIVE_TX_EXTENSION_KIND = 0x30;
 export const MRV_NATIVE_TX_EXTENSION_BODY_HEX = "0x01";
 export const MRV_NATIVE_RECEIPT_TX_TYPE = 0x41;
+export const NO_EVM_RECEIPT_PROOF_SCHEMA = "mono.no_evm_receipt_proof.v1";
+export const NO_EVM_RECEIPT_PROOF_TYPE = "canonicalReceiptsTranscript";
+
+const HEX_BYTES_RE = /^0x(?:[0-9a-fA-F]{2})*$/;
+const HASH32_RE = /^0x[0-9a-fA-F]{64}$/;
 
 export type MrvNativeEvidenceState = "present" | "missing" | "invalid";
 
@@ -583,9 +588,27 @@ export interface MrvNativeExtensionEvidence {
   validMrvV1: boolean;
 }
 
+export interface NoEvmReceiptProofTranscript {
+  schema: typeof NO_EVM_RECEIPT_PROOF_SCHEMA;
+  proofType: typeof NO_EVM_RECEIPT_PROOF_TYPE;
+  rootAlgorithm: string;
+  receiptCodec: string;
+  blockHash: string;
+  txHash: string;
+  receiptsRoot: string;
+  targetReceiptHash: string;
+  blockHeight: number;
+  txIndex: number;
+  receiptCount: number;
+  receiptTranscript: string[];
+}
+
 export interface MrvNativeProofEvidence {
   source: string;
   summary: string;
+  raw: unknown;
+  transcript: NoEvmReceiptProofTranscript | null;
+  validationErrors: string[];
 }
 
 export type MrvNativeProofFieldState = "present" | "explicit-null" | "missing";
@@ -821,6 +844,157 @@ function proofSummary(value: unknown): string {
   return "present";
 }
 
+function readTranscriptString(
+  row: Record<string, unknown>,
+  key: keyof NoEvmReceiptProofTranscript,
+  errors: string[],
+): string | null {
+  const value = row[key];
+  if (typeof value !== "string" || value.trim() === "") {
+    errors.push(`${key} missing`);
+    return null;
+  }
+  return value.trim();
+}
+
+function readTranscriptHash32(
+  row: Record<string, unknown>,
+  key: keyof NoEvmReceiptProofTranscript,
+  errors: string[],
+): string | null {
+  const value = readTranscriptString(row, key, errors);
+  if (value !== null && !HASH32_RE.test(value)) {
+    errors.push(`${key} must be a 32-byte 0x hex value`);
+  }
+  return value;
+}
+
+function readTranscriptNumber(
+  row: Record<string, unknown>,
+  key: keyof NoEvmReceiptProofTranscript,
+  errors: string[],
+): number | null {
+  const value = readNumberField(row, [key]);
+  if (value === null) {
+    errors.push(`${key} missing`);
+    return null;
+  }
+  if (!Number.isInteger(value) || value < 0) {
+    errors.push(`${key} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function readReceiptTranscript(
+  row: Record<string, unknown>,
+  errors: string[],
+): string[] {
+  const value = row.receiptTranscript;
+  if (!Array.isArray(value)) {
+    errors.push("receiptTranscript must be an array");
+    return [];
+  }
+  return value.map((entry, index) => {
+    if (typeof entry !== "string" || !HEX_BYTES_RE.test(entry.trim())) {
+      errors.push(`receiptTranscript[${index}] must be a 0x byte blob`);
+      return "";
+    }
+    return entry.trim();
+  });
+}
+
+export function validateNoEvmReceiptProofTranscript(
+  value: unknown,
+): { transcript: NoEvmReceiptProofTranscript | null; errors: string[] } {
+  const row = unknownRecord(value);
+  if (!row) {
+    return { transcript: null, errors: ["noEvmProof must be an object"] };
+  }
+
+  const errors: string[] = [];
+  const schema = readTranscriptString(row, "schema", errors);
+  const proofType = readTranscriptString(row, "proofType", errors);
+  const rootAlgorithm = readTranscriptString(row, "rootAlgorithm", errors);
+  const receiptCodec = readTranscriptString(row, "receiptCodec", errors);
+  const blockHash = readTranscriptHash32(row, "blockHash", errors);
+  const txHash = readTranscriptHash32(row, "txHash", errors);
+  const receiptsRoot = readTranscriptHash32(row, "receiptsRoot", errors);
+  const targetReceiptHash = readTranscriptHash32(row, "targetReceiptHash", errors);
+  const blockHeight = readTranscriptNumber(row, "blockHeight", errors);
+  const txIndex = readTranscriptNumber(row, "txIndex", errors);
+  const receiptCount = readTranscriptNumber(row, "receiptCount", errors);
+  const receiptTranscript = readReceiptTranscript(row, errors);
+
+  if (schema !== null && schema !== NO_EVM_RECEIPT_PROOF_SCHEMA) {
+    errors.push(`schema must be ${NO_EVM_RECEIPT_PROOF_SCHEMA}`);
+  }
+  if (proofType !== null && proofType !== NO_EVM_RECEIPT_PROOF_TYPE) {
+    errors.push(`proofType must be ${NO_EVM_RECEIPT_PROOF_TYPE}`);
+  }
+  if (txIndex !== null && receiptCount !== null && txIndex >= receiptCount) {
+    errors.push("txIndex must be less than receiptCount");
+  }
+  if (receiptCount !== null && receiptTranscript.length > receiptCount) {
+    errors.push("receiptTranscript cannot exceed receiptCount");
+  }
+
+  if (
+    errors.length > 0
+    || schema !== NO_EVM_RECEIPT_PROOF_SCHEMA
+    || proofType !== NO_EVM_RECEIPT_PROOF_TYPE
+    || rootAlgorithm === null
+    || receiptCodec === null
+    || blockHash === null
+    || txHash === null
+    || receiptsRoot === null
+    || targetReceiptHash === null
+    || blockHeight === null
+    || txIndex === null
+    || receiptCount === null
+  ) {
+    return { transcript: null, errors };
+  }
+
+  return {
+    transcript: {
+      schema,
+      proofType,
+      rootAlgorithm,
+      receiptCodec,
+      blockHash,
+      txHash,
+      receiptsRoot,
+      targetReceiptHash,
+      blockHeight,
+      txIndex,
+      receiptCount,
+      receiptTranscript,
+    },
+    errors: [],
+  };
+}
+
+function receiptBlobLabel(count: number): string {
+  return `${count} receipt blob${count === 1 ? "" : "s"}`;
+}
+
+function noEvmReceiptProofSummary(transcript: NoEvmReceiptProofTranscript): string {
+  return `${transcript.proofType} · block ${transcript.blockHeight} · tx ${transcript.txIndex + 1}/${transcript.receiptCount} · ${receiptBlobLabel(transcript.receiptTranscript.length)}`;
+}
+
+function noEvmReceiptProofEvidence(source: string, value: unknown): MrvNativeProofEvidence {
+  const { transcript, errors } = validateNoEvmReceiptProofTranscript(value);
+  return {
+    source,
+    raw: value,
+    transcript,
+    validationErrors: errors,
+    summary: transcript
+      ? noEvmReceiptProofSummary(transcript)
+      : errors[0] ?? proofSummary(value),
+  };
+}
+
 function readNativeNoEvmProofField(
   nativeReceipt: unknown,
 ): { source: string; state: MrvNativeProofFieldState; value: unknown | null } {
@@ -873,17 +1047,16 @@ export function mrvNativeTransactionEvidence(
     ?? readNumberField(nativeReceipt, ["blockHeight", "blockNumber", "block_height", "block_number"]);
   const proofField = readNativeNoEvmProofField(nativeReceipt);
   const proof = proofField.state === "present"
-    ? {
-        source: proofField.source,
-        summary: proofSummary(proofField.value),
-      }
+    ? noEvmReceiptProofEvidence(proofField.source, proofField.value)
     : null;
   const submittedState: MrvNativeEvidenceState = extension
     ? (extension.validMrvV1 ? "present" : "invalid")
     : "missing";
   const includedState: MrvNativeEvidenceState = includedBlock !== null ? "present" : "missing";
   const receiptState: MrvNativeEvidenceState = hasMrvReceipt ? "present" : "missing";
-  const proofState: MrvNativeEvidenceState = proof ? "present" : "missing";
+  const proofState: MrvNativeEvidenceState = proof
+    ? (proof.transcript ? "present" : "invalid")
+    : "missing";
   const blockers: string[] = [];
 
   if (!extension) {
@@ -902,8 +1075,12 @@ export function mrvNativeTransactionEvidence(
   }
   if (!proof) {
     blockers.push(proofField.state === "explicit-null"
-      ? `${proofField.source} returned null; Monoscan treats the no-EVM proof as missing until a verifier payload is available.`
-      : "native-receipt.noEvmProof must return a verifier payload before Monoscan can render no-EVM proof evidence.",
+      ? `${proofField.source} returned null; Monoscan treats the no-EVM receipt proof evidence as missing until a bounded receipts transcript is available.`
+      : "native-receipt.noEvmProof must return a bounded receipts transcript before Monoscan can render no-EVM receipt proof evidence.",
+    );
+  } else if (!proof.transcript) {
+    blockers.push(
+      `${proof.source} returned an invalid bounded receipts transcript: ${proof.validationErrors.join("; ") || "unknown validation error"}.`,
     );
   }
 

@@ -2065,10 +2065,13 @@ const mrvEvidencePillClass = (evidence: MrvNativeTransactionEvidence) => (
       : "pill"
 );
 
+const receiptBlobCountLabel = (count: number) => `${count.toLocaleString()} receipt blob${count === 1 ? "" : "s"}`;
+
 export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransactionEvidence | null }) => {
   if (!evidence) return null;
 
   const extension = evidence.extension;
+  const proofTranscript = evidence.proof?.transcript ?? null;
   const submittedValue = extension
     ? `${mrvEvidenceStateText(evidence.submittedState)} · kind ${_hexByte(extension.kind)} · body ${extension.bodyHex ?? "not exposed"} · ${extension.source}`
     : "missing · extension not exposed";
@@ -2085,15 +2088,34 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
     ? `${evidence.reverted ? "reverted" : "committed"} · events ${evidence.eventCount ?? "—"} · native deltas ${evidence.nativeDeltaCount ?? "—"}`
     : "—";
   const proofValue = evidence.proof
-    ? `present · ${evidence.proof.summary} · ${evidence.proof.source}`
+    ? proofTranscript
+      ? `present · bounded receipts transcript · ${evidence.proof.summary} · ${evidence.proof.source}`
+      : `invalid · bounded receipts transcript · ${evidence.proof.summary} · ${evidence.proof.source}`
     : evidence.proofFieldState === "explicit-null"
-      ? `missing · ${evidence.proofFieldSource} returned null; no proof rendered`
-      : "missing · native-receipt.noEvmProof not returned; no proof rendered";
+      ? `missing · ${evidence.proofFieldSource} returned null; no-EVM receipt proof evidence not rendered`
+      : "missing · native-receipt.noEvmProof not returned; no-EVM receipt proof evidence not rendered";
+  const proofPillText = evidence.proofState === "present"
+    ? "proof evidence present"
+    : evidence.proofState === "invalid"
+      ? "proof evidence invalid"
+      : "proof evidence blocked";
+  const proofCodecValue = proofTranscript
+    ? `${proofTranscript.rootAlgorithm} · ${proofTranscript.receiptCodec}`
+    : null;
+  const proofAnchorValue = proofTranscript
+    ? `block ${_short(proofTranscript.blockHash, 18)} · tx ${_short(proofTranscript.txHash, 18)}`
+    : null;
+  const proofReceiptRootValue = proofTranscript
+    ? `${_short(proofTranscript.receiptsRoot, 18)} · target ${_short(proofTranscript.targetReceiptHash, 18)}`
+    : null;
+  const proofTranscriptValue = proofTranscript
+    ? `${receiptBlobCountLabel(proofTranscript.receiptTranscript.length)} · receiptCount ${proofTranscript.receiptCount.toLocaleString()} · txIndex ${proofTranscript.txIndex.toLocaleString()}`
+    : null;
 
   return (
     <Card
       title="MRV native evidence"
-      right={<span className={mrvEvidencePillClass(evidence)}>{evidence.proofState === "present" ? "proof present" : "proof blocked"}</span>}
+      right={<span className={mrvEvidencePillClass(evidence)}>{proofPillText}</span>}
     >
       <div className="tx-kv">
         {evidence.operation && <KV label="Operation" value={evidence.operation} mono/>}
@@ -2105,7 +2127,11 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
         {receiptCommitmentValue && <KV label="Receipt commitment" value={receiptCommitmentValue} mono/>}
         <KV label="Execution result" value={resultValue} mono/>
         {evidence.pqCheckpoint && <KV label="PQ checkpoint" value={evidence.pqCheckpoint} mono/>}
-        <KV label="No-EVM proof" value={proofValue} mono/>
+        <KV label="No-EVM receipt proof" value={proofValue} mono/>
+        {proofCodecValue && <KV label="Proof codec" value={proofCodecValue} mono/>}
+        {proofAnchorValue && <KV label="Proof anchors" value={proofAnchorValue} mono/>}
+        {proofReceiptRootValue && <KV label="Receipt root" value={proofReceiptRootValue} mono/>}
+        {proofTranscriptValue && <KV label="Receipt transcript" value={proofTranscriptValue} mono/>}
       </div>
       {evidence.blockers.length > 0 && (
         <div className="tx-log" style={{marginTop:12,borderColor:"rgba(255,204,102,0.28)"}}>
