@@ -2072,6 +2072,7 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
 
   const extension = evidence.extension;
   const proofTranscript = evidence.proof?.transcript ?? null;
+  const proofConsistency = evidence.proof?.consistency ?? null;
   const submittedValue = extension
     ? `${mrvEvidenceStateText(evidence.submittedState)} · kind ${_hexByte(extension.kind)} · body ${extension.bodyHex ?? "not exposed"} · ${extension.source}`
     : "missing · extension not exposed";
@@ -2089,13 +2090,15 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
     : "—";
   const proofValue = evidence.proof
     ? proofTranscript
-      ? `present · bounded receipts transcript · ${evidence.proof.summary} · ${evidence.proof.source}`
+      ? `${proofConsistency?.state ?? "mismatch"} · bounded receipts transcript · ${evidence.proof.summary} · ${evidence.proof.source}`
       : `invalid · bounded receipts transcript · ${evidence.proof.summary} · ${evidence.proof.source}`
     : evidence.proofFieldState === "explicit-null"
       ? `missing · ${evidence.proofFieldSource} returned null; no-EVM receipt proof evidence not rendered`
       : "missing · native-receipt.noEvmProof not returned; no-EVM receipt proof evidence not rendered";
   const proofPillText = evidence.proofState === "present"
-    ? "proof evidence present"
+    ? "transcript verified"
+    : proofConsistency?.state === "mismatch"
+      ? "transcript mismatch"
     : evidence.proofState === "invalid"
       ? "proof evidence invalid"
       : "proof evidence blocked";
@@ -2110,6 +2113,11 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
     : null;
   const proofTranscriptValue = proofTranscript
     ? `${receiptBlobCountLabel(proofTranscript.receiptTranscript.length)} · receiptCount ${proofTranscript.receiptCount.toLocaleString()} · txIndex ${proofTranscript.txIndex.toLocaleString()}`
+    : null;
+  const proofConsistencyValue = proofConsistency
+    ? proofConsistency.state === "verified"
+      ? `verified · computed ${_short(proofConsistency.computedReceiptsRoot, 18)} · target ${proofConsistency.computedTargetReceiptHash ? _short(proofConsistency.computedTargetReceiptHash, 18) : "missing"}`
+      : `mismatch · ${proofConsistency.mismatches.join("; ")} · computed ${_short(proofConsistency.computedReceiptsRoot, 18)}`
     : null;
 
   return (
@@ -2128,8 +2136,9 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
         <KV label="Execution result" value={resultValue} mono/>
         {evidence.pqCheckpoint && <KV label="PQ checkpoint" value={evidence.pqCheckpoint} mono/>}
         <KV label="No-EVM receipt proof" value={proofValue} mono/>
-        {proofCodecValue && <KV label="Proof codec" value={proofCodecValue} mono/>}
-        {proofAnchorValue && <KV label="Proof anchors" value={proofAnchorValue} mono/>}
+        {proofConsistencyValue && <KV label="Transcript check" value={proofConsistencyValue} mono/>}
+        {proofCodecValue && <KV label="Transcript codec" value={proofCodecValue} mono/>}
+        {proofAnchorValue && <KV label="Transcript anchors" value={proofAnchorValue} mono/>}
         {proofReceiptRootValue && <KV label="Receipt root" value={proofReceiptRootValue} mono/>}
         {proofTranscriptValue && <KV label="Receipt transcript" value={proofTranscriptValue} mono/>}
       </div>

@@ -23,6 +23,7 @@
 
 import { QueryClient, useQuery } from "@tanstack/react-query";
 import * as CoreSdk from "@monolythium/core-sdk";
+import { keccak256 } from "ethers/crypto";
 import {
   parseQuantityBig,
   type AccountPolicy,
@@ -575,9 +576,13 @@ export const MRV_NATIVE_TX_EXTENSION_BODY_HEX = "0x01";
 export const MRV_NATIVE_RECEIPT_TX_TYPE = 0x41;
 export const NO_EVM_RECEIPT_PROOF_SCHEMA = "mono.no_evm_receipt_proof.v1";
 export const NO_EVM_RECEIPT_PROOF_TYPE = "canonicalReceiptsTranscript";
+export const NO_EVM_RECEIPTS_ROOT_DOMAIN = "monolythium/v2/receipts_root/1";
+export const NO_EVM_RECEIPTS_ROOT_ALGORITHM = `keccak256("${NO_EVM_RECEIPTS_ROOT_DOMAIN}" || receipts_len_u32_le || (idx_u32_le || receipt_len_u32_le || receipt_bytes)*)`;
 
 const HEX_BYTES_RE = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HASH32_RE = /^0x[0-9a-fA-F]{64}$/;
+const U32_MAX = 0xffff_ffff;
+const textEncoder = new TextEncoder();
 
 export type MrvNativeEvidenceState = "present" | "missing" | "invalid";
 
@@ -603,11 +608,23 @@ export interface NoEvmReceiptProofTranscript {
   receiptTranscript: string[];
 }
 
+export type NoEvmReceiptProofConsistencyState = "verified" | "mismatch";
+
+export interface NoEvmReceiptProofConsistency {
+  state: NoEvmReceiptProofConsistencyState;
+  computedReceiptsRoot: string;
+  computedTargetReceiptHash: string | null;
+  receiptCountMatches: boolean;
+  targetReceiptAvailable: boolean;
+  mismatches: string[];
+}
+
 export interface MrvNativeProofEvidence {
   source: string;
   summary: string;
   raw: unknown;
   transcript: NoEvmReceiptProofTranscript | null;
+  consistency: NoEvmReceiptProofConsistency | null;
   validationErrors: string[];
 }
 
@@ -903,6 +920,85 @@ function readReceiptTranscript(
   });
 }
 
+function u32Le(value: number): Uint8Array {
+  const bytes = new Uint8Array(4);
+  bytes[0] = value & 0xff;
+  bytes[1] = (value >>> 8) & 0xff;
+  bytes[2] = (value >>> 16) & 0xff;
+  bytes[3] = (value >>> 24) & 0xff;
+  return bytes;
+}
+
+function hexBytesToUint8Array(value: string): Uint8Array | null {
+  const trimmed = value.trim();
+  if (!HEX_BYTES_RE.test(trimmed)) return null;
+  const bytes = new Uint8Array(trimmed.length / 2 - 1);
+  for (let index = 2; index < trimmed.length; index += 2) {
+    bytes[(index - 2) / 2] = Number.parseInt(trimmed.slice(index, index + 2), 16);
+  }
+  return bytes;
+}
+
+function concatUint8Arrays(parts: Uint8Array[]): Uint8Array {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    combined.set(part, offset);
+    offset += part.length;
+  }
+  return combined;
+}
+
+function computeNoEvmReceiptsRoot(receipts: Uint8Array[]): string {
+  const rootParts = [
+    textEncoder.encode(NO_EVM_RECEIPTS_ROOT_DOMAIN),
+    u32Le(receipts.length),
+  ];
+  for (let index = 0; index < receipts.length; index += 1) {
+    rootParts.push(u32Le(index), u32Le(receipts[index].length), receipts[index]);
+  }
+  return keccak256(concatUint8Arrays(rootParts));
+}
+
+export function verifyNoEvmReceiptProofConsistency(
+  transcript: NoEvmReceiptProofTranscript,
+): NoEvmReceiptProofConsistency {
+  const receiptBytes = transcript.receiptTranscript.map(hexBytesToUint8Array);
+  const decodedReceipts = receiptBytes.filter((receipt): receipt is Uint8Array => receipt !== null);
+  const computedReceiptsRoot = computeNoEvmReceiptsRoot(decodedReceipts);
+  const computedTargetReceiptHash = decodedReceipts[transcript.txIndex]
+    ? keccak256(decodedReceipts[transcript.txIndex])
+    : null;
+  const receiptCountMatches = transcript.receiptCount === transcript.receiptTranscript.length;
+  const targetReceiptAvailable = computedTargetReceiptHash !== null;
+  const mismatches: string[] = [];
+
+  if (transcript.rootAlgorithm !== NO_EVM_RECEIPTS_ROOT_ALGORITHM) {
+    mismatches.push(`rootAlgorithm must be ${NO_EVM_RECEIPTS_ROOT_ALGORITHM}`);
+  }
+  if (!receiptCountMatches) {
+    mismatches.push(`receiptCount ${transcript.receiptCount} does not match ${receiptBlobLabel(transcript.receiptTranscript.length)}`);
+  }
+  if (computedReceiptsRoot !== transcript.receiptsRoot.toLowerCase()) {
+    mismatches.push("receiptsRoot mismatch");
+  }
+  if (!targetReceiptAvailable) {
+    mismatches.push("receiptTranscript does not include txIndex receipt");
+  } else if (computedTargetReceiptHash !== transcript.targetReceiptHash.toLowerCase()) {
+    mismatches.push("targetReceiptHash mismatch");
+  }
+
+  return {
+    state: mismatches.length > 0 ? "mismatch" : "verified",
+    computedReceiptsRoot,
+    computedTargetReceiptHash,
+    receiptCountMatches,
+    targetReceiptAvailable,
+    mismatches,
+  };
+}
+
 export function validateNoEvmReceiptProofTranscript(
   value: unknown,
 ): { transcript: NoEvmReceiptProofTranscript | null; errors: string[] } {
@@ -933,6 +1029,12 @@ export function validateNoEvmReceiptProofTranscript(
   }
   if (txIndex !== null && receiptCount !== null && txIndex >= receiptCount) {
     errors.push("txIndex must be less than receiptCount");
+  }
+  if (txIndex !== null && txIndex > U32_MAX) {
+    errors.push("txIndex must fit in u32");
+  }
+  if (receiptCount !== null && receiptCount > U32_MAX) {
+    errors.push("receiptCount must fit in u32");
   }
   if (receiptCount !== null && receiptTranscript.length > receiptCount) {
     errors.push("receiptTranscript cannot exceed receiptCount");
@@ -984,10 +1086,12 @@ function noEvmReceiptProofSummary(transcript: NoEvmReceiptProofTranscript): stri
 
 function noEvmReceiptProofEvidence(source: string, value: unknown): MrvNativeProofEvidence {
   const { transcript, errors } = validateNoEvmReceiptProofTranscript(value);
+  const consistency = transcript ? verifyNoEvmReceiptProofConsistency(transcript) : null;
   return {
     source,
     raw: value,
     transcript,
+    consistency,
     validationErrors: errors,
     summary: transcript
       ? noEvmReceiptProofSummary(transcript)
@@ -1055,7 +1159,7 @@ export function mrvNativeTransactionEvidence(
   const includedState: MrvNativeEvidenceState = includedBlock !== null ? "present" : "missing";
   const receiptState: MrvNativeEvidenceState = hasMrvReceipt ? "present" : "missing";
   const proofState: MrvNativeEvidenceState = proof
-    ? (proof.transcript ? "present" : "invalid")
+    ? (proof.transcript && proof.consistency?.state === "verified" ? "present" : "invalid")
     : "missing";
   const blockers: string[] = [];
 
@@ -1081,6 +1185,10 @@ export function mrvNativeTransactionEvidence(
   } else if (!proof.transcript) {
     blockers.push(
       `${proof.source} returned an invalid bounded receipts transcript: ${proof.validationErrors.join("; ") || "unknown validation error"}.`,
+    );
+  } else if (proof.consistency?.state === "mismatch") {
+    blockers.push(
+      `${proof.source} returned a bounded receipts transcript that failed self-consistency: ${proof.consistency.mismatches.join("; ")}.`,
     );
   }
 

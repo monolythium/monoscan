@@ -44,6 +44,7 @@ import {
   MRV_NATIVE_RECEIPT_TX_TYPE,
   MRV_NATIVE_TX_EXTENSION_BODY_HEX,
   MRV_NATIVE_TX_EXTENSION_KIND,
+  NO_EVM_RECEIPTS_ROOT_ALGORITHM,
   NO_EVM_RECEIPT_PROOF_SCHEMA,
   NO_EVM_RECEIPT_PROOF_TYPE,
   mrvNativeTransactionEvidence,
@@ -56,6 +57,7 @@ import {
   nativeReceiptMarketEventRows,
   queryClient,
   txFeedToRows,
+  verifyNoEvmReceiptProofConsistency,
   type NoEvmReceiptProofTranscript,
 } from "./hooks";
 import { isWebSocketEnabled, resetRpcClient } from "../sdk/client";
@@ -103,20 +105,26 @@ function nativeReceiptFixture(
 function noEvmReceiptProofTranscript(
   overrides: Partial<NoEvmReceiptProofTranscript> = {},
 ): NoEvmReceiptProofTranscript {
-  return {
+  const transcript: NoEvmReceiptProofTranscript = {
     schema: NO_EVM_RECEIPT_PROOF_SCHEMA,
     proofType: NO_EVM_RECEIPT_PROOF_TYPE,
-    rootAlgorithm: "merkle-patricia-trie",
+    rootAlgorithm: NO_EVM_RECEIPTS_ROOT_ALGORITHM,
     receiptCodec: "rlp",
     blockHash: `0x${"33".repeat(32)}`,
     txHash: `0x${"22".repeat(32)}`,
-    receiptsRoot: `0x${"44".repeat(32)}`,
-    targetReceiptHash: `0x${"55".repeat(32)}`,
+    receiptsRoot: `0x${"00".repeat(32)}`,
+    targetReceiptHash: `0x${"00".repeat(32)}`,
     blockHeight: 100,
     txIndex: 1,
     receiptCount: 2,
     receiptTranscript: ["0x01", "0xaabb"],
     ...overrides,
+  };
+  const consistency = verifyNoEvmReceiptProofConsistency(transcript);
+  return {
+    ...transcript,
+    receiptsRoot: overrides.receiptsRoot ?? consistency.computedReceiptsRoot,
+    targetReceiptHash: overrides.targetReceiptHash ?? consistency.computedTargetReceiptHash ?? transcript.targetReceiptHash,
   };
 }
 
@@ -1460,10 +1468,79 @@ describe("API execution-unit transformations", () => {
       source: "native-receipt.noEvmProof",
       summary: "canonicalReceiptsTranscript · block 122 · tx 1/2 · 2 receipt blobs",
       transcript: noEvmProof,
+      consistency: {
+        state: "verified",
+        computedReceiptsRoot: noEvmProof.receiptsRoot,
+        computedTargetReceiptHash: noEvmProof.targetReceiptHash,
+        receiptCountMatches: true,
+        targetReceiptAvailable: true,
+        mismatches: [],
+      },
       validationErrors: [],
     });
     expect(evidence?.blockers).not.toContain(
       "native-receipt.noEvmProof must return a bounded receipts transcript before Monoscan can render no-EVM receipt proof evidence.",
+    );
+  });
+
+  it("recomputes no-EVM receipt transcript hashes with the runtime receipts root algorithm", () => {
+    const noEvmProof = noEvmReceiptProofTranscript();
+    const consistency = verifyNoEvmReceiptProofConsistency(noEvmProof);
+
+    expect(noEvmProof.receiptsRoot).toBe("0x814f52159bd2ab66f3b21a6d13332cc7b5fb6bd4418c193d1e8d5e1965dcb57c");
+    expect(noEvmProof.targetReceiptHash).toBe("0x65b043cdd93fde12ee6629de2d9ce786ba7d5b4c514afecea4d1b4b2c740087c");
+    expect(consistency).toMatchObject({
+      state: "verified",
+      computedReceiptsRoot: noEvmProof.receiptsRoot,
+      computedTargetReceiptHash: noEvmProof.targetReceiptHash,
+      receiptCountMatches: true,
+      targetReceiptAvailable: true,
+      mismatches: [],
+    });
+  });
+
+  it("marks well-formed no-EVM receipt proof transcripts invalid when self-consistency fails", () => {
+    const noEvmProof = noEvmReceiptProofTranscript({
+      txHash: `0x${"75".repeat(32)}`,
+      blockHeight: 124,
+      receiptCount: 3,
+      receiptsRoot: `0x${"44".repeat(32)}`,
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"75".repeat(32)}`,
+      blockNumber: 124n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"75".repeat(32)}`,
+        blockHeight: 124,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof,
+      }),
+    } as any);
+
+    expect(evidence).toMatchObject({
+      proofState: "invalid",
+      proofFieldSource: "native-receipt.noEvmProof",
+      proofFieldState: "present",
+    });
+    expect(evidence?.proof?.transcript).toEqual(noEvmProof);
+    expect(evidence?.proof?.validationErrors).toEqual([]);
+    expect(evidence?.proof?.consistency).toMatchObject({
+      state: "mismatch",
+      receiptCountMatches: false,
+      targetReceiptAvailable: true,
+    });
+    expect(evidence?.proof?.consistency?.mismatches).toContain("receiptCount 3 does not match 2 receipt blobs");
+    expect(evidence?.proof?.consistency?.mismatches).toContain("receiptsRoot mismatch");
+    expect(evidence?.blockers).toContain(
+      "native-receipt.noEvmProof returned a bounded receipts transcript that failed self-consistency: receiptCount 3 does not match 2 receipt blobs; receiptsRoot mismatch.",
     );
   });
 
