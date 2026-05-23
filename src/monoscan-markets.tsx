@@ -107,6 +107,21 @@ export function nextSpotOrderNonceForOwner(
   rows: Array<Pick<NativeMarketStateDisplayRow, "account" | "nonce">>,
   ownerAddress: string | null | undefined,
 ): string | null {
+  return _nextNonceForAccount(rows, ownerAddress);
+}
+
+export function nextNftListingNonceForSeller(
+  rows: Array<Pick<NativeMarketStateDisplayRow, "account" | "nonce">>,
+  sellerAddress: string | null | undefined,
+): string | null {
+  // NFT listing rows use the generic display-row nonce once the node exposes seller-local listing nonces.
+  return _nextNonceForAccount(rows, sellerAddress);
+}
+
+function _nextNonceForAccount(
+  rows: Array<Pick<NativeMarketStateDisplayRow, "account" | "nonce">>,
+  ownerAddress: string | null | undefined,
+): string | null {
   const candidates = _ownerAccountCandidates(ownerAddress);
   if (candidates.size === 0) return null;
 
@@ -125,6 +140,12 @@ export interface MarketOrderNonceResolution {
   nonce: string;
   source: "indexed" | "fallback";
   ownerAccount: string | null;
+}
+
+export interface NftListingNonceResolution {
+  nonce: string;
+  source: "indexed" | "fallback";
+  sellerAccount: string | null;
 }
 
 async function resolveMarketOrderNonce(args: {
@@ -146,6 +167,28 @@ async function resolveMarketOrderNonce(args: {
     nonce: args.fallbackNonce.trim() || "0",
     source: "fallback",
     ownerAccount,
+  };
+}
+
+async function resolveNftListingNonce(args: {
+  sellerAddress: string;
+  fallbackNonce: string;
+  nftListings: NativeMarketStateDisplayRow[];
+}): Promise<NftListingNonceResolution> {
+  const sellerAccount = ownerStateAccount(args.sellerAddress);
+  const sellerState = sellerAccount ? await fetchNativeMarketState({ account: sellerAccount }) : null;
+  const sellerRows = nativeMarketStateRows(sellerState).nftListings;
+  const indexedNonce = nextNftListingNonceForSeller(
+    [...sellerRows, ...args.nftListings],
+    args.sellerAddress,
+  );
+  if (indexedNonce !== null) {
+    return { nonce: indexedNonce, source: "indexed", sellerAccount };
+  }
+  return {
+    nonce: args.fallbackNonce.trim() || "0",
+    source: "fallback",
+    sellerAccount,
   };
 }
 
@@ -681,6 +724,7 @@ const NativeNftListingsTable = ({
   };
 
   const submitCreate = async () => {
+    let nonceResolution: NftListingNonceResolution | null = null;
     try {
       const provider = typeof window !== "undefined" ? window.monolythium : undefined;
       if (!provider?.request) {
@@ -689,6 +733,19 @@ const NativeNftListingsTable = ({
       setCreateSubmit({ state: "submitting", message: "awaiting wallet" });
       const accounts = await provider.request({ method: "eth_requestAccounts", params: [] });
       const sellerAddress = _walletAccount(accounts);
+      setCreateSubmit({ state: "submitting", message: "resolving seller nonce" });
+      nonceResolution = await resolveNftListingNonce({
+        sellerAddress,
+        fallbackNonce: createForm.nonce.trim() || "0",
+        nftListings: rows,
+      });
+      const nonceMessage = nonceResolution.source === "indexed"
+        ? `using indexed listing nonce ${nonceResolution.nonce}`
+        : `using fallback listing nonce ${nonceResolution.nonce}; indexed seller nonce unavailable`;
+      setCreateSubmit({
+        state: "submitting",
+        message: nonceMessage,
+      });
       const listingKind: NativeNftListingKind = createForm.listingKind === "english-auction"
         ? {
             english: {
@@ -700,7 +757,7 @@ const NativeNftListingsTable = ({
         : "fixed-price";
       const request = buildNftListingCreateWalletRequest({
         sellerAddress,
-        listingNonce: createForm.nonce.trim() || "0",
+        listingNonce: nonceResolution.nonce,
         standard: createForm.standard,
         collectionId: createForm.collectionId,
         tokenId: createForm.tokenId,
@@ -716,11 +773,19 @@ const NativeNftListingsTable = ({
       setCreateSubmit({
         state: "success",
         txHash,
-        message: txHash ? `submitted ${_shortHash(txHash, 10, 6)}` : "submitted",
+        message: txHash
+          ? `submitted ${_shortHash(txHash, 10, 6)}; ${nonceMessage}`
+          : `submitted; ${nonceMessage}`,
       });
       window.__msToast?.(txHash ? `NFT listing submitted ${_shortHash(txHash, 10, 6)}` : "NFT listing submitted");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "NFT listing creation failed.";
+      const failureMessage = err instanceof Error ? err.message : "NFT listing creation failed.";
+      const nonceMessage = nonceResolution
+        ? nonceResolution.source === "indexed"
+          ? `using indexed listing nonce ${nonceResolution.nonce}`
+          : `using fallback listing nonce ${nonceResolution.nonce}; indexed seller nonce unavailable`
+        : null;
+      const message = nonceMessage ? `${failureMessage}; ${nonceMessage}` : failureMessage;
       setCreateSubmit({ state: "error", message });
       if (typeof window !== "undefined") window.__msToast?.(message);
     }
