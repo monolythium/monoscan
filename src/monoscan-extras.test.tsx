@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactElement } from "react";
 import {
   BridgeTrustDisclosuresCard,
   MrvNativeEvidenceCard,
@@ -45,6 +47,15 @@ function nativeAgentRows(
     escrows: [],
     ...overrides,
   };
+}
+
+function renderWithQueryClient(element: ReactElement): string {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return renderToStaticMarkup(
+    <QueryClientProvider client={queryClient}>{element}</QueryClientProvider>,
+  );
 }
 
 function noEvmReceiptProofTranscript(
@@ -199,7 +210,7 @@ describe("NativeAgentStateCard", () => {
 
 describe("NativeAgentActionsCard", () => {
   it("renders the full native agent action catalogue", () => {
-    const html = renderToStaticMarkup(
+    const html = renderWithQueryClient(
       <NativeAgentActionsCard
         capabilities={{
           blockNumber: 12n,

@@ -4231,7 +4231,9 @@ export function useNativeMarketEvents(options: {
 export type NativeAgentStateLookup = Pick<
   NativeAgentStateFilter,
   "policyId" | "escrowId" | "account" | "includePolicySpends" | "limit"
->;
+> & {
+  enabled?: boolean;
+};
 
 function nativeAgentStateFilterForNode(filter: NativeAgentStateLookup = {}): NativeAgentStateFilter {
   const policyId = filter.policyId ?? null;
@@ -4275,7 +4277,7 @@ export function useNativeAgentState(options: NativeAgentStateLookup = {}) {
       filter.account ?? null,
       limit,
     ),
-    enabled: isRpcConfigured(),
+    enabled: options.enabled !== false && isRpcConfigured(),
     queryFn: async () => fetchNativeAgentState(filter),
     staleTime: 15_000,
   });

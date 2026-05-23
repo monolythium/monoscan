@@ -76,8 +76,10 @@ import { getLythTokenId } from "./sdk/client";
 import { getNativeAgentForwarderAddress } from "./sdk/client";
 import {
   buildNativeAgentActionWalletRequest,
+  nativeAgentActionIndexedNonce,
   nativeAgentActionDefinition,
   nativeAgentActionInitialValues,
+  nativeAgentActionNonceAccount,
   NATIVE_AGENT_ACTIONS,
   type NativeAgentActionField,
   type NativeAgentActionKind,
@@ -2666,8 +2668,20 @@ const NativeAgentActionsCard = ({
   const [values, setValues] = useStateX<Record<string, string>>(() =>
     nativeAgentActionInitialValues(NATIVE_AGENT_ACTIONS[0].kind),
   );
+  const [autoNonce, setAutoNonce] = useStateX<string | null>(null);
   const [submit, setSubmit] = useStateX<NativeAgentActionSubmit>({ state: "idle" });
   const action = useMemoX(() => nativeAgentActionDefinition(kind), [kind]);
+  const nonceAccount = useMemoX(() => nativeAgentActionNonceAccount(kind, values), [kind, values]);
+  const indexedNonceState = useNativeAgentState({
+    account: nonceAccount ?? undefined,
+    includePolicySpends: false,
+    limit: 100,
+    enabled: nonceAccount !== null,
+  });
+  const indexedNonce = useMemoX(
+    () => nativeAgentActionIndexedNonce(kind, values, indexedNonceState.data),
+    [kind, values, indexedNonceState.data],
+  );
   const forwarderAddress = getNativeAgentForwarderAddress(capabilities);
   const forwarderRows = capabilities?.nativeModuleForwarders?.agent ?? [];
   const selectedForwarderLabel = forwarderRows.length > 0
@@ -2678,10 +2692,29 @@ const NativeAgentActionsCard = ({
 
   useEffectX(() => {
     setValues(nativeAgentActionInitialValues(kind));
+    setAutoNonce(null);
     setSubmit({ state: "idle" });
   }, [kind]);
 
+  useEffectX(() => {
+    if (indexedNonce === null) return;
+    if (!Object.prototype.hasOwnProperty.call(values, "nonce")) return;
+    const currentNonce = (values.nonce ?? "").trim();
+    if (currentNonce !== "" && currentNonce !== "0" && currentNonce !== autoNonce) return;
+    setValues((current) => {
+      if (!Object.prototype.hasOwnProperty.call(current, "nonce")) return current;
+      const nextCurrentNonce = (current.nonce ?? "").trim();
+      if (nextCurrentNonce !== "" && nextCurrentNonce !== "0" && nextCurrentNonce !== autoNonce) {
+        return current;
+      }
+      if (current.nonce === indexedNonce) return current;
+      return { ...current, nonce: indexedNonce };
+    });
+    setAutoNonce(indexedNonce);
+  }, [indexedNonce, values, autoNonce]);
+
   const updateValue = (field: NativeAgentActionField, value: string) => {
+    if (field.key === "nonce") setAutoNonce(null);
     setValues((current) => ({ ...current, [field.key]: value }));
   };
 
