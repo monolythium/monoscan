@@ -11,7 +11,10 @@ import { useState, useEffect, useMemo } from "react";
 import {
   addressToTypedBech32,
   buildNativeNftBuyListingForwarderInput,
+  buildNativeNftCancelListingForwarderInput,
+  buildNativeNftCreateListingForwarderInput,
   buildNativeSpotLimitOrderForwarderInput,
+  type NativeNftAssetStandard,
   type SpotLimitOrderSide,
 } from "@monolythium/core-sdk";
 import { MARKETS } from "./data/mock";
@@ -186,6 +189,39 @@ export interface NftListingBuyWalletRequest {
   }];
 }
 
+export interface NftListingCreateWalletRequestArgs {
+  sellerAddress: string | null | undefined;
+  listingNonce: string | number | bigint;
+  standard: NativeNftAssetStandard;
+  collectionId: string | null | undefined;
+  tokenId: string | null | undefined;
+  quantity: string;
+  paymentAsset: string | null | undefined;
+  price: string;
+  expiresAtBlock: string | number | bigint;
+  forwarderContractAddress: string | null | undefined;
+  maxCycles?: string | number | bigint;
+  executionUnitLimitHex?: string;
+}
+
+export interface NftListingCancelWalletRequestArgs {
+  listingId: string | null | undefined;
+  callerAddress: string | null | undefined;
+  forwarderContractAddress: string | null | undefined;
+  maxCycles?: string | number | bigint;
+  executionUnitLimitHex?: string;
+}
+
+export interface NftListingActionWalletRequest {
+  method: "monolythium_submitMrvNativeCall";
+  params: [{
+    contractAddress: string;
+    input: string;
+    executionUnitLimitHex: string;
+    valueWeiHex: "0x0";
+  }];
+}
+
 export function buildMarketOrderWalletRequest(args: MarketOrderWalletRequestArgs): MarketOrderWalletRequest {
   if (!args.marketId) {
     throw new Error("Live native market id is required before placing an order.");
@@ -241,6 +277,84 @@ export function buildNftListingBuyWalletRequest(
     listingId,
     buyer,
     currentBlock: args.currentBlock,
+  }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  return {
+    method: "monolythium_submitMrvNativeCall",
+    params: [{
+      contractAddress: forwarder,
+      input: forwarderInput.input,
+      executionUnitLimitHex:
+        args.executionUnitLimitHex ?? NATIVE_MARKET_MRV_EXECUTION_UNIT_LIMIT_HEX,
+      valueWeiHex: "0x0",
+    }],
+  };
+}
+
+export function buildNftListingCreateWalletRequest(
+  args: NftListingCreateWalletRequestArgs,
+): NftListingActionWalletRequest {
+  const seller = args.sellerAddress?.trim();
+  if (!seller) {
+    throw new Error("Wallet account is required before creating a listing.");
+  }
+  const collectionId = args.collectionId?.trim();
+  if (!collectionId) {
+    throw new Error("Collection id is required before creating a listing.");
+  }
+  const tokenId = args.tokenId?.trim();
+  if (!tokenId) {
+    throw new Error("Token id is required before creating a listing.");
+  }
+  const paymentAsset = args.paymentAsset?.trim();
+  if (!paymentAsset) {
+    throw new Error("Payment asset id is required before creating a listing.");
+  }
+  const forwarder = args.forwarderContractAddress?.trim();
+  if (!forwarder) {
+    throw new Error("MRV native market forwarder address is not configured.");
+  }
+  const forwarderInput = buildNativeNftCreateListingForwarderInput({
+    seller,
+    nonce: args.listingNonce,
+    standard: args.standard,
+    collectionId,
+    tokenId,
+    quantity: args.quantity.trim(),
+    paymentAsset,
+    price: args.price.trim(),
+    kind: "fixed-price",
+    expiresAtBlock: args.expiresAtBlock,
+  }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
+  return {
+    method: "monolythium_submitMrvNativeCall",
+    params: [{
+      contractAddress: forwarder,
+      input: forwarderInput.input,
+      executionUnitLimitHex:
+        args.executionUnitLimitHex ?? NATIVE_MARKET_MRV_EXECUTION_UNIT_LIMIT_HEX,
+      valueWeiHex: "0x0",
+    }],
+  };
+}
+
+export function buildNftListingCancelWalletRequest(
+  args: NftListingCancelWalletRequestArgs,
+): NftListingActionWalletRequest {
+  const listingId = args.listingId?.trim();
+  if (!listingId) {
+    throw new Error("Native NFT listing id is required before cancelling a listing.");
+  }
+  const caller = args.callerAddress?.trim();
+  if (!caller) {
+    throw new Error("Wallet account is required before cancelling a listing.");
+  }
+  const forwarder = args.forwarderContractAddress?.trim();
+  if (!forwarder) {
+    throw new Error("MRV native market forwarder address is not configured.");
+  }
+  const forwarderInput = buildNativeNftCancelListingForwarderInput({
+    listingId,
+    caller,
   }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
   return {
     method: "monolythium_submitMrvNativeCall",
@@ -397,6 +511,62 @@ const NativeNftListingsTable = ({
     message?: string;
     txHash?: string | null;
   }>({ listingId: null, state: "idle" });
+  const [createForm, setCreateForm] = useState({
+    standard: "mrc721" as NativeNftAssetStandard,
+    collectionId: "",
+    tokenId: "",
+    quantity: "1",
+    paymentAsset: `0x${"00".repeat(32)}`,
+    price: "1",
+    nonce: "0",
+    expiresAtBlock: "0",
+  });
+  const [createSubmit, setCreateSubmit] = useState<{
+    state: "idle" | "submitting" | "success" | "error";
+    message?: string;
+    txHash?: string | null;
+  }>({ state: "idle" });
+
+  const updateCreateForm = (key: keyof typeof createForm, value: string) => {
+    setCreateForm((current) => ({ ...current, [key]: value }));
+    setCreateSubmit({ state: "idle" });
+  };
+
+  const submitCreate = async () => {
+    try {
+      const provider = typeof window !== "undefined" ? window.monolythium : undefined;
+      if (!provider?.request) {
+        throw new Error("Monolythium wallet provider not detected.");
+      }
+      setCreateSubmit({ state: "submitting", message: "awaiting wallet" });
+      const accounts = await provider.request({ method: "eth_requestAccounts", params: [] });
+      const sellerAddress = _walletAccount(accounts);
+      const request = buildNftListingCreateWalletRequest({
+        sellerAddress,
+        listingNonce: createForm.nonce.trim() || "0",
+        standard: createForm.standard,
+        collectionId: createForm.collectionId,
+        tokenId: createForm.tokenId,
+        quantity: createForm.quantity,
+        paymentAsset: createForm.paymentAsset,
+        price: createForm.price,
+        expiresAtBlock: createForm.expiresAtBlock.trim() || "0",
+        forwarderContractAddress: forwarderAddress,
+      });
+      const result = await provider.request(request);
+      const txHash = _walletTxHash(result);
+      setCreateSubmit({
+        state: "success",
+        txHash,
+        message: txHash ? `submitted ${_shortHash(txHash, 10, 6)}` : "submitted",
+      });
+      window.__msToast?.(txHash ? `NFT listing submitted ${_shortHash(txHash, 10, 6)}` : "NFT listing submitted");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "NFT listing creation failed.";
+      setCreateSubmit({ state: "error", message });
+      if (typeof window !== "undefined") window.__msToast?.(message);
+    }
+  };
 
   const submitBuy = async (row: NativeMarketStateDisplayRow) => {
     try {
@@ -429,9 +599,109 @@ const NativeNftListingsTable = ({
     }
   };
 
+  const submitCancel = async (row: NativeMarketStateDisplayRow) => {
+    try {
+      const provider = typeof window !== "undefined" ? window.monolythium : undefined;
+      if (!provider?.request) {
+        throw new Error("Monolythium wallet provider not detected.");
+      }
+      setBuySubmit({ listingId: row.primaryId, state: "submitting", message: "awaiting wallet" });
+      const accounts = await provider.request({ method: "eth_requestAccounts", params: [] });
+      const callerAddress = _walletAccount(accounts);
+      const request = buildNftListingCancelWalletRequest({
+        listingId: row.primaryId,
+        callerAddress,
+        forwarderContractAddress: forwarderAddress,
+      });
+      const result = await provider.request(request);
+      const txHash = _walletTxHash(result);
+      setBuySubmit({
+        listingId: row.primaryId,
+        state: "success",
+        txHash,
+        message: txHash ? `cancel submitted ${_shortHash(txHash, 10, 6)}` : "cancel submitted",
+      });
+      window.__msToast?.(txHash ? `NFT listing cancel submitted ${_shortHash(txHash, 10, 6)}` : "NFT listing cancel submitted");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "NFT listing cancel failed.";
+      setBuySubmit({ listingId: row.primaryId, state: "error", message });
+      if (typeof window !== "undefined") window.__msToast?.(message);
+    }
+  };
+
+  const canCreateListing = Boolean(
+    forwarderAddress &&
+    createForm.collectionId.trim() &&
+    createForm.tokenId.trim() &&
+    createForm.paymentAsset.trim() &&
+    createForm.quantity.trim() &&
+    createForm.price.trim() &&
+    createSubmit.state !== "submitting",
+  );
+
   return (
     <div style={{overflowX:"auto"}}>
       <div className="cap" style={{padding:"12px 16px 6px"}}>NFT listings</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4,minmax(0,1fr)) auto",gap:8,alignItems:"end",padding:"0 16px 12px",borderBottom:"1px solid var(--fg-700)"}}>
+        <label className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+          Standard
+          <select
+            value={createForm.standard}
+            onChange={(event)=>updateCreateForm("standard", event.currentTarget.value as NativeNftAssetStandard)}
+            style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",borderRadius:6,border:"1px solid var(--fg-700)",background:"rgba(255,255,255,0.03)",color:"var(--fg-200)"}}
+          >
+            <option value="mrc721">MRC-721</option>
+            <option value="mrc1155">MRC-1155</option>
+          </select>
+        </label>
+        {[
+          ["collectionId", "Collection id"],
+          ["tokenId", "Token id"],
+          ["paymentAsset", "Payment asset"],
+          ["price", "Price"],
+          ["quantity", "Quantity"],
+          ["nonce", "Nonce fallback"],
+          ["expiresAtBlock", "Expiry block"],
+        ].map(([key, label])=>(
+          <label key={key} className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+            {label}
+            <input
+              value={createForm[key as keyof typeof createForm]}
+              onChange={(event)=>updateCreateForm(key as keyof typeof createForm, event.currentTarget.value)}
+              className="mono"
+              style={{display:"block",width:"100%",marginTop:4,padding:"6px 8px",borderRadius:6,border:"1px solid var(--fg-700)",background:"rgba(255,255,255,0.03)",color:"var(--fg-200)"}}
+            />
+          </label>
+        ))}
+        <button
+          className="mono"
+          disabled={!canCreateListing}
+          onClick={submitCreate}
+          style={{
+            padding:"7px 11px",
+            borderRadius:6,
+            border:"1px solid var(--fg-700)",
+            background:canCreateListing ? "rgba(242,180,65,0.12)" : "rgba(255,255,255,0.03)",
+            color:canCreateListing ? "var(--gold)" : "var(--fg-500)",
+            cursor:canCreateListing ? "pointer" : "not-allowed",
+            fontSize:10.5,
+          }}
+        >
+          {createSubmit.state === "submitting" ? "Submitting" : !forwarderAddress ? "Forwarder" : "Create"}
+        </button>
+        {createSubmit.state !== "idle" && (
+          <div className="mono" style={{
+            gridColumn:"1 / -1",
+            fontSize:10.5,
+            color: createSubmit.state === "error" ? "var(--err)" : createSubmit.state === "success" ? "var(--ok)" : "var(--fg-400)",
+          }}>
+            {createSubmit.message}
+            {createSubmit.txHash && (
+              <a href={`#/tx/${createSubmit.txHash}`} onClick={()=>go?.(`#/tx/${createSubmit.txHash}`)} style={{color:"var(--gold)",marginLeft:8}}>View tx</a>
+            )}
+          </div>
+        )}
+      </div>
       {rows.length === 0 ? (
         <div className="mono" style={{padding:"0 16px 14px",fontSize:12,color:"var(--fg-500)"}}>{empty}</div>
       ) : (
@@ -482,28 +752,46 @@ const NativeNftListingsTable = ({
                     )}
                   </td>
                   <td style={{textAlign:"right"}}>
-                    <button
-                      className="mono"
-                      disabled={!canBuy || activeSubmit?.state === "submitting"}
-                      onClick={()=>submitBuy(row)}
-                      style={{
-                        padding:"5px 10px",
-                        borderRadius:6,
-                        border:"1px solid var(--fg-700)",
-                        background:canBuy ? "rgba(242,180,65,0.12)" : "rgba(255,255,255,0.03)",
-                        color:canBuy ? "var(--gold)" : "var(--fg-500)",
-                        cursor:canBuy ? "pointer" : "not-allowed",
-                        fontSize:10.5,
-                      }}
-                    >
-                      {activeSubmit?.state === "submitting"
-                        ? "Submitting"
-                        : !forwarderAddress
-                          ? "Forwarder"
-                          : latestBlock === null
-                            ? "Head"
-                            : "Buy"}
-                    </button>
+                    <div style={{display:"inline-flex",gap:6}}>
+                      <button
+                        className="mono"
+                        disabled={!canBuy || activeSubmit?.state === "submitting"}
+                        onClick={()=>submitBuy(row)}
+                        style={{
+                          padding:"5px 10px",
+                          borderRadius:6,
+                          border:"1px solid var(--fg-700)",
+                          background:canBuy ? "rgba(242,180,65,0.12)" : "rgba(255,255,255,0.03)",
+                          color:canBuy ? "var(--gold)" : "var(--fg-500)",
+                          cursor:canBuy ? "pointer" : "not-allowed",
+                          fontSize:10.5,
+                        }}
+                      >
+                        {activeSubmit?.state === "submitting"
+                          ? "Submitting"
+                          : !forwarderAddress
+                            ? "Forwarder"
+                            : latestBlock === null
+                              ? "Head"
+                              : "Buy"}
+                      </button>
+                      <button
+                        className="mono"
+                        disabled={!forwarderAddress || !row.primaryId || activeSubmit?.state === "submitting"}
+                        onClick={()=>submitCancel(row)}
+                        style={{
+                          padding:"5px 10px",
+                          borderRadius:6,
+                          border:"1px solid var(--fg-700)",
+                          background:forwarderAddress && row.primaryId ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.03)",
+                          color:forwarderAddress && row.primaryId ? "var(--fg-300)" : "var(--fg-500)",
+                          cursor:forwarderAddress && row.primaryId ? "pointer" : "not-allowed",
+                          fontSize:10.5,
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

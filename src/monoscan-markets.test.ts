@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   addressToTypedBech32,
   buildNativeNftBuyListingForwarderInput,
+  buildNativeNftCancelListingForwarderInput,
+  buildNativeNftCreateListingForwarderInput,
   buildNativeSpotLimitOrderForwarderInput,
   deriveClobMarketId,
 } from "@monolythium/core-sdk";
 import {
   buildMarketOrderWalletRequest,
   buildNftListingBuyWalletRequest,
+  buildNftListingCancelWalletRequest,
+  buildNftListingCreateWalletRequest,
   nextSpotOrderNonceForOwner,
   ownerStateAccount,
 } from "./monoscan-markets";
@@ -131,6 +135,91 @@ describe("buildNftListingBuyWalletRequest", () => {
       listingId,
       buyerAddress,
       currentBlock: 777,
+      forwarderContractAddress: null,
+    })).toThrow("forwarder address is not configured");
+  });
+});
+
+describe("native NFT listing create/cancel wallet requests", () => {
+  const sellerAddress = "0xabcdef0123456789abcdef0123456789abcdef01";
+  const listingId = `0x${"55".repeat(32)}`;
+  const collectionId = `0x${"22".repeat(32)}`;
+  const tokenId = `0x${"33".repeat(32)}`;
+  const paymentAsset = `0x${"44".repeat(32)}`;
+  const forwarderContractAddress = "0x2222222222222222222222222222222222222222";
+
+  it("builds fixed-price create-listing forwarder requests", () => {
+    const request = buildNftListingCreateWalletRequest({
+      sellerAddress,
+      listingNonce: 7,
+      standard: "mrc721",
+      collectionId,
+      tokenId,
+      quantity: "1",
+      paymentAsset,
+      price: "123",
+      expiresAtBlock: 999,
+      forwarderContractAddress,
+    });
+
+    const expectedForwarder = buildNativeNftCreateListingForwarderInput({
+      seller: sellerAddress,
+      nonce: 7,
+      standard: "mrc721",
+      collectionId,
+      tokenId,
+      quantity: "1",
+      paymentAsset,
+      price: "123",
+      kind: "fixed-price",
+      expiresAtBlock: 999,
+    }, "22000");
+
+    expect(request.params[0]).toMatchObject({
+      contractAddress: forwarderContractAddress,
+      input: expectedForwarder.input,
+      executionUnitLimitHex: "0x200000",
+      valueWeiHex: "0x0",
+    });
+  });
+
+  it("builds cancel-listing forwarder requests", () => {
+    const request = buildNftListingCancelWalletRequest({
+      listingId,
+      callerAddress: sellerAddress,
+      forwarderContractAddress,
+    });
+
+    const expectedForwarder = buildNativeNftCancelListingForwarderInput({
+      listingId,
+      caller: sellerAddress,
+    }, "22000");
+
+    expect(request.params[0]).toMatchObject({
+      contractAddress: forwarderContractAddress,
+      input: expectedForwarder.input,
+      executionUnitLimitHex: "0x200000",
+      valueWeiHex: "0x0",
+    });
+  });
+
+  it("requires create-listing ids and a configured forwarder", () => {
+    expect(() => buildNftListingCreateWalletRequest({
+      sellerAddress,
+      listingNonce: 7,
+      standard: "mrc721",
+      collectionId: "",
+      tokenId,
+      quantity: "1",
+      paymentAsset,
+      price: "123",
+      expiresAtBlock: 999,
+      forwarderContractAddress,
+    })).toThrow("Collection id");
+
+    expect(() => buildNftListingCancelWalletRequest({
+      listingId,
+      callerAddress: sellerAddress,
       forwarderContractAddress: null,
     })).toThrow("forwarder address is not configured");
   });
