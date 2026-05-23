@@ -493,6 +493,44 @@ export interface NativeReceiptEventDisplayRow {
   decodedFields: Array<[string, string]>;
 }
 
+export const MRV_NATIVE_TX_EXTENSION_KIND = 0x30;
+export const MRV_NATIVE_TX_EXTENSION_BODY_HEX = "0x01";
+export const MRV_NATIVE_RECEIPT_TX_TYPE = 0x41;
+
+export type MrvNativeEvidenceState = "present" | "missing" | "invalid";
+
+export interface MrvNativeExtensionEvidence {
+  kind: number;
+  bodyHex: string | null;
+  source: string;
+  validMrvV1: boolean;
+}
+
+export interface MrvNativeProofEvidence {
+  source: string;
+  summary: string;
+}
+
+export interface MrvNativeTransactionEvidence {
+  txHash: string | null;
+  operation: string | null;
+  extension: MrvNativeExtensionEvidence | null;
+  receiptTxType: number | null;
+  receiptSchema: string | null;
+  artifactHash: string | null;
+  includedBlock: number | null;
+  reverted: boolean | null;
+  eventCount: number | null;
+  nativeDeltaCount: number | null;
+  proof: MrvNativeProofEvidence | null;
+  pqCheckpoint: string | null;
+  submittedState: MrvNativeEvidenceState;
+  includedState: MrvNativeEvidenceState;
+  receiptState: MrvNativeEvidenceState;
+  proofState: MrvNativeEvidenceState;
+  blockers: string[];
+}
+
 function decodedNativeEventObject(decoded: unknown, decodedJson: string): Record<string, unknown> | null {
   if (decoded && typeof decoded === "object" && !Array.isArray(decoded)) {
     return decoded as Record<string, unknown>;
@@ -512,6 +550,264 @@ function nativeFieldDisplay(value: unknown): string {
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return String(value);
   if (value === null || value === undefined) return "—";
   return JSON.stringify(value);
+}
+
+function readPresentField(value: unknown, keys: string[]): { key: string; value: unknown } | null {
+  const row = unknownRecord(value);
+  if (!row) return null;
+  for (const key of keys) {
+    const raw = row[key];
+    if (raw === null || raw === undefined) continue;
+    if (typeof raw === "string" && raw.trim() === "") continue;
+    return { key, value: raw };
+  }
+  return null;
+}
+
+function normalizeHexBytes(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^0x[0-9a-fA-F]*$/.test(trimmed)) {
+      const body = trimmed.slice(2);
+      return `0x${(body.length % 2 === 0 ? body : `0${body}`).toLowerCase()}`;
+    }
+    return trimmed;
+  }
+  if (Array.isArray(value)) {
+    const bytes = value.map((item) => {
+      if (typeof item !== "number" || !Number.isInteger(item) || item < 0 || item > 255) {
+        return null;
+      }
+      return item.toString(16).padStart(2, "0");
+    });
+    return bytes.every((item): item is string => item !== null) ? `0x${bytes.join("")}` : null;
+  }
+  if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+    return `0x${Array.from(value as Uint8Array)
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("")}`;
+  }
+  return null;
+}
+
+function readExtensionBodyHex(row: Record<string, unknown>): string | null {
+  for (const key of ["bodyHex", "body_hex", "body", "data"]) {
+    if (row[key] !== undefined) {
+      return normalizeHexBytes(row[key]);
+    }
+  }
+  return null;
+}
+
+function mrvExtensionFromRecord(
+  row: Record<string, unknown>,
+  source: string,
+): MrvNativeExtensionEvidence | null {
+  const kind = readNumberField(row, ["kind", "extensionKind", "extension_kind"]);
+  if (kind !== MRV_NATIVE_TX_EXTENSION_KIND) return null;
+  const bodyHex = readExtensionBodyHex(row);
+  return {
+    kind,
+    bodyHex,
+    source,
+    validMrvV1: bodyHex === MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+  };
+}
+
+function findMrvNativeExtension(
+  value: unknown,
+  source = "lyth_decodeTx",
+  depth = 0,
+): MrvNativeExtensionEvidence | null {
+  if (depth > 4 || value === null || value === undefined) return null;
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      const ext = findMrvNativeExtension(value[i], `${source}[${i}]`, depth + 1);
+      if (ext) return ext;
+    }
+    return null;
+  }
+
+  const row = unknownRecord(value);
+  if (!row) return null;
+
+  const direct = mrvExtensionFromRecord(row, source);
+  if (direct) return direct;
+
+  const priorityKeys = [
+    "mrvExtension",
+    "mrv_extension",
+    "extension",
+    "txExtension",
+    "tx_extension",
+    "extensions",
+    "txExtensions",
+    "tx_extensions",
+    "nativeExtensions",
+    "native_extensions",
+    "transactionExtensions",
+    "transaction_extensions",
+    "nativeTx",
+    "native_tx",
+    "tx",
+    "decodedCalldata",
+    "decoded_calldata",
+  ];
+  for (const key of priorityKeys) {
+    if (row[key] !== undefined) {
+      const ext = findMrvNativeExtension(row[key], `${source}.${key}`, depth + 1);
+      if (ext) return ext;
+    }
+  }
+
+  for (const [key, nested] of Object.entries(row)) {
+    const normalized = key.toLowerCase();
+    if (!normalized.includes("mrv") && !normalized.includes("extension")) continue;
+    const ext = findMrvNativeExtension(nested, `${source}.${key}`, depth + 1);
+    if (ext) return ext;
+  }
+  return null;
+}
+
+function findMrvOperationHint(value: unknown, depth = 0): string | null {
+  if (depth > 4 || value === null || value === undefined) return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const hint = findMrvOperationHint(item, depth + 1);
+      if (hint) return hint;
+    }
+    return null;
+  }
+  const row = unknownRecord(value);
+  if (!row) {
+    if (typeof value === "string" && value.toLowerCase().includes("mrv")) return value;
+    return null;
+  }
+
+  for (const key of ["kind", "type", "method", "methodName", "operation", "op", "category"]) {
+    const raw = row[key];
+    if (typeof raw === "string" && raw.toLowerCase().includes("mrv")) return raw;
+  }
+  for (const nested of Object.values(row)) {
+    const hint = findMrvOperationHint(nested, depth + 1);
+    if (hint) return hint;
+  }
+  return null;
+}
+
+function proofSummary(value: unknown): string {
+  if (typeof value === "string") return value.length > 24 ? `${value.slice(0, 22)}…` : value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return String(value);
+  }
+  return "present";
+}
+
+function findMrvProofEvidence(
+  decoded: unknown,
+  nativeReceipt: unknown,
+): MrvNativeProofEvidence | null {
+  const decodedProof = readPresentField(decoded, ["finalityProof", "finality_proof"]);
+  if (decodedProof) {
+    return {
+      source: `lyth_decodeTx.${decodedProof.key}`,
+      summary: proofSummary(decodedProof.value),
+    };
+  }
+
+  const receiptProof = readPresentField(nativeReceipt, [
+    "noEvmProof",
+    "no_evm_proof",
+    "nativeProof",
+    "native_proof",
+    "receiptProof",
+    "receipt_proof",
+    "executionProof",
+    "execution_proof",
+    "proof",
+  ]);
+  return receiptProof
+    ? {
+        source: `native-receipt.${receiptProof.key}`,
+        summary: proofSummary(receiptProof.value),
+      }
+    : null;
+}
+
+function pqCheckpointSummary(decoded: unknown): string | null {
+  const pq = readPresentField(decoded, ["pqAttestation", "pq_attestation"]);
+  if (!pq) return null;
+  const checkpointHeight = readStringField(pq.value, ["checkpointHeight", "checkpoint_height", "height"]);
+  return checkpointHeight ? `checkpoint #${checkpointHeight}` : proofSummary(pq.value);
+}
+
+export function mrvNativeTransactionEvidence(
+  decoded: DecodeTxResponse | Record<string, unknown> | null | undefined,
+  nativeReceipt: NativeReceiptResponse<unknown> | Record<string, unknown> | null | undefined,
+): MrvNativeTransactionEvidence | null {
+  const extension = findMrvNativeExtension(decoded);
+  const receiptTxType = readNumberField(nativeReceipt, ["txType", "tx_type"]);
+  const receiptSchema = readStringField(nativeReceipt, ["schema"]);
+  const artifactHash = readStringField(nativeReceipt, ["artifactHash", "artifact_hash"]);
+  const operation = findMrvOperationHint(readObjectField(decoded, ["decodedCalldata", "decoded_calldata"]))
+    ?? findMrvOperationHint(decoded);
+  const hasMrvReceipt = Boolean(nativeReceipt)
+    && (receiptTxType === MRV_NATIVE_RECEIPT_TX_TYPE
+      || (receiptTxType === null && receiptSchema === "riscv.receipt.v1"));
+  const hasMrvHint = Boolean(extension || hasMrvReceipt || operation);
+
+  if (!hasMrvHint) return null;
+
+  const includedBlock = readNumberField(decoded, ["blockNumber", "blockHeight", "block_number", "block_height"])
+    ?? readNumberField(nativeReceipt, ["blockHeight", "blockNumber", "block_height", "block_number"]);
+  const proof = findMrvProofEvidence(decoded, nativeReceipt);
+  const submittedState: MrvNativeEvidenceState = extension
+    ? (extension.validMrvV1 ? "present" : "invalid")
+    : "missing";
+  const includedState: MrvNativeEvidenceState = includedBlock !== null ? "present" : "missing";
+  const receiptState: MrvNativeEvidenceState = hasMrvReceipt ? "present" : "missing";
+  const proofState: MrvNativeEvidenceState = proof ? "present" : "missing";
+  const blockers: string[] = [];
+
+  if (!extension) {
+    blockers.push(
+      "lyth_decodeTx must expose txExtensions[]/extensions[] with MRV v1 { kind: 0x30, bodyHex: \"0x01\" } before Monoscan can prove the submitted MRV lane.",
+    );
+  } else if (!extension.validMrvV1) {
+    blockers.push(
+      "MRV submitted-lane proof requires extension kind 0x30 with bodyHex \"0x01\"; the transaction detail payload exposed a different body.",
+    );
+  }
+  if (!hasMrvReceipt) {
+    blockers.push(
+      "GET /api/v1/transactions/{hash}/native-receipt or lyth_nativeReceipt(txHash) must return txType 0x41, artifactHash, counters, and events for MRV receipt evidence.",
+    );
+  }
+  if (!proof) {
+    blockers.push(
+      "lyth_decodeTx.finalityProof or native-receipt.noEvmProof must return a verifier payload before Monoscan can render no-EVM proof evidence.",
+    );
+  }
+
+  return {
+    txHash: readStringField(decoded, ["txHash", "hash"]) ?? readStringField(nativeReceipt, ["txHash", "hash"]),
+    operation,
+    extension,
+    receiptTxType,
+    receiptSchema,
+    artifactHash,
+    includedBlock,
+    reverted: readBooleanField(nativeReceipt, ["reverted"]),
+    eventCount: readNumberField(nativeReceipt, ["eventCount", "event_count"]),
+    nativeDeltaCount: readNumberField(nativeReceipt, ["nativeDeltaCount", "native_delta_count"]),
+    proof,
+    pqCheckpoint: pqCheckpointSummary(decoded),
+    submittedState,
+    includedState,
+    receiptState,
+    proofState,
+    blockers,
+  };
 }
 
 export function nativeReceiptEventRows(

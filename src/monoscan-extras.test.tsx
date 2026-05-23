@@ -1,13 +1,82 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BridgeTrustDisclosuresCard, redemptionTicketStatusText } from "./monoscan-extras";
-import { bridgeTrustDisclosuresFromAddressData } from "./data/hooks";
+import { BridgeTrustDisclosuresCard, MrvNativeEvidenceCard, redemptionTicketStatusText } from "./monoscan-extras";
+import {
+  bridgeTrustDisclosuresFromAddressData,
+  MRV_NATIVE_RECEIPT_TX_TYPE,
+  MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+  MRV_NATIVE_TX_EXTENSION_KIND,
+  mrvNativeTransactionEvidence,
+} from "./data/hooks";
 
 describe("redemptionTicketStatusText", () => {
   it("separates cooldown maturity from payout availability", () => {
     expect(redemptionTicketStatusText(true)).toBe("Cooldown complete · payout unavailable");
     expect(redemptionTicketStatusText(false)).toBe("Cooldown active");
     expect(redemptionTicketStatusText(null)).toBe("Cooldown state pending");
+  });
+});
+
+describe("MrvNativeEvidenceCard", () => {
+  it("renders MRV submitted, included, receipt, and blocked proof states honestly", () => {
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"ab".repeat(32)}`,
+      blockNumber: 321n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+      finalityProof: null,
+    } as any, {
+      txHash: `0x${"ab".repeat(32)}`,
+      blockHash: `0x${"cd".repeat(32)}`,
+      blockHeight: 321,
+      txIndex: 0,
+      schema: "riscv.receipt.v1",
+      txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+      artifactHash: `0x${"ef".repeat(32)}`,
+      counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
+      fee: {
+        total_lythoshi: "12",
+        total_lyth: "0.00000012",
+        cycles_used: 12,
+        base_price_per_cycle_lythoshi: "1",
+        state_io_units: 1,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "0",
+      },
+      reverted: false,
+      nativeDeltaCount: 1,
+      eventCount: 2,
+      events: [],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    } as any);
+
+    const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
+
+    expect(html).toContain("MRV native evidence");
+    expect(html).toContain("Submitted");
+    expect(html).toContain("kind 0x30");
+    expect(html).toContain("body 0x01");
+    expect(html).toContain("Included");
+    expect(html).toContain("block 321");
+    expect(html).toContain("Receipt");
+    expect(html).toContain("txType 0x41");
+    expect(html).toContain("No-EVM proof");
+    expect(html).toContain("missing · not returned; no proof rendered");
+    expect(html).toContain("lyth_decodeTx.finalityProof");
+    expect(html).not.toContain("proof present");
+  });
+
+  it("renders nothing when no MRV evidence exists", () => {
+    expect(renderToStaticMarkup(<MrvNativeEvidenceCard evidence={null}/>)).toBe("");
   });
 });
 

@@ -29,6 +29,10 @@ import {
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
   fetchMrcMetadataForTokenBalances,
+  MRV_NATIVE_RECEIPT_TX_TYPE,
+  MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+  MRV_NATIVE_TX_EXTENSION_KIND,
+  mrvNativeTransactionEvidence,
   mrcMetadataBalanceQueryKeys,
   normalizeBridgeRouteDisclosure,
   normalizeRedemptionQueueResponse,
@@ -667,5 +671,107 @@ describe("API execution-unit transformations", () => {
     });
     expect(rows[0].decodedFields).toContainEqual(["market_id", `0x${"66".repeat(32)}`]);
     expect(rows[0].decodedFields).toContainEqual(["price_lythoshi", "100000000"]);
+  });
+
+  it("extracts bounded MRV submitted, included, receipt, and proof states without inventing proof", () => {
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"88".repeat(32)}`,
+      blockNumber: 120n,
+      status: "success",
+      decodedCalldata: {
+        kind: "mrv_deploy",
+        nativeTx: {
+          extensions: [{
+            kind: MRV_NATIVE_TX_EXTENSION_KIND,
+            bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+          }],
+        },
+      },
+      pqAttestation: {
+        checkpointHeight: 118n,
+      },
+      finalityProof: null,
+    } as any, {
+      txHash: `0x${"88".repeat(32)}`,
+      blockHash: `0x${"33".repeat(32)}`,
+      blockHeight: 120,
+      txIndex: 0,
+      schema: "riscv.receipt.v1",
+      txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+      artifactHash: `0x${"aa".repeat(32)}`,
+      counters: { cycles: 44, syscallUnits: 3, stateIoUnits: 2 },
+      fee: {
+        total_lythoshi: "440000000000",
+        total_lyth: "4,400",
+        cycles_used: 44,
+        base_price_per_cycle_lythoshi: "10000000000",
+        state_io_units: 2,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "0",
+      },
+      reverted: false,
+      nativeDeltaCount: 2,
+      eventCount: 1,
+      events: [],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    } as any);
+
+    expect(evidence).toMatchObject({
+      operation: "mrv_deploy",
+      submittedState: "present",
+      includedState: "present",
+      receiptState: "present",
+      proofState: "missing",
+      includedBlock: 120,
+      receiptTxType: MRV_NATIVE_RECEIPT_TX_TYPE,
+      artifactHash: `0x${"aa".repeat(32)}`,
+      pqCheckpoint: "checkpoint #118",
+    });
+    expect(evidence?.extension).toMatchObject({
+      kind: MRV_NATIVE_TX_EXTENSION_KIND,
+      bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+      validMrvV1: true,
+    });
+    expect(evidence?.blockers).toContain(
+      "lyth_decodeTx.finalityProof or native-receipt.noEvmProof must return a verifier payload before Monoscan can render no-EVM proof evidence.",
+    );
+  });
+
+  it("reports the exact native-receipt route needed when only the MRV extension is exposed", () => {
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"99".repeat(32)}`,
+      blockNumber: 121n,
+      decodedCalldata: {
+        txExtensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          body: [1],
+        }],
+      },
+      finalityProof: { verifier: "fixture" },
+    } as any, null);
+
+    expect(evidence).toMatchObject({
+      submittedState: "present",
+      includedState: "present",
+      receiptState: "missing",
+      proofState: "present",
+    });
+    expect(evidence?.extension?.bodyHex).toBe(MRV_NATIVE_TX_EXTENSION_BODY_HEX);
+    expect(evidence?.blockers).toContain(
+      "GET /api/v1/transactions/{hash}/native-receipt or lyth_nativeReceipt(txHash) must return txType 0x41, artifactHash, counters, and events for MRV receipt evidence.",
+    );
+  });
+
+  it("omits MRV evidence for ordinary transaction-detail payloads", () => {
+    expect(mrvNativeTransactionEvidence({
+      txHash: `0x${"10".repeat(32)}`,
+      blockNumber: 122n,
+      decodedCalldata: { method: "transfer(address,uint256)" },
+      finalityProof: null,
+    } as any, null)).toBeNull();
   });
 });
