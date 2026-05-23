@@ -73,8 +73,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+type NativeReceiptFixture = Omit<NativeReceiptResponse<unknown>, "noEvmProof"> & {
+  noEvmProof?: NoEvmReceiptProofTranscript | Record<string, unknown> | null;
+  [key: string]: unknown;
+};
+
 function nativeReceiptFixture(
-  overrides: Partial<NativeReceiptResponse<unknown>> & Record<string, unknown> = {},
+  overrides: Partial<NativeReceiptFixture> = {},
 ): NativeReceiptResponse<unknown> & Record<string, unknown> {
   return {
     txHash: `0x${"22".repeat(32)}`,
@@ -83,6 +88,7 @@ function nativeReceiptFixture(
     txIndex: 0,
     schema: "riscv.receipt.v1",
     artifactHash: `0x${"aa".repeat(32)}`,
+    receiptCommitment: `0x${"bb".repeat(32)}`,
     counters: { cycles: 44, syscallUnits: 3, stateIoUnits: 2 },
     fee: {
       total_lythoshi: "440000000000",
@@ -103,7 +109,7 @@ function nativeReceiptFixture(
       metadataLogIndex: 0xffff_ffff,
     },
     ...overrides,
-  };
+  } as NativeReceiptResponse<unknown> & Record<string, unknown>;
 }
 
 function noEvmReceiptProofTranscript(
@@ -438,10 +444,12 @@ describe("live-SDK seam", () => {
       kind: "spotMarket",
       primaryId: marketId,
       marketId,
+      baseAsset: `0x${"01".repeat(32)}`,
       quoteAsset: `0x${"02".repeat(32)}`,
       status: "open",
       blockHeight: 120,
     });
+    expect(rows.spotMarkets[0]?.fields).not.toContainEqual(["base_asset", `0x${"01".repeat(32)}`]);
     expect(rows.spotOrders[0]).toMatchObject({
       kind: "spotOrder",
       marketId,
@@ -1624,6 +1632,7 @@ describe("API execution-unit transformations", () => {
       txIndex: 0,
       schema: "riscv.receipt.v1",
       artifactHash: `0x${"aa".repeat(32)}`,
+      receiptCommitment: `0x${"bb".repeat(32)}`,
       counters: { cycles: 44, syscallUnits: 3, stateIoUnits: 2 },
       fee: {
         total_lythoshi: "440000000000",
@@ -1692,6 +1701,7 @@ describe("API execution-unit transformations", () => {
       txIndex: 0,
       schema: "riscv.receipt.v1",
       artifactHash: `0x${"aa".repeat(32)}`,
+      receiptCommitment: `0x${"bc".repeat(32)}`,
       counters: { cycles: 10, syscallUnits: 1, stateIoUnits: 0 },
       fee: {
         total_lythoshi: "1",

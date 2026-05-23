@@ -9,7 +9,17 @@
 export {};
 
 declare global {
+  interface MonolythiumProviderRequest {
+    method: string;
+    params?: readonly unknown[];
+  }
+
+  interface MonolythiumProvider {
+    request(args: MonolythiumProviderRequest): Promise<unknown>;
+  }
+
   interface Window {
+    monolythium?: MonolythiumProvider;
     __msToast?: ((msg: string) => void) | null;
     // Timer handle returned by setTimeout — typed as any to dodge the
     // node-vs-browser ReturnType<typeof setTimeout> drift.
