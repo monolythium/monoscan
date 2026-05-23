@@ -245,7 +245,7 @@ export interface GetOperatorResult {
 /**
  * Look up an operator by address.
  *
- * TODO(monolythium-vision): swap fixture for live SDK/indexer operator lookup.
+ * TODO(monolythium): swap fixture for live SDK/indexer operator lookup.
  */
 export function get_operator(input: GetOperatorInput): GetOperatorResult {
   const D: any = MONOSCAN_DATA;

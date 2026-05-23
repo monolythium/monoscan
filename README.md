@@ -21,7 +21,7 @@ Traders, developers, and compliance teams who need a fast, honest view into what
 This repo ships a self-hostable container. To run it locally:
 
 ```bash
-git clone https://github.com/monolythium-vision/monoscan.git
+git clone https://github.com/monolythium/monoscan.git
 cd monoscan
 docker compose up
 ```

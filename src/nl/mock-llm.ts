@@ -3,7 +3,7 @@
  * five canned templates and returns a structurally faithful Claude
  * tool-use response (sequence of tool_calls + Markdown explanation).
  *
- * TODO(monolythium-vision): swap this whole module for a real Claude
+ * TODO(monolythium): swap this whole module for a real Claude
  * Messages API call (with `tools: TOOL_CATALOG`) once the
  * `mono/api/monoscan-claude` key is provisioned. The output shape
  * (`NlAnswer`) does not change — the renderer is shape-stable across

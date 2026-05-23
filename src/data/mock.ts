@@ -1,7 +1,7 @@
 /**
  * Demo data for surfaces the SDK / indexer does not yet expose.
  *
- * Every export here is tagged `TODO(monolythium-vision)` and points at the
+ * Every export here is tagged `TODO(monolythium)` and points at the
  * issue or plan that will replace it with a real RPC + indexer call. The
  * old `src/monoscan-data.tsx` (with `@ts-nocheck` and an implicit window
  * attach) has been removed; this module is deliberately scoped to demo
@@ -170,7 +170,7 @@ const _makeClusters = () => {
 };
 
 /**
- * TODO(monolythium-vision): partially superseded by Stage 3 wiring:
+ * TODO(monolythium): partially superseded by Stage 3 wiring:
  *   - `consensus.round` → live via `useChainHead`/`useChainStrip` (`hooks.ts`)
  *   - `clusters` / `operators` → still partially mock; SDK has compact
  *     descriptor lists, while cluster TVS / operator reputation / vertex include
@@ -359,7 +359,7 @@ const _mkTrades = (mid: number, count: number, seedN: number) => {
 };
 
 /**
- * TODO(monolythium-vision): market list/search still needs an aggregate CLOB
+ * TODO(monolythium): market list/search still needs an aggregate CLOB
  * feed. MarketPage now probes `lyth_clobMarket` when
  * `VITE_MONOSCAN_MARKET_IDS` maps a symbol to a market id; this fixture stays
  * as the list and unconfigured-detail fallback.
@@ -397,7 +397,7 @@ MARKETS.forEach((m: any) => {
 
 /* ================= NETWORK STATS ================= */
 /**
- * TODO(monolythium-vision): aggregate counters need a real indexer
+ * TODO(monolythium): aggregate counters need a real indexer
  * (mono-core OI-0070). Stage 3 partially supersedes this: `useNetworkStatus`
  * in `hooks.ts` now feeds StatsPage live values for round, cluster
  * count, peer count and mempool depth. Everything else here (txTotal,
@@ -548,7 +548,7 @@ const _mkFlow = (seed: number) => {
 };
 
 /**
- * TODO(monolythium-vision): WalletsPage now probes `lyth_richList` for the
+ * TODO(monolythium): WalletsPage now probes `lyth_richList` for the
  * configured LYTH token id. These rows remain the distribution chart and
  * fallback list until token metadata + percentage supply aggregates are live.
  */
@@ -607,7 +607,7 @@ const TX_KINDS: Record<string, { label: string; icon: string }> = {
 };
 
 /**
- * TODO(monolythium-vision): partially superseded by Stage 3 — `TxPage` now
+ * TODO(monolythium): partially superseded by Stage 3 — `TxPage` now
  * reads `lyth_decodeTx` live via `useTxByHashLive` and overrides status,
  * block, gas, decoded calldata, logs, and PQ-finality fields. Signature timing
  * and DAC coverage still fall back to this fixture until the chain exposes

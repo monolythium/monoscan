@@ -7,7 +7,7 @@
  * collapsible per-tool view, Markdown answer block. The follow-up stage
  * swaps `mock-llm` for the real Anthropic Messages API.
  *
- * TODO(monolythium-vision): swap `ask` import for the real Claude API
+ * TODO(monolythium): swap `ask` import for the real Claude API
  * client once `mono/api/monoscan-claude` is provisioned and the
  * `monoscan-nl-service/` Rust proxy is deployed.
  */

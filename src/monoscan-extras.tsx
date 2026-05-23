@@ -592,7 +592,7 @@ const StatsPage = ({ go }: any) => {
   // and cluster count come from the live RPC; the rest of the page is
   // still mocked aggregate counters (txTotal, walletsTotal, contracts) until
   // mono-core OI-0070 ships an indexer aggregate view.
-  // TODO(monolythium-vision): swap mocked aggregate counters for indexer
+  // TODO(monolythium): swap mocked aggregate counters for indexer
   // aggregates the moment the indexer surface lands.
   const live = useNetworkStatus();
   const chainStats = useChainStats();
