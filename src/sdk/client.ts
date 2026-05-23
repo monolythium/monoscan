@@ -315,6 +315,13 @@ export const QK = {
     ] as const,
   nativeMarketState: (primaryId: string | null = null) =>
     ["mono", "markets", "native-state", primaryId ?? "all"] as const,
+  nativeAgentState: (
+    policyId: string | null = null,
+    escrowId: string | null = null,
+    account: string | null = null,
+    limit: number | null = null,
+  ) =>
+    ["mono", "agent", "native-state", policyId ?? "all", escrowId ?? "all", account ?? "all", limit ?? "default"] as const,
   dagRecent: () => ["mono", "dag", "recent"] as const,
   verticesAtRound: (round: number | string) => ["mono", "dag", "vertices", round] as const,
   dagParents: (round: number | string) => ["mono", "dag", "parents", round] as const,

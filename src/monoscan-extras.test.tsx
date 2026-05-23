@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   BridgeTrustDisclosuresCard,
   MrvNativeEvidenceCard,
+  NativeAgentStateCard,
   mrcPolicyAllowedAssetsSummary,
   mrcPolicyBodySummary,
   redemptionTicketStatusText,
@@ -22,6 +23,7 @@ import {
   mrvNativeTransactionEvidence,
   verifyNoEvmReceiptProofConsistency,
   type MrcMetadataResponse,
+  type NativeAgentStateDisplayRow,
   type NoEvmReceiptProofTranscript,
 } from "./data/hooks";
 
@@ -116,6 +118,45 @@ describe("MRC policy-account display labels", () => {
     expect(mrcPolicyAllowedAssetsSummary(policy, 1)).toBe(`0x${"aa".repeat(4)}…${"aa".repeat(2)} +1 more`);
     expect(mrcPolicyBodySummary(null)).toBe("—");
     expect(mrcPolicyAllowedAssetsSummary(null)).toBe("—");
+  });
+});
+
+describe("NativeAgentStateCard", () => {
+  it("renders live native agent rows without placeholder state", () => {
+    const row: NativeAgentStateDisplayRow = {
+      kind: "spendingPolicy",
+      primaryId: `0x${"aa".repeat(32)}`,
+      account: "mono1agentowner",
+      counterparty: "mono1agentcontroller",
+      assetId: `0x${"cc".repeat(32)}`,
+      status: "enabled",
+      amount: "500",
+      blockHeight: 42,
+      fields: [],
+    };
+
+    const html = renderToStaticMarkup(
+      <NativeAgentStateCard
+        rows={{ spendingPolicies: [row], policySpends: [], escrows: [] }}
+        loading={false}
+      />,
+    );
+
+    expect(html).toContain("Native agent state");
+    expect(html).toContain("Policy");
+    expect(html).toContain("mono1agentowner");
+    expect(html).not.toContain("No native agent policy or escrow rows");
+  });
+
+  it("renders an explicit empty state when the node returns no rows", () => {
+    const html = renderToStaticMarkup(
+      <NativeAgentStateCard
+        rows={{ spendingPolicies: [], policySpends: [], escrows: [] }}
+        loading={false}
+      />,
+    );
+
+    expect(html).toContain("No native agent policy or escrow rows reported for this account.");
   });
 });
 

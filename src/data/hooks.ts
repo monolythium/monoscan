@@ -68,6 +68,8 @@ import {
   type LythUpgradeStatusResponse,
   type MempoolSnapshot,
   type MetricsRangeResponse,
+  type NativeAgentStateFilter,
+  type NativeAgentStateResponse,
   type NativeEventsFilter,
   type NativeEventsResponse,
   type NativeReceiptResponse,
@@ -650,6 +652,18 @@ export interface NativeMarketStateDisplayRow {
   fields: Array<[string, string]>;
 }
 
+export interface NativeAgentStateDisplayRow {
+  kind: "spendingPolicy" | "policySpend" | "escrow";
+  primaryId: string | null;
+  account: string | null;
+  counterparty: string | null;
+  assetId: string | null;
+  status: string | null;
+  amount: string | null;
+  blockHeight: number | null;
+  fields: Array<[string, string]>;
+}
+
 export const MRV_NATIVE_TX_EXTENSION_KIND = 0x30;
 export const MRV_NATIVE_TX_EXTENSION_BODY_HEX = "0x01";
 export const MRV_NATIVE_RECEIPT_TX_TYPE = 0x41;
@@ -886,6 +900,90 @@ function nativeMarketStateRow(
             "updated_at_block",
             "registeredAtBlock",
             "registered_at_block",
+          ].includes(key))
+          .map(([key, value]) => [key, nativeFieldDisplay(value)] as [string, string])
+      : [],
+  };
+}
+
+function nativeAgentStateRow(
+  kind: NativeAgentStateDisplayRow["kind"],
+  raw: unknown,
+): NativeAgentStateDisplayRow {
+  const row = nativeStateRecord(raw);
+  const primaryId = readNativeStateString(row, [
+    "policyId",
+    "policy_id",
+    "escrowId",
+    "escrow_id",
+    "id",
+  ]);
+  const account = readNativeStateString(row, [
+    "owner",
+    "buyer",
+    "controller",
+    "provider",
+    "arbiter",
+    "account",
+  ]);
+  const counterparty = readNativeStateString(row, [
+    "controller",
+    "provider",
+    "buyer",
+    "arbiter",
+    "lastActor",
+    "last_actor",
+  ]);
+
+  return {
+    kind,
+    primaryId,
+    account,
+    counterparty,
+    assetId: readNativeStateString(row, ["assetId", "asset_id", "paymentAssetId", "payment_asset_id"]),
+    status: readNativeStateString(row, ["status", "state", "resolution"]),
+    amount: readNativeStateString(row, [
+      "amount",
+      "spent",
+      "windowLimit",
+      "window_limit",
+      "perActionLimit",
+      "per_action_limit",
+    ]),
+    blockHeight: readNativeStateNumber(row, ["updatedAtBlock", "updated_at_block", "createdAtBlock", "created_at_block"]),
+    fields: row
+      ? Object.entries(row)
+          .filter(([key]) => ![
+            "policyId",
+            "policy_id",
+            "escrowId",
+            "escrow_id",
+            "id",
+            "owner",
+            "buyer",
+            "controller",
+            "provider",
+            "arbiter",
+            "account",
+            "lastActor",
+            "last_actor",
+            "assetId",
+            "asset_id",
+            "paymentAssetId",
+            "payment_asset_id",
+            "status",
+            "state",
+            "resolution",
+            "amount",
+            "spent",
+            "windowLimit",
+            "window_limit",
+            "perActionLimit",
+            "per_action_limit",
+            "updatedAtBlock",
+            "updated_at_block",
+            "createdAtBlock",
+            "created_at_block",
           ].includes(key))
           .map(([key, value]) => [key, nativeFieldDisplay(value)] as [string, string])
       : [],
@@ -1489,6 +1587,20 @@ export function nativeMarketStateRows(
     spotOrders: (response?.spotOrders ?? []).map((row) => nativeMarketStateRow("spotOrder", row)),
     nftListings: (response?.nftListings ?? []).map((row) => nativeMarketStateRow("nftListing", row)),
     collectionRoyalties: (response?.collectionRoyalties ?? []).map((row) => nativeMarketStateRow("collectionRoyalty", row)),
+  };
+}
+
+export function nativeAgentStateRows(
+  response: NativeAgentStateResponse | null | undefined,
+): {
+  spendingPolicies: NativeAgentStateDisplayRow[];
+  policySpends: NativeAgentStateDisplayRow[];
+  escrows: NativeAgentStateDisplayRow[];
+} {
+  return {
+    spendingPolicies: (response?.spendingPolicies ?? []).map((row) => nativeAgentStateRow("spendingPolicy", row)),
+    policySpends: (response?.policySpends ?? []).map((row) => nativeAgentStateRow("policySpend", row)),
+    escrows: (response?.escrows ?? []).map((row) => nativeAgentStateRow("escrow", row)),
   };
 }
 
@@ -3961,6 +4073,59 @@ export function useNativeMarketEvents(options: {
     ),
     enabled: filter !== null && isRpcConfigured(),
     queryFn: async () => fetchNativeMarketEvents(filter as NativeEventsFilter),
+    staleTime: 15_000,
+  });
+}
+
+export type NativeAgentStateLookup = Pick<
+  NativeAgentStateFilter,
+  "policyId" | "escrowId" | "account" | "includePolicySpends" | "limit"
+>;
+
+function nativeAgentStateFilterForNode(filter: NativeAgentStateLookup = {}): NativeAgentStateFilter {
+  const policyId = filter.policyId ?? null;
+  const escrowId = filter.escrowId ?? null;
+  const account = policyId === null && escrowId === null ? filter.account ?? null : null;
+  const canIncludePolicySpends = policyId !== null || account !== null;
+  return {
+    ...(policyId !== null ? { policyId } : {}),
+    ...(escrowId !== null ? { escrowId } : {}),
+    ...(account !== null ? { account } : {}),
+    ...(canIncludePolicySpends && filter.includePolicySpends !== undefined
+      ? { includePolicySpends: filter.includePolicySpends }
+      : {}),
+    ...(filter.limit !== undefined ? { limit: filter.limit } : {}),
+  };
+}
+
+export async function fetchNativeAgentState(
+  filter: NativeAgentStateLookup = {},
+): Promise<NativeAgentStateResponse | null> {
+  const query = nativeAgentStateFilterForNode(filter);
+  try {
+    return await getApiClient()
+      .nativeAgentState(query)
+      .then((response) => response.data)
+      .catch(() => getRpcClient().lythNativeAgentState(query));
+  } catch {
+    return null;
+  }
+}
+
+export function useNativeAgentState(options: NativeAgentStateLookup = {}) {
+  const limit = typeof options.limit === "number" && Number.isFinite(options.limit)
+    ? Math.max(1, Math.min(Math.trunc(options.limit), 100))
+    : 25;
+  const filter = nativeAgentStateFilterForNode({ ...options, limit });
+  return useQuery<NativeAgentStateResponse | null>({
+    queryKey: QK.nativeAgentState(
+      filter.policyId ?? null,
+      filter.escrowId ?? null,
+      filter.account ?? null,
+      limit,
+    ),
+    enabled: isRpcConfigured(),
+    queryFn: async () => fetchNativeAgentState(filter),
     staleTime: 15_000,
   });
 }
