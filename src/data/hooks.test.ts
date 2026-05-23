@@ -36,6 +36,7 @@ import {
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
   fetchBridgeRouteDisclosures,
+  fetchMrcHoldersForTokenBalances,
   fetchNativeMarketEvents,
   fetchTxNativeReceipt,
   fetchMrcMetadataForTokenBalances,
@@ -44,6 +45,7 @@ import {
   MRV_NATIVE_TX_EXTENSION_BODY_HEX,
   MRV_NATIVE_TX_EXTENSION_KIND,
   mrvNativeTransactionEvidence,
+  mrcHoldersBalanceQueryKeys,
   mrcMetadataBalanceQueryKeys,
   normalizeBridgeRouteDisclosure,
   normalizeRedemptionQueueResponse,
@@ -724,6 +726,111 @@ describe("MRC token-balance metadata enrichment", () => {
 
     expect(calls).toEqual([["lyth_mrcMetadata", [assetId]]]);
     expect(metadata["balance-a"].metadata?.symbol).toBe("NAT");
+  });
+});
+
+describe("MRC token-balance holder enrichment", () => {
+  const assetId = `0x${"aa".repeat(32)}`;
+  const tokenId = `0x${"bb".repeat(32)}`;
+  const otherAssetId = `0x${"cc".repeat(32)}`;
+  const otherTokenId = `0x${"dd".repeat(32)}`;
+
+  it("maps bounded native MRC-721 and MRC-1155 token identities through the REST route", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const api = {
+      async get<T>(path: string, query?: unknown): Promise<T> {
+        calls.push([path, query]);
+        const standard = path.includes("/mrc1155/") ? "mrc1155" : "mrc721";
+        return {
+          schemaVersion: 1,
+          standard,
+          assetId: standard === "mrc1155" ? otherAssetId : assetId,
+          tokenId: standard === "mrc1155" ? otherTokenId : tokenId,
+          limit: 2,
+          holders: [{
+            rank: 1,
+            address: "0x1111111111111111111111111111111111111111",
+            balance: "1",
+            updatedAtBlock: 99,
+          }],
+        } as T;
+      },
+    };
+    const rpc = {
+      async call() {
+        throw new Error("RPC fallback should not run");
+      },
+    };
+
+    const rows = [
+      { tokenId: "balance-a", mrc: { standard: "mrc721", assetId, tokenId } },
+      { tokenId: "balance-a-duplicate", mrc: { standard: "mrc721", assetId, tokenId } },
+      { tokenId: "balance-b", mrc: { standard: "mrc1155", assetId: otherAssetId, tokenId: otherTokenId } },
+      { tokenId: "balance-c", mrc: { standard: "mrc20", assetId: `0x${"ee".repeat(32)}` } },
+    ];
+
+    expect(mrcHoldersBalanceQueryKeys(rows)).toEqual([
+      `mrc721:${assetId}:${tokenId}:balance-a`,
+      `mrc1155:${otherAssetId}:${otherTokenId}:balance-b`,
+    ]);
+
+    const holders = await fetchMrcHoldersForTokenBalances(rows, { api, rpc }, 2);
+
+    expect(calls).toEqual([
+      [`/mrc/mrc721/${assetId}/${tokenId}/holders`, { limit: 2 }],
+      [`/mrc/mrc1155/${otherAssetId}/${otherTokenId}/holders`, { limit: 2 }],
+    ]);
+    expect(Object.keys(holders)).toEqual(["balance-a", "balance-b"]);
+    expect(holders["balance-a"].holders[0].address).toBe("0x1111111111111111111111111111111111111111");
+  });
+
+  it("falls back to lyth_mrcHolders JSON-RPC when REST is unavailable", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const api = {
+      async get() {
+        throw new Error("not found");
+      },
+    };
+    const rpc = {
+      async call<T>(method: string, params?: unknown): Promise<T> {
+        calls.push([method, params]);
+        return {
+          schemaVersion: 1,
+          standard: "mrc721",
+          assetId,
+          tokenId,
+          limit: 6,
+          holders: [],
+        } as T;
+      },
+    };
+
+    const holders = await fetchMrcHoldersForTokenBalances([
+      { tokenId: "balance-a", mrc: { standard: "mrc721", assetId, tokenId } },
+    ], { api, rpc });
+
+    expect(calls).toEqual([["lyth_mrcHolders", ["mrc721", assetId, tokenId, 6]]]);
+    expect(holders["balance-a"].standard).toBe("mrc721");
+  });
+
+  it("ignores non-native, collection-scope, and failed holder lookups", async () => {
+    const calls: string[] = [];
+    const api = {
+      async get(path: string) {
+        calls.push(path);
+        throw new Error("method unavailable");
+      },
+    };
+    const rpc = {};
+    const rows = [
+      { tokenId: "plain" },
+      { tokenId: "mrc20", mrc: { standard: "mrc20", assetId } },
+      { tokenId: "collection", mrc: { standard: "mrc721", assetId } },
+      { tokenId: "failed", mrc: { standard: "mrc1155", assetId: otherAssetId, tokenId: otherTokenId } },
+    ];
+
+    await expect(fetchMrcHoldersForTokenBalances(rows, { api, rpc })).resolves.toEqual({});
+    expect(calls).toEqual([`/mrc/mrc1155/${otherAssetId}/${otherTokenId}/holders`]);
   });
 });
 
