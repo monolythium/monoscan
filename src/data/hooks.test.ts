@@ -36,6 +36,7 @@ import {
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
   fetchBridgeRouteDisclosures,
+  fetchMrcAccount,
   fetchMrcHoldersForTokenBalances,
   fetchNativeMarketEvents,
   fetchTxNativeReceipt,
@@ -50,6 +51,7 @@ import {
   mrvNativeTransactionEvidence,
   mrcHoldersBalanceQueryKeys,
   mrcMetadataBalanceQueryKeys,
+  normalizeMrcAccountResponse,
   normalizeBridgeRouteDisclosure,
   normalizeRedemptionQueueResponse,
   nativeReceiptEventRows,
@@ -193,6 +195,7 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythGetAccountPolicy).toBe("function");
     expect(typeof proto.lythGetTokenBalances).toBe("function");
     expect(typeof (proto.lythMrcMetadata ?? proto.call)).toBe("function");
+    expect(typeof ((proto as Record<string, unknown>).lythMrcAccount ?? proto.call)).toBe("function");
     expect(typeof proto.lythGetAddressLabel).toBe("function");
     expect(typeof proto.lythGetDelegationHistory).toBe("function");
     expect(typeof proto.lythPendingRewards).toBe("function");
@@ -994,6 +997,185 @@ describe("MRC token-balance holder enrichment", () => {
 
     await expect(fetchMrcHoldersForTokenBalances(rows, { api, rpc })).resolves.toEqual({});
     expect(calls).toEqual([`/mrc/mrc1155/${otherAssetId}/${otherTokenId}/holders`]);
+  });
+});
+
+describe("MRC account lookup", () => {
+  const account = "monos1effvdw0d05a35j69wwxplhmctpcclx382n60yf";
+  const controller = "mono1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqnzz75d";
+  const recovery = "mono1zqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq9e3uzy";
+  const assetId = `0x${"aa".repeat(32)}`;
+  const policyHash = `0x${"44".repeat(32)}`;
+
+  function mrcAccountPayload(overrides: Record<string, unknown> = {}) {
+    return {
+      schemaVersion: 1,
+      account,
+      spendLimit: 2,
+      smartAccount: {
+        kind: "smart_account",
+        account,
+        controller,
+        recovery,
+        policyHash,
+        nonce: "7",
+        updatedAtBlock: 100,
+      },
+      policyAccount: null,
+      policySpends: [{
+        account,
+        assetId,
+        window: "9",
+        amount: "1000",
+        spent: "125",
+        updatedAtBlock: 101,
+      }],
+      ...overrides,
+    };
+  }
+
+  it("normalizes direct and envelope MRC account payloads", () => {
+    const result = normalizeMrcAccountResponse(apiEnvelope({
+      schema_version: 1,
+      account,
+      spend_limit: "3",
+      smart_account: {
+        kind: "smart_account",
+        account,
+        controller,
+        recovery: null,
+        policy_hash: policyHash,
+        nonce: 9,
+        updated_at_block: "100",
+      },
+      policy_account: {
+        kind: "policy_account",
+        account,
+        controller: null,
+        recovery,
+        policy_hash: policyHash,
+        nonce: null,
+        updated_at_block: 99,
+      },
+      policy_spends: [
+        {
+          account,
+          asset_id: assetId,
+          window: 86400,
+          amount: 5000n,
+          spent: "1200",
+          updated_at_block: "101",
+        },
+        { account, asset_id: assetId, amount: "missing-window" },
+      ],
+    }));
+
+    expect(result).toEqual({
+      schemaVersion: 1,
+      account,
+      spendLimit: 3,
+      smartAccount: {
+        kind: "smart_account",
+        account,
+        controller,
+        recovery: null,
+        policyHash,
+        nonce: "9",
+        updatedAtBlock: 100,
+      },
+      policyAccount: {
+        kind: "policy_account",
+        account,
+        controller: null,
+        recovery,
+        policyHash,
+        nonce: null,
+        updatedAtBlock: 99,
+      },
+      policySpends: [{
+        account,
+        assetId,
+        window: "86400",
+        amount: "5000",
+        spent: "1200",
+        updatedAtBlock: 101,
+      }],
+    });
+  });
+
+  it("reads MRC account data from the REST path before RPC fallback", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const api = {
+      async get<T>(path: string, query?: unknown): Promise<T> {
+        calls.push([path, query]);
+        return apiEnvelope(mrcAccountPayload()) as T;
+      },
+    };
+    const rpc = {
+      async call() {
+        throw new Error("RPC fallback should not run");
+      },
+    };
+
+    const result = await fetchMrcAccount(account, 2, { api, rpc });
+
+    expect(calls).toEqual([[`/mrc/accounts/${account}`, { limit: 2 }]]);
+    expect(result?.smartAccount?.controller).toBe(controller);
+    expect(result?.policySpends[0].assetId).toBe(assetId);
+  });
+
+  it("falls back to lyth_mrcAccount JSON-RPC when REST is unavailable", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const api = {
+      async get() {
+        throw new Error("not found");
+      },
+    };
+    const rpc = {
+      async call<T>(method: string, params?: unknown): Promise<T> {
+        calls.push([method, params]);
+        return mrcAccountPayload({
+          smartAccount: null,
+          policyAccount: {
+            kind: "policy_account",
+            account,
+            controller,
+            recovery: null,
+            policyHash,
+            nonce: null,
+            updatedAtBlock: 200,
+          },
+        }) as T;
+      },
+    };
+
+    const result = await fetchMrcAccount(account, 4, { api, rpc });
+
+    expect(calls).toEqual([["lyth_mrcAccount", [account, 4]]]);
+    expect(result?.smartAccount).toBeNull();
+    expect(result?.policyAccount?.kind).toBe("policy_account");
+    expect(result?.policySpends).toHaveLength(1);
+  });
+
+  it("uses an installed lythMrcAccount wrapper when present", async () => {
+    const calls: Array<[string, number | undefined]> = [];
+    const api = {
+      async get() {
+        throw new Error("not found");
+      },
+    };
+    const rpc = {
+      async lythMrcAccount(accountArg: string, limitArg?: number) {
+        calls.push([accountArg, limitArg]);
+        return mrcAccountPayload({ policySpends: [] });
+      },
+    };
+
+    const result = await fetchMrcAccount(account, 5, { api, rpc });
+
+    expect(calls).toEqual([[account, 5]]);
+    expect(result?.policySpends).toEqual([]);
+    expect(result?.spendLimit).toBe(2);
   });
 });
 

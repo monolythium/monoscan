@@ -33,6 +33,7 @@ import {
   useLatestTransactions,
   useMetricsRange,
   useMrcHoldersForTokenBalances,
+  useMrcAccount,
   useMrcMetadataForTokenBalances,
   useNetworkStatus,
   useOperatorCapabilities,
@@ -56,6 +57,9 @@ import {
   mergeBridgeTrustDisclosures,
   type MrcMetadataResponse,
   type MrcHoldersResponse,
+  type MrcAccountRecord,
+  type MrcAccountResponse,
+  type MrcPolicySpendRecord,
   type BridgeTrustDisclosureRow,
   type MrvNativeTransactionEvidence,
   mrvNativeTransactionEvidence,
@@ -187,6 +191,30 @@ function tokenBalanceHolderLines(holders: MrcHoldersResponse | undefined): strin
     const blockText = Number.isFinite(block) ? block.toLocaleString() : String(holder.updatedAtBlock);
     return `#${holder.rank} ${_short(holder.address, 10)} · ${holder.balance} · block ${blockText}`;
   });
+}
+function mrcAccountRecordSummary(record: MrcAccountRecord | null): string {
+  if (!record) return "—";
+  const parts = [
+    record.kind,
+    record.controller ? `controller ${_short(record.controller, 10)}` : "controller —",
+    record.recovery ? `recovery ${_short(record.recovery, 10)}` : "recovery —",
+    record.policyHash ? `policy ${_short(record.policyHash, 10)}` : "policy —",
+    record.nonce !== null ? `nonce ${record.nonce}` : "nonce —",
+    `block ${Number(record.updatedAtBlock).toLocaleString()}`,
+  ];
+  return parts.join(" · ");
+}
+function mrcAccountSummaryText(account: MrcAccountResponse | null): string {
+  if (!account) return "—";
+  const kinds = [
+    account.smartAccount ? "smart" : null,
+    account.policyAccount ? "policy" : null,
+  ].filter((kind): kind is string => Boolean(kind));
+  const prefix = kinds.length > 0 ? kinds.join(" + ") : "no MRC rows";
+  return `${prefix} · ${account.policySpends.length}/${account.spendLimit} spend rows`;
+}
+function mrcPolicySpendKey(row: MrcPolicySpendRecord): string {
+  return `${row.account}:${row.assetId}:${row.window}:${row.updatedAtBlock}`;
 }
 function reputationScopeLabel(reputation: AgentReputationResponse): string {
   return reputation.categoryScope === "category"
@@ -1008,6 +1036,7 @@ const WalletPage = ({ addr, go }: any) => {
   const addressLabel = useAddressLabel(addr);
   const code = useAccountCode(addr);
   const agentReputation = useAgentReputation(addr);
+  const mrcAccount = useMrcAccount(addr, 6);
   const fixtureWallet = WALLETS.find(w => w.addr === addr);
   const profileAccount = profile.data?.account ?? null;
   const profileBalance = profileAccount?.nativeBalance ?? null;
@@ -1066,6 +1095,8 @@ const WalletPage = ({ addr, go }: any) => {
   const bridgeTrustDisclosureChecked = profile.isFetched && tokenBalances.isFetched && bridgeRouteDiscovery.isFetched;
   const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
   const liveAgentReputation = agentReputation.data ?? null;
+  const liveMrcAccount = mrcAccount.data ?? null;
+  const liveMrcSpendRows = liveMrcAccount?.policySpends ?? [];
   const profileActivityKind = profile.data?.activity?.kind ?? null;
   const liveActivityKind = profileActivityKind ? { kind: profileActivityKind, retention: profile.data?.activity?.retention ?? null } : (activityKind.data ?? null);
   const liveRetention = liveActivityKind?.retention && typeof liveActivityKind.retention === "object"
@@ -1109,7 +1140,7 @@ const WalletPage = ({ addr, go }: any) => {
         </div>
       </section>
 
-      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || liveRedemptionQueue || codeValue !== null || profileAccount || liveAgentReputation) && (
+      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || liveRedemptionQueue || codeValue !== null || profileAccount || liveAgentReputation || liveMrcAccount) && (
         <section className="tx-split">
           <Card title="Live account">
             <div className="tx-kv">
@@ -1127,10 +1158,39 @@ const WalletPage = ({ addr, go }: any) => {
               />
               <KV label="Activity index" value={liveActivityKind ? `${liveActivityKind.kind}${earliestRetained ? ` · retained from block ${Number(earliestRetained).toLocaleString()}` : ""}` : "—"}/>
               <KV label="Policy" value={livePolicy ? `${livePolicy.mode}${livePolicy.explicit ? " · explicit" : ""}` : "—"}/>
+              <KV label="MRC account" value={mrcAccountSummaryText(liveMrcAccount)} mono/>
               <KV label="Label" value={liveLabel ? `${liveLabel.category}${liveLabel.displayName ? ` · ${liveLabel.displayName}` : ""}` : "—"}/>
               <KV label="Code" value={codeValue === null ? "—" : isContract ? `${codeValue.length} chars` : "0x"} mono/>
             </div>
           </Card>
+          {liveMrcAccount && (
+            <Card title="MRC account" right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>lyth_mrcAccount</span>}>
+              <div className="tx-kv">
+                <KV label="Smart account" value={mrcAccountRecordSummary(liveMrcAccount.smartAccount)} mono/>
+                <KV label="Policy account" value={mrcAccountRecordSummary(liveMrcAccount.policyAccount)} mono/>
+                <KV label="Spend rows" value={`${liveMrcSpendRows.length}/${liveMrcAccount.spendLimit}`} mono/>
+              </div>
+              {liveMrcSpendRows.length > 0 ? (
+                <table className="ms-table ms-table--tight">
+                  <thead><tr><th>Asset</th><th>Window</th><th style={{textAlign:"right"}}>Spent / amount</th><th style={{textAlign:"right"}}>Updated</th></tr></thead>
+                  <tbody>
+                    {liveMrcSpendRows.map((row)=>(
+                      <tr key={mrcPolicySpendKey(row)}>
+                        <td className="mono" title={row.assetId}>{_short(row.assetId, 10)}</td>
+                        <td className="mono">{row.window}</td>
+                        <td className="mono num" style={{textAlign:"right"}}>{row.spent} / {row.amount}</td>
+                        <td className="mono num" style={{textAlign:"right"}}>{Number(row.updatedAtBlock).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"12px 16px 0"}}>
+                  No MRC policy spend rows reported for this account.
+                </p>
+              )}
+            </Card>
+          )}
           <Card title="Live delegations">
             {liveDelegations.length > 0 ? (
               <table className="ms-table">

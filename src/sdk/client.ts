@@ -232,6 +232,7 @@ export const QK = {
   tokenBalances: (addr: string) => ["mono", "address", addr, "token-balances"] as const,
   mrcMetadata: (keys: readonly string[]) => ["mono", "mrc", "metadata", keys.join("|")] as const,
   mrcHolders: (keys: readonly string[], limit: number) => ["mono", "mrc", "holders", keys.join("|"), limit] as const,
+  mrcAccount: (addr: string, limit: number) => ["mono", "mrc", "account", addr, limit] as const,
   bridgeRoutes: (limit: number) => ["mono", "bridge", "routes", limit] as const,
   addressLabel: (addr: string) => ["mono", "address", addr, "label"] as const,
   accountCode: (addr: string) => ["mono", "address", addr, "code"] as const,
