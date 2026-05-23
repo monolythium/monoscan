@@ -2157,11 +2157,6 @@ const GetMonolythiumPage = ({ go }: any) => {
   const [phone, setPhone] = useStateX("");
   const [telegramHandle, setTelegramHandle] = useStateX("");
   const [twitterHandle, setTwitterHandle] = useStateX("");
-  const [addressLine1, setAddressLine1] = useStateX("");
-  const [addressLine2, setAddressLine2] = useStateX("");
-  const [city, setCity] = useStateX("");
-  const [stateProvince, setStateProvince] = useStateX("");
-  const [postalCode, setPostalCode] = useStateX("");
   const [country, setCountry] = useStateX("");
   const [confirmedAdult, setConfirmedAdult] = useStateX(false);
 
@@ -2181,12 +2176,8 @@ const GetMonolythiumPage = ({ go }: any) => {
   const validIdentity = buyerType === "individual"
     ? (firstName.trim().length > 0 && lastName.trim().length > 0)
     : (companyName.trim().length > 0 && jurisdiction.trim().length > 0 && contactFirstName.trim().length > 0 && contactLastName.trim().length > 0);
-  const validAddress = addressLine1.trim().length > 0
-    && city.trim().length > 0
-    && stateProvince.trim().length > 0
-    && postalCode.trim().length > 0
-    && country.trim().length > 0;
-  const canPrepare = validAmount && validIdentity && hasContact && validAddress && confirmedAdult;
+  const validCountry = country.trim().length > 0;
+  const canPrepare = validAmount && validIdentity && hasContact && validCountry && confirmedAdult;
   const baseLyth = amountUsd > 0 ? amountUsd * 40 : 0;
   const totalLyth = allocation?.lythAmount ?? baseLyth * tier.multiplier;
   const bonusLyth = Math.max(0, totalLyth - baseLyth);
@@ -2281,11 +2272,6 @@ const GetMonolythiumPage = ({ go }: any) => {
           phone: trimmedPhone || undefined,
           telegramHandle: trimmedTelegram || undefined,
           twitterHandle: trimmedTwitter || undefined,
-          addressLine1: addressLine1.trim(),
-          addressLine2: addressLine2.trim() || undefined,
-          city: city.trim(),
-          stateProvince: stateProvince.trim(),
-          postalCode: postalCode.trim(),
           country: country.trim(),
           confirmedAdult: true,
         }),
@@ -2492,29 +2478,7 @@ const GetMonolythiumPage = ({ go }: any) => {
             </div>
 
             <label className="get-field">
-              <span>Address line 1</span>
-              <input value={addressLine1} onChange={e=>setAddressLine1(e.target.value)} placeholder="Street and number" autoComplete="address-line1"/>
-            </label>
-            <label className="get-field">
-              <span>Address line 2 <small className="cap" style={{opacity:0.6,marginLeft:6}}>optional</small></span>
-              <input value={addressLine2} onChange={e=>setAddressLine2(e.target.value)} placeholder="Apartment, suite, unit" autoComplete="address-line2"/>
-            </label>
-            <div className="get-row" style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:12}}>
-              <label className="get-field">
-                <span>City</span>
-                <input value={city} onChange={e=>setCity(e.target.value)} autoComplete="address-level2"/>
-              </label>
-              <label className="get-field">
-                <span>State / Province</span>
-                <input value={stateProvince} onChange={e=>setStateProvince(e.target.value)} autoComplete="address-level1"/>
-              </label>
-              <label className="get-field">
-                <span>Postal code</span>
-                <input value={postalCode} onChange={e=>setPostalCode(e.target.value)} autoComplete="postal-code"/>
-              </label>
-            </div>
-            <label className="get-field">
-              <span>Country</span>
+              <span>Country of residence</span>
               <input value={country} onChange={e=>setCountry(e.target.value)} placeholder="e.g. Canada" autoComplete="country-name"/>
             </label>
 
