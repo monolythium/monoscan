@@ -73,7 +73,16 @@ import {
   nativeReceiptMarketEventRows,
 } from "./data/hooks";
 import { getLythTokenId } from "./sdk/client";
-import type { AgentReputationRecord, AgentReputationResponse } from "@monolythium/core-sdk";
+import { getNativeAgentForwarderAddress } from "./sdk/client";
+import {
+  buildNativeAgentActionWalletRequest,
+  nativeAgentActionDefinition,
+  nativeAgentActionInitialValues,
+  NATIVE_AGENT_ACTIONS,
+  type NativeAgentActionField,
+  type NativeAgentActionKind,
+} from "./monoscan-agent-actions";
+import type { AgentReputationRecord, AgentReputationResponse, CapabilitiesResponse } from "@monolythium/core-sdk";
 
 /* Light helpers — keep local so this file is self-contained */
 const _fmt  = (n: any) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -111,6 +120,17 @@ const _fmtRawToken = (value: string | bigint | number | null | undefined) => {
   } catch {
     return String(value);
   }
+};
+
+const _walletTxHash = (result: unknown): string | null => {
+  if (typeof result === "string") return result;
+  if (result && typeof result === "object" && "txHash" in result && typeof (result as { txHash?: unknown }).txHash === "string") {
+    return (result as { txHash: string }).txHash;
+  }
+  if (result && typeof result === "object" && "hash" in result && typeof (result as { hash?: unknown }).hash === "string") {
+    return (result as { hash: string }).hash;
+  }
+  return null;
 };
 const _rawToLythNumber = (value: string | bigint | number | null | undefined) => {
   if (value === null || value === undefined || value === "") return 0;
@@ -2629,6 +2649,160 @@ const SearchPage = ({ q, go }: any) => {
   );
 };
 
+type NativeAgentActionSubmit =
+  | { state: "idle" }
+  | { state: "submitting"; message: string }
+  | { state: "success"; message: string; txHash: string | null }
+  | { state: "error"; message: string };
+
+const NativeAgentActionsCard = ({
+  capabilities,
+}: {
+  capabilities: CapabilitiesResponse | null | undefined;
+}) => {
+  const [kind, setKind] = useStateX<NativeAgentActionKind>(NATIVE_AGENT_ACTIONS[0].kind);
+  const [values, setValues] = useStateX<Record<string, string>>(() =>
+    nativeAgentActionInitialValues(NATIVE_AGENT_ACTIONS[0].kind),
+  );
+  const [submit, setSubmit] = useStateX<NativeAgentActionSubmit>({ state: "idle" });
+  const action = useMemoX(() => nativeAgentActionDefinition(kind), [kind]);
+  const forwarderAddress = getNativeAgentForwarderAddress(capabilities);
+  const forwarderRows = capabilities?.nativeModuleForwarders?.agent ?? [];
+  const selectedForwarderLabel = forwarderRows.length > 0
+    ? `${forwarderRows.length} capability rows`
+    : forwarderAddress
+      ? "env fallback"
+      : "not configured";
+
+  useEffectX(() => {
+    setValues(nativeAgentActionInitialValues(kind));
+    setSubmit({ state: "idle" });
+  }, [kind]);
+
+  const updateValue = (field: NativeAgentActionField, value: string) => {
+    setValues((current) => ({ ...current, [field.key]: value }));
+  };
+
+  const submitAction = async () => {
+    try {
+      const provider = typeof window !== "undefined" ? window.monolythium : undefined;
+      if (!provider?.request) throw new Error("Monolythium wallet provider not detected.");
+      setSubmit({ state: "submitting", message: "awaiting wallet" });
+      await provider.request({ method: "eth_requestAccounts", params: [] });
+      const request = buildNativeAgentActionWalletRequest(kind, values, {
+        forwarderContractAddress: forwarderAddress,
+        capabilities,
+      });
+      setSubmit({ state: "submitting", message: "confirming native call" });
+      const result = await provider.request(request);
+      setSubmit({
+        state: "success",
+        message: "submitted",
+        txHash: _walletTxHash(result),
+      });
+    } catch (error) {
+      setSubmit({
+        state: "error",
+        message: error instanceof Error ? error.message : "native agent action failed",
+      });
+    }
+  };
+
+  const fieldInput = (field: NativeAgentActionField) => {
+    const value = values[field.key] ?? field.defaultValue ?? "";
+    if (field.kind === "boolean") {
+      return (
+        <select
+          value={value}
+          onChange={(event) => updateValue(field, event.currentTarget.value)}
+          style={{width:"100%"}}
+        >
+          <option value="false">False</option>
+          <option value="true">True</option>
+        </select>
+      );
+    }
+    if (field.kind === "select") {
+      return (
+        <select
+          value={value}
+          onChange={(event) => updateValue(field, event.currentTarget.value)}
+          style={{width:"100%"}}
+        >
+          {(field.options ?? []).map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      );
+    }
+    return (
+      <input
+        value={value}
+        inputMode={field.kind === "number" || field.kind === "amount" ? "numeric" : "text"}
+        onChange={(event) => updateValue(field, event.currentTarget.value)}
+        spellCheck={false}
+        style={{width:"100%"}}
+      />
+    );
+  };
+
+  return (
+    <Card
+      title="Native agent actions"
+      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>monolythium_submitMrvNativeCall</span>}
+    >
+      <div style={{display:"grid",gridTemplateColumns:"minmax(220px,0.8fr) minmax(0,1.2fr)",gap:14}}>
+        <div>
+          <label className="mono" style={{display:"block",fontSize:10,color:"var(--fg-500)",marginBottom:6}}>Action</label>
+          <select
+            value={kind}
+            onChange={(event) => setKind(event.currentTarget.value as NativeAgentActionKind)}
+            style={{width:"100%"}}
+          >
+            {NATIVE_AGENT_ACTIONS.map((entry) => (
+              <option key={entry.kind} value={entry.kind}>{entry.group} / {entry.label}</option>
+            ))}
+          </select>
+          <div className="tx-kv" style={{marginTop:12}}>
+            <KV label="Group" value={action.group}/>
+            <KV label="Forwarder" value={selectedForwarderLabel} mono/>
+            <KV label="Fallback" value={forwarderAddress ? _short(forwarderAddress, 12) : "—"} mono/>
+          </div>
+        </div>
+        <div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10}}>
+            {action.fields.map((field) => (
+              <label key={field.key} style={{display:"grid",gap:5}}>
+                <span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>{field.label}</span>
+                {fieldInput(field)}
+              </label>
+            ))}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:12,flexWrap:"wrap"}}>
+            <button
+              className="ov-cta"
+              disabled={submit.state === "submitting"}
+              onClick={submitAction}
+            >
+              {submit.state === "submitting" ? submit.message : "Submit"}
+            </button>
+            {submit.state !== "idle" && (
+              <span
+                className="mono"
+                style={{fontSize:11,color:submit.state === "error" ? "var(--err)" : submit.state === "success" ? "var(--ok)" : "var(--fg-400)"}}
+              >
+                {submit.state === "success" && submit.txHash
+                  ? `${submit.message} ${_short(submit.txHash, 12)}`
+                  : submit.message}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+};
+
 const ProtocolPage = ({ go }: any) => {
   const precompiles = useActivePrecompiles();
   const capabilities = useCapabilities();
@@ -2734,6 +2908,7 @@ const ProtocolPage = ({ go }: any) => {
           </div>
         </Card>
       )}
+      <NativeAgentActionsCard capabilities={capabilities.data}/>
       <section className="tx-split">
         <Card title="Operator surfaces">
           {surfaceRows.length ? (
@@ -2875,4 +3050,4 @@ const tagFor = (addr) => {
 
 
 /* Named exports — replaces the legacy window-attach pattern. */
-export { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, BridgeTrustDisclosuresCard, NativeAgentStateCard };
+export { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, BridgeTrustDisclosuresCard, NativeAgentActionsCard, NativeAgentStateCard };

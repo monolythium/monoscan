@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   BridgeTrustDisclosuresCard,
   MrvNativeEvidenceCard,
+  NativeAgentActionsCard,
   NativeAgentStateCard,
   mrcPolicyAllowedAssetsSummary,
   mrcPolicyBodySummary,
@@ -189,6 +190,42 @@ describe("NativeAgentStateCard", () => {
     );
 
     expect(html).toContain("No native agent state rows reported for this account.");
+  });
+});
+
+describe("NativeAgentActionsCard", () => {
+  it("renders the full native agent action catalogue", () => {
+    const html = renderToStaticMarkup(
+      <NativeAgentActionsCard
+        capabilities={{
+          blockNumber: 12n,
+          capabilities: {},
+          nativeModuleForwarders: {
+            agent: [{
+              module: "agent",
+              requestBytes: 196,
+              contractAddress: "0x2222222222222222222222222222222222222222",
+              artifactProfile: "native-call-forwarder-v1",
+              status: "configured",
+              deploymentVerified: false,
+            }],
+          },
+        }}
+      />,
+    );
+
+    expect(html).toContain("Native agent actions");
+    expect(html).toContain("Issuer / Register issuer");
+    expect(html).toContain("Attestation / Issue attestation");
+    expect(html).toContain("Consent / Grant consent");
+    expect(html).toContain("Discovery / List service");
+    expect(html).toContain("Availability / Set availability");
+    expect(html).toContain("Arbiter / Register arbiter");
+    expect(html).toContain("Policy / Set spending policy");
+    expect(html).toContain("Escrow / Resolve escrow");
+    expect(html).toContain("Reputation / Record reputation");
+    expect(html).toContain("1 capability rows");
+    expect(html).toContain("monolythium_submitMrvNativeCall");
   });
 });
 
