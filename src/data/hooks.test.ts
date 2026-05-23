@@ -485,6 +485,43 @@ describe("bridge trust disclosure normalization", () => {
     expect(rows[0].assessment.riskTier).toBe("low");
   });
 
+  it("collects direct and listed route disclosures from token-balance records", () => {
+    const directBalanceDisclosure = {
+      ...validDisclosure,
+      routeId: "balance-direct",
+      bridge: "Balance Direct Bridge",
+    };
+    const listedBalanceDisclosure = {
+      ...validDisclosure,
+      routeId: "balance-listed",
+      bridge: "Balance Listed Bridge",
+      sourceChain: "solana",
+    };
+
+    const rows = bridgeTrustDisclosuresFromAddressData({
+      address: "mono1bridgeuser",
+      tokenBalances: [{
+        tokenId: "profile-token",
+        balance: "1",
+        updatedAtBlock: 1,
+        bridgeRouteDisclosure: directBalanceDisclosure,
+      }],
+    }, [{
+      tokenId: "api-token",
+      balance: "2",
+      updatedAtBlock: 2,
+      bridgeRouteDisclosures: [listedBalanceDisclosure],
+    }]);
+
+    const direct = rows.find((row) => row.route.routeId === "balance-direct");
+    const listed = rows.find((row) => row.route.routeId === "balance-listed");
+    expect(rows).toHaveLength(2);
+    expect(direct?.source).toBe("tokenBalance:profile-token");
+    expect(listed?.source).toBe("tokenBalance:api-token[0]");
+    expect(direct?.assessment.accepted).toBe(true);
+    expect(listed?.assessment.accepted).toBe(true);
+  });
+
   it("keeps invalid disclosure data blocked instead of treating it as accepted", () => {
     const rows = assessBridgeTrustDisclosures([{
       source: "tokenBalance:bad",

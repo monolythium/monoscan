@@ -47,6 +47,7 @@ import {
   useVerticesAtRound,
   useWalletDelegations,
   useWalletDelegationHistory,
+  BRIDGE_ROUTE_DISCLOSURE_UPSTREAM_FIELD,
   bridgeTrustDisclosuresFromAddressData,
   type MrcMetadataResponse,
   type BridgeTrustDisclosureRow,
@@ -259,8 +260,30 @@ function bridgeRouteIssueText(row: BridgeTrustDisclosureRow): string | null {
   return issues.length > 0 ? issues.join(" · ") : null;
 }
 
-const BridgeTrustDisclosuresCard = ({ disclosures }: { disclosures: readonly BridgeTrustDisclosureRow[] }) => {
-  if (disclosures.length === 0) return null;
+const BridgeTrustDisclosuresCard = ({
+  disclosures,
+  unavailable = false,
+}: {
+  disclosures: readonly BridgeTrustDisclosureRow[];
+  unavailable?: boolean;
+}) => {
+  if (disclosures.length === 0) {
+    if (!unavailable) return null;
+    return (
+      <Card
+        title="Bridge trust disclosures"
+        right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>unavailable</span>}
+      >
+        <div style={{display:"grid",gap:8,padding:"2px 0"}}>
+          <span className="pill err" style={{width:"fit-content"}}>Disclosure unavailable</span>
+          <p className="mono" style={{fontSize:11,color:"var(--fg-500)",margin:0,lineHeight:1.6}}>
+            No bridgeRouteDisclosure or bridgeRouteDisclosures metadata was returned by upstream address or token-balance data.
+            Monoscan will not mark any bridge route as safe without {BRIDGE_ROUTE_DISCLOSURE_UPSTREAM_FIELD}.
+          </p>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card
@@ -885,9 +908,10 @@ const WalletPage = ({ addr, go }: any) => {
     : (tokenBalances.data ?? [])) as IndexedTokenBalanceRow[];
   const tokenBalanceMetadata = useMrcMetadataForTokenBalances(liveTokenBalances);
   const bridgeTrustDisclosures = useMemoX(
-    () => bridgeTrustDisclosuresFromAddressData(profile.data, liveTokenBalances),
-    [profile.data, liveTokenBalances],
+    () => bridgeTrustDisclosuresFromAddressData(profile.data, tokenBalances.data ?? []),
+    [profile.data, tokenBalances.data],
   );
+  const bridgeTrustDisclosureChecked = profile.isFetched && tokenBalances.isFetched;
   const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
   const liveAgentReputation = agentReputation.data ?? null;
   const profileActivityKind = profile.data?.activity?.kind ?? null;
@@ -1045,9 +1069,12 @@ const WalletPage = ({ addr, go }: any) => {
         </section>
       )}
 
-      {bridgeTrustDisclosures.length > 0 && (
+      {(bridgeTrustDisclosures.length > 0 || bridgeTrustDisclosureChecked) && (
         <section>
-          <BridgeTrustDisclosuresCard disclosures={bridgeTrustDisclosures}/>
+          <BridgeTrustDisclosuresCard
+            disclosures={bridgeTrustDisclosures}
+            unavailable={bridgeTrustDisclosures.length === 0 && bridgeTrustDisclosureChecked}
+          />
         </section>
       )}
 
