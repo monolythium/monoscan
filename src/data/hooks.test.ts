@@ -26,6 +26,7 @@ import {
   apiTxToRpcTx,
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
+  nativeReceiptEventRows,
   queryClient,
   txFeedToRows,
 } from "./hooks";
@@ -59,6 +60,8 @@ describe("live-SDK seam", () => {
     expect(typeof apiProto.block).toBe("function");
     expect(typeof apiProto.blockTransactions).toBe("function");
     expect(typeof apiProto.transaction).toBe("function");
+    expect(typeof apiProto.transactionNativeReceipt).toBe("function");
+    expect(typeof apiProto.transactionNativeReceiptEvents).toBe("function");
     expect(typeof apiProto.transactions).toBe("function");
     expect(typeof apiProto.addressActivity).toBe("function");
     expect(typeof apiProto.addressProfile).toBe("function");
@@ -97,6 +100,8 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythGetLeaderCertificate).toBe("function");
     expect(typeof proto.lythGetDacCertificate).toBe("function");
     expect(typeof proto.lythDecodeTx).toBe("function");
+    expect(typeof proto.lythNativeReceipt).toBe("function");
+    expect(typeof proto.lythNativeReceiptEvents).toBe("function");
     expect(typeof proto.lythGapRecords).toBe("function");
     expect(typeof proto.lythDagParents).toBe("function");
     expect(typeof proto.lythRichList).toBe("function");
@@ -264,5 +269,69 @@ describe("API execution-unit transformations", () => {
 
     expect(pageRows[0]).toMatchObject({ value: "1234", executionUnitLimit: 42_000, fee });
     expect(feedRows[0]).toMatchObject({ value: "999", executionUnitLimit: 21_000, fee });
+  });
+
+  it("maps native RISC-V receipt events into transaction-detail display rows", () => {
+    const rows = nativeReceiptEventRows({
+      txHash: `0x${"22".repeat(32)}`,
+      blockHash: `0x${"33".repeat(32)}`,
+      blockHeight: 100,
+      txIndex: 0,
+      schema: "riscv.receipt.v1",
+      artifactHash: `0x${"aa".repeat(32)}`,
+      counters: { cycles: 44, syscallUnits: 3, stateIoUnits: 2 },
+      fee: {
+        total_lythoshi: "440000000000",
+        total_lyth: "4,400",
+        cycles_used: 44,
+        base_price_per_cycle_lythoshi: "10000000000",
+        state_io_units: 2,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "0",
+      },
+      reverted: false,
+      nativeDeltaCount: 0,
+      eventCount: 1,
+      events: [
+        {
+          blockHeight: 100,
+          txIndex: 0,
+          logIndex: 0,
+          address: "monoc1nativeeventemitter",
+          eventTopic: `0x${"11".repeat(32)}`,
+          decoded: null,
+          decodedJson: JSON.stringify({
+            block_height: 100,
+            tx_index: 0,
+            sequence: 0,
+            family: "agent",
+            event_name: "agent.escrow.created",
+            payload_hash: `0x${"44".repeat(32)}`,
+            amount_lythoshi: "440000000000",
+            contract_address: "monoc1escrowcontract",
+          }),
+        },
+      ],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    });
+
+    expect(rows).toEqual([
+      {
+        logIndex: 0,
+        address: "monoc1nativeeventemitter",
+        eventTopic: `0x${"11".repeat(32)}`,
+        family: "agent",
+        eventName: "agent.escrow.created",
+        payloadHash: `0x${"44".repeat(32)}`,
+        decodedFields: [
+          ["amount_lythoshi", "440000000000"],
+          ["contract_address", "monoc1escrowcontract"],
+        ],
+      },
+    ]);
   });
 });

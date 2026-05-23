@@ -66,6 +66,7 @@ import {
   type LythUpgradeStatusResponse,
   type MempoolSnapshot,
   type MetricsRangeResponse,
+  type NativeReceiptResponse,
   type OperatorCapabilitiesResponse,
   type OperatorAuthorityResponse,
   type OperatorInfoResponse,
@@ -304,6 +305,60 @@ export function decodedTxToRpcReceipt(decoded: DecodeTxResponse): TransactionRec
     status: decoded.status === "success" ? 1 : decoded.status === "reverted" ? 0 : -1,
     executionUnitsUsed: numToBig(readNumberField(decoded, ["executionUnitsUsed", "gasUsed"]) ?? 0),
   };
+}
+
+export interface NativeReceiptEventDisplayRow {
+  logIndex: number;
+  address: string;
+  eventTopic: string;
+  family: string | null;
+  eventName: string | null;
+  payloadHash: string | null;
+  decodedFields: Array<[string, string]>;
+}
+
+function decodedNativeEventObject(decoded: unknown, decodedJson: string): Record<string, unknown> | null {
+  if (decoded && typeof decoded === "object" && !Array.isArray(decoded)) {
+    return decoded as Record<string, unknown>;
+  }
+  try {
+    const parsed = JSON.parse(decodedJson) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function nativeFieldDisplay(value: unknown): string {
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return String(value);
+  if (value === null || value === undefined) return "—";
+  return JSON.stringify(value);
+}
+
+export function nativeReceiptEventRows(
+  receipt: NativeReceiptResponse<unknown> | null | undefined,
+): NativeReceiptEventDisplayRow[] {
+  return (receipt?.events ?? []).map((event) => {
+    const decoded = decodedNativeEventObject(event.decoded, event.decodedJson);
+    const decodedFields = decoded
+      ? Object.entries(decoded)
+          .filter(([key]) => !["block_height", "tx_index", "sequence", "family", "event_name", "payload_hash"].includes(key))
+          .map(([key, value]) => [key, nativeFieldDisplay(value)] as [string, string])
+      : [];
+
+    return {
+      logIndex: event.logIndex,
+      address: event.address,
+      eventTopic: event.eventTopic,
+      family: typeof decoded?.family === "string" ? decoded.family : null,
+      eventName: typeof decoded?.event_name === "string" ? decoded.event_name : null,
+      payloadHash: typeof decoded?.payload_hash === "string" ? decoded.payload_hash : null,
+      decodedFields,
+    };
+  });
 }
 
 function apiActivityToRpcActivity(row: ApiAddressActivityEntry): AddressActivityEntry {
@@ -605,6 +660,33 @@ export function useTxReceipt(hash: string | undefined) {
         return getRpcClient().ethGetTransactionReceipt(hash as string);
       }
     },
+  });
+}
+
+/** Native RISC-V receipt metadata and typed event rows.
+ *
+ * Uses only the SDK-supported `/native-receipt` API route and
+ * `lyth_nativeReceipt` RPC method. Unsupported nodes return `null` so the tx
+ * page can omit the RISC-V panel without inventing data.
+ */
+export function useTxNativeReceipt(hash: string | undefined) {
+  return useQuery<NativeReceiptResponse<unknown> | null>({
+    queryKey: QK.txNativeReceipt(hash ?? ""),
+    enabled: Boolean(hash) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        const response = await getApiClient().transactionNativeReceipt(hash as string);
+        return response.data;
+      } catch {
+        // Fall through to JSON-RPC for nodes without the `/api/v1` indexer route.
+      }
+      try {
+        return await getRpcClient().lythNativeReceipt(hash as string);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
   });
 }
 

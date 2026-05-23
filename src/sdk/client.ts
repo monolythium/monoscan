@@ -178,6 +178,7 @@ export const QK = {
   blockByHash: (h: string) => ["mono", "block", "byHash", h] as const,
   blocksLatest: (n: number) => ["mono", "blocks", "latest", n] as const,
   txReceipt: (h: string) => ["mono", "tx", h] as const,
+  txNativeReceipt: (h: string) => ["mono", "tx", h, "nativeReceipt"] as const,
   txLive: (h: string) => ["mono", "tx", h, "live"] as const,
   txStatus: (h: string) => ["mono", "tx", h, "status"] as const,
   txFeed: (limit: number, cursor: string | null = null) =>
