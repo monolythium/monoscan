@@ -387,6 +387,8 @@ describe("live-SDK seam", () => {
     const bridgeDisclosureOnlyRoute = {
       ...route,
       routeId: "arb-usdc-mainnet",
+      bridgeId: "catalogue-bridge-arb-usdc",
+      wrappedAsset: "mrc:wrapped-usdc",
       sourceChain: "arbitrum",
       finalityBlocks: 32,
     };
@@ -423,6 +425,16 @@ describe("live-SDK seam", () => {
       .toBe("bridgeRoutes[0]");
     expect(result?.find((row) => row.route.routeId === "arb-usdc-mainnet")?.source)
       .toBe("bridgeRoutes.bridgeRouteDisclosures[1]");
+    expect(result?.find((row) => row.route.routeId === "arb-usdc-mainnet")?.route.bridgeId)
+      .toBe("catalogue-bridge-arb-usdc");
+    expect(result?.find((row) => row.route.routeId === "arb-usdc-mainnet")?.route.wrappedAsset)
+      .toBe("mrc:wrapped-usdc");
+    expect(result?.find((row) => row.route.routeId === "arb-usdc-mainnet")?.readiness).toMatchObject({
+      routeSelectionReady: false,
+      quoteReady: false,
+      submitReady: false,
+      blockedReasons: ["bridge route selection requires transfer intent"],
+    });
     expect(result?.every((row) => row.assessment.accepted)).toBe(true);
   });
 
@@ -745,6 +757,43 @@ describe("bridge trust disclosure normalization", () => {
     expect(rows[0].route.insuranceAtomic).toBe("500000000000");
     expect(rows[0].assessment.accepted).toBe(true);
     expect(rows[0].assessment.riskTier).toBe("low");
+  });
+
+  it("normalizes catalogue binding fields and discovery-only readiness flags", () => {
+    const route = normalizeBridgeRouteDisclosure({
+      route_id: "catalogue-usdc-mainnet",
+      bridge_name: "Catalogue Relay",
+      bridge_id: "bridge-catalogue-1",
+      wrapped_asset: "mrc:wrapped-usdc",
+      from_chain: "ethereum",
+      to_chain: "monolythium",
+      verifier_config: {
+        type: "committee",
+        signer_count: 9,
+        required_signers: 6,
+      },
+      drain_cap_atomic: "250000000000",
+      finality_delay_blocks: 64,
+      cooldown_seconds: 7200,
+      admin_control: "consensus_only",
+      breaker: "armed",
+      insurance_pool_atomic: "500000000000",
+      route_selection_ready: false,
+      quote_ready: false,
+      submit_ready: false,
+      blocked_reasons: ["bridge route selection requires transfer intent"],
+    });
+
+    expect(route?.routeId).toBe("catalogue-usdc-mainnet");
+    expect(route?.bridgeId).toBe("bridge-catalogue-1");
+    expect(route?.asset).toBe("mrc:wrapped-usdc");
+    expect(route?.wrappedAsset).toBe("mrc:wrapped-usdc");
+    expect(route?.adminControl).toBe("consensusOnly");
+    expect(route?.insuranceAtomic).toBe("500000000000");
+    expect(route?.routeSelectionReady).toBe(false);
+    expect(route?.quoteReady).toBe(false);
+    expect(route?.submitReady).toBe(false);
+    expect(route?.readinessBlockedReasons).toEqual(["bridge route selection requires transfer intent"]);
   });
 
   it("collects direct and listed route disclosures from token-balance records", () => {
