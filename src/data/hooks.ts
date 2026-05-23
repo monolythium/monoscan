@@ -635,6 +635,7 @@ export interface NativeMarketStateDisplayRow {
   status: string | null;
   price: string | null;
   amount: string | null;
+  baseAsset: string | null;
   quoteAsset: string | null;
   blockHeight: number | null;
   fields: Array<[string, string]>;
@@ -807,6 +808,7 @@ function nativeMarketStateRow(
     status: readNativeStateString(row, ["status", "state", "listingStatus", "listing_status"]),
     price: readNativeStateString(row, ["price", "priceLythoshi", "price_lythoshi", "limitPrice", "limit_price"]),
     amount: readNativeStateString(row, ["amount", "amountBase", "amount_base", "remainingAmount", "remaining_amount", "royaltyBps", "royalty_bps"]),
+    baseAsset: readNativeStateString(row, ["baseAssetId", "base_asset_id", "baseAsset", "base_asset", "baseToken", "base_token"]),
     quoteAsset: readNativeStateString(row, ["quoteAsset", "quote_asset", "quoteToken", "quote_token", "paymentAsset", "payment_asset"]),
     blockHeight: readNativeStateNumber(row, ["blockHeight", "block_height", "updatedAtBlock", "updated_at_block", "registeredAtBlock", "registered_at_block"]),
     fields: row
@@ -853,6 +855,12 @@ function nativeMarketStateRow(
             "remaining_amount",
             "royaltyBps",
             "royalty_bps",
+            "baseAssetId",
+            "base_asset_id",
+            "baseAsset",
+            "base_asset",
+            "baseToken",
+            "base_token",
             "quoteAsset",
             "quote_asset",
             "quoteToken",
@@ -2756,7 +2764,7 @@ export async function fetchMrcHoldersForTokenBalances(
 ): Promise<MrcHoldersByTokenBalance> {
   const rowLimit = boundedMrcHoldersLimit(limit);
   const api = clients.api ?? getApiClient();
-  const rpc = clients.rpc ?? getRpcClient();
+  const rpc: MrcHoldersRpcClient = clients.rpc ?? (getRpcClient() as unknown as MrcHoldersRpcClient);
   const out: MrcHoldersByTokenBalance = {};
   await Promise.all(uniqueMrcHoldersBalanceRows(rows, rowLimit).map(async (row) => {
     const identity = mrcHolderBalanceIdentity(row);

@@ -8,6 +8,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState, useEffect, useMemo } from "react";
+import {
+  buildPlaceSpotLimitOrderPlan,
+  type SpotLimitOrderSide,
+} from "@monolythium/core-sdk";
 import { MARKETS } from "./data/mock";
 import {
   nativeMarketEventRows,
@@ -42,6 +46,12 @@ const _shortAddr = (id: string, head = 8, tail = 4) =>
   id && id.length > head + tail + 3 ? `${id.slice(0, head)}…${id.slice(-tail)}` : id;
 const _shortHash = (id: string | null | undefined, head = 10, tail = 6) =>
   id ? _shortAddr(id, head, tail) : "—";
+const _positiveIntegerText = (value: unknown, fallback: string): string => {
+  if (typeof value === "string" && /^[1-9]\d*$/.test(value)) return value;
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return String(Math.trunc(value));
+  if (typeof value === "bigint" && value > 0n) return value.toString(10);
+  return fallback;
+};
 const _cumLevels = (rows: Array<{ price: string; size: string }>) => {
   let total = 0;
   return rows.map((row) => {
@@ -51,6 +61,58 @@ const _cumLevels = (rows: Array<{ price: string; size: string }>) => {
     return { px, sz, total };
   });
 };
+
+export interface MarketOrderWalletRequestArgs {
+  marketId: string | null | undefined;
+  baseTokenId: string | null | undefined;
+  quoteTokenId: string | null | undefined;
+  side: SpotLimitOrderSide;
+  price: string;
+  quantity: string;
+  expiryBlock?: string | number | bigint;
+}
+
+export interface MarketOrderWalletRequest {
+  method: "eth_sendTransaction";
+  params: [{
+    to: string;
+    value: "0x0";
+    data: string;
+    mempoolClass: number;
+  }];
+}
+
+export function buildMarketOrderWalletRequest(args: MarketOrderWalletRequestArgs): MarketOrderWalletRequest {
+  if (!args.marketId || !args.baseTokenId || !args.quoteTokenId) {
+    throw new Error("Live CLOB market metadata is required before placing an order.");
+  }
+  const plan = buildPlaceSpotLimitOrderPlan({
+    marketId: args.marketId,
+    baseTokenId: args.baseTokenId,
+    quoteTokenId: args.quoteTokenId,
+    side: args.side,
+    price: args.price.trim(),
+    quantity: args.quantity.trim(),
+    expiryBlock: args.expiryBlock ?? 0,
+  });
+  return {
+    method: plan.method,
+    params: [{
+      ...plan.params[0],
+      mempoolClass: plan.mempoolClass,
+    }],
+  };
+}
+
+function _walletTxHash(result: unknown): string | null {
+  if (typeof result === "string" && result.length > 0) return result;
+  if (result && typeof result === "object") {
+    const record = result as Record<string, unknown>;
+    if (typeof record.txHash === "string" && record.txHash.length > 0) return record.txHash;
+    if (typeof record.hash === "string" && record.hash.length > 0) return record.hash;
+  }
+  return null;
+}
 
 const _nativeStateSource = (state: any) => {
   const source = state?.source;
@@ -491,8 +553,17 @@ const MarketPage = ({ sym, go }: any) => {
     verified: Boolean(matchedLiveSummary),
   };
   const [range, setRange] = useState("1D");
-  const [orderSide, setOrderSide] = useState("buy");
-  const [orderType, setOrderType] = useState("limit");
+  const [orderSide, setOrderSide] = useState<SpotLimitOrderSide>("buy");
+  const [orderType, setOrderType] = useState<"swap" | "limit" | "market">("limit");
+  const [orderPrice, setOrderPrice] = useState("1");
+  const [orderQuantity, setOrderQuantity] = useState("1");
+  const [orderExpiryBlock, setOrderExpiryBlock] = useState("0");
+  const [orderMarketSeed, setOrderMarketSeed] = useState<string | null>(null);
+  const [orderSubmit, setOrderSubmit] = useState<{
+    state: "idle" | "submitting" | "success" | "error";
+    message?: string;
+    txHash?: string | null;
+  }>({ state: "idle" });
 
   const ranges = ["1H","4H","1D","7D","1M","1Y","All"];
   const chg = tkn.chg24h;
@@ -508,6 +579,62 @@ const MarketPage = ({ sym, go }: any) => {
   const tick = liveMarket ? mkDec(liveMarket.tickSize, tkn.tick) : tkn.tick;
   const totalVolumeBase = liveMarket ? mkDec(liveMarket.totalVolumeBase, tkn.vol24h) : tkn.vol24h;
   const takerFeeBps = liveMarket?.takerFeeBps ?? 5;
+  const orderBaseTokenId = liveMarket?.baseToken ?? null;
+  const orderQuoteTokenId = liveMarket?.quoteToken ?? null;
+  const suggestedOrderPrice = _positiveIntegerText(
+    orderSide === "buy" ? liveMarket?.bestBidPrice : liveMarket?.bestAskPrice,
+    _positiveIntegerText(liveMarket?.lastTradePrice, _positiveIntegerText(liveMarket?.tickSize, "1")),
+  );
+  const suggestedOrderQuantity = _positiveIntegerText(liveMarket?.lotSize, "1");
+
+  useEffect(() => {
+    if (!marketId || !liveMarket || orderMarketSeed === marketId) return;
+    setOrderPrice(suggestedOrderPrice);
+    setOrderQuantity(suggestedOrderQuantity);
+    setOrderExpiryBlock("0");
+    setOrderMarketSeed(marketId);
+    setOrderSubmit({ state: "idle" });
+  }, [liveMarket, marketId, orderMarketSeed, suggestedOrderPrice, suggestedOrderQuantity]);
+
+  const orderCanSubmit = orderType === "limit"
+    && orderSubmit.state !== "submitting"
+    && orderPrice.trim().length > 0
+    && orderQuantity.trim().length > 0
+    && Boolean(marketId && orderBaseTokenId && orderQuoteTokenId);
+  const submitMarketOrder = async () => {
+    try {
+      if (orderType !== "limit") {
+        throw new Error("Only limit orders are wired for native CLOB submission.");
+      }
+      const provider = typeof window !== "undefined" ? window.monolythium : undefined;
+      if (!provider?.request) {
+        throw new Error("Monolythium wallet provider not detected.");
+      }
+      setOrderSubmit({ state: "submitting", message: "awaiting wallet" });
+      const request = buildMarketOrderWalletRequest({
+        marketId,
+        baseTokenId: orderBaseTokenId,
+        quoteTokenId: orderQuoteTokenId,
+        side: orderSide,
+        price: orderPrice,
+        quantity: orderQuantity,
+        expiryBlock: orderExpiryBlock.trim() || "0",
+      });
+      await provider.request({ method: "eth_requestAccounts", params: [] });
+      const result = await provider.request(request);
+      const txHash = _walletTxHash(result);
+      setOrderSubmit({
+        state: "success",
+        txHash,
+        message: txHash ? `submitted ${_shortHash(txHash, 10, 6)}` : "submitted",
+      });
+      window.__msToast?.(txHash ? `Limit order submitted ${_shortHash(txHash, 10, 6)}` : "Limit order submitted");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Limit order submission failed.";
+      setOrderSubmit({ state: "error", message });
+      if (typeof window !== "undefined") window.__msToast?.(message);
+    }
+  };
 
   // chart
   const liveCandles = (liveOhlc.data?.candles ?? [])
@@ -716,7 +843,7 @@ const MarketPage = ({ sym, go }: any) => {
         <div className="ms-card" style={{padding:14,display:"flex",flexDirection:"column",gap:10}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
             <div style={{display:"flex",gap:2,padding:2,background:"rgba(255,255,255,0.03)",borderRadius:8,border:"1px solid var(--fg-700)"}}>
-              {["swap","limit","market"].map(t=>(
+              {(["swap","limit","market"] as const).map(t=>(
                 <button key={t} onClick={()=>setOrderType(t)} className="mono"
                   style={{padding:"5px 10px",fontSize:10.5,letterSpacing:"0.06em",textTransform:"uppercase",borderRadius:6,
                     background: orderType===t ? "rgba(242,180,65,0.12)" : "transparent",
@@ -739,8 +866,14 @@ const MarketPage = ({ sym, go }: any) => {
 
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"rgba(255,255,255,0.03)",borderRadius:8,border:"1px solid var(--fg-700)"}}>
             <div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>You pay</div>
-              <input readOnly value="0" className="mono num" style={{fontSize:20,color:"var(--fg-100)",fontWeight:300,marginTop:2,width:"100%"}}/>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Limit price</div>
+              <input
+                value={orderPrice}
+                onChange={(event)=>setOrderPrice(event.currentTarget.value)}
+                inputMode="numeric"
+                className="mono num"
+                style={{fontSize:20,color:"var(--fg-100)",fontWeight:300,marginTop:2,width:"100%"}}
+              />
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"rgba(255,255,255,0.03)",borderRadius:6,border:"1px solid var(--fg-700)"}}>
               <TokenMark sym="USDC" size={22}/>
@@ -759,8 +892,14 @@ const MarketPage = ({ sym, go }: any) => {
 
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"rgba(255,255,255,0.03)",borderRadius:8,border:"1px solid var(--fg-700)"}}>
             <div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>You receive</div>
-              <input readOnly value="0" className="mono num" style={{fontSize:20,color:"var(--fg-100)",fontWeight:300,marginTop:2,width:"100%"}}/>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Quantity</div>
+              <input
+                value={orderQuantity}
+                onChange={(event)=>setOrderQuantity(event.currentTarget.value)}
+                inputMode="numeric"
+                className="mono num"
+                style={{fontSize:20,color:"var(--fg-100)",fontWeight:300,marginTop:2,width:"100%"}}
+              />
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"rgba(255,255,255,0.03)",borderRadius:6,border:"1px solid var(--fg-700)"}}>
               <TokenMark sym={tkn.sym} size={22}/>
@@ -769,11 +908,44 @@ const MarketPage = ({ sym, go }: any) => {
             </div>
           </div>
 
-          <button className="mono" onClick={()=>window.__msToast?.("Opens desktop or mobile wallet trading flow when wallet handoff is installed")} style={{
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 10px",background:"rgba(255,255,255,0.025)",borderRadius:8,border:"1px solid var(--fg-700)"}}>
+            <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Expiry block</span>
+            <input
+              value={orderExpiryBlock}
+              onChange={(event)=>setOrderExpiryBlock(event.currentTarget.value)}
+              inputMode="numeric"
+              className="mono num"
+              style={{fontSize:12,color:"var(--fg-200)",textAlign:"right",width:120}}
+            />
+          </div>
+
+          <button className="mono" disabled={!orderCanSubmit} onClick={submitMarketOrder} style={{
             marginTop:6,padding:"12px 0",background:"linear-gradient(180deg, var(--gold), #c98e22)",
-            color:"#1a0f00",fontWeight:600,borderRadius:8,cursor:"pointer",border:0,
+            color:"#1a0f00",fontWeight:600,borderRadius:8,cursor:orderCanSubmit?"pointer":"not-allowed",border:0,opacity:orderCanSubmit?1:0.5,
             fontSize:12,letterSpacing:"0.08em",textTransform:"uppercase",
-          }}>Connect wallet</button>
+          }}>
+            {orderSubmit.state === "submitting"
+              ? "Submitting"
+              : orderType !== "limit"
+                ? "Limit only"
+                : !marketId || !orderBaseTokenId || !orderQuoteTokenId
+                  ? "Live market required"
+                  : `Place ${orderSide} limit`}
+          </button>
+
+          {orderSubmit.state !== "idle" && (
+            <div className="mono" style={{
+              fontSize:10.5,
+              color: orderSubmit.state === "error" ? "var(--err)" : orderSubmit.state === "success" ? "var(--ok)" : "var(--fg-400)",
+              lineHeight:1.45,
+              wordBreak:"break-word",
+            }}>
+              {orderSubmit.message}
+              {orderSubmit.txHash && (
+                <a href={`#/tx/${orderSubmit.txHash}`} onClick={()=>go(`#/tx/${orderSubmit.txHash}`)} style={{color:"var(--gold)",marginLeft:8}}>View tx</a>
+              )}
+            </div>
+          )}
 
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",paddingTop:8,borderTop:"1px solid var(--fg-700)",display:"grid",gridTemplateColumns:"1fr auto",rowGap:3}}>
             <span>Rate</span><span style={{color:"var(--fg-300)"}}>1 {tkn.sym} ≈ {mkMoney(mid)}</span>
