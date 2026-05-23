@@ -9,7 +9,16 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { MARKETS } from "./data/mock";
-import { useClobMarket, useClobMarkets, useClobOhlc, useClobOrderBook, useClobTrades } from "./data/hooks";
+import {
+  nativeMarketEventRows,
+  useChainHead,
+  useClobMarket,
+  useClobMarkets,
+  useClobOhlc,
+  useClobOrderBook,
+  useClobTrades,
+  useNativeMarketEvents,
+} from "./data/hooks";
 import { getMarketIdForSymbol } from "./sdk/client";
 
 /* ----- formatters ----- */
@@ -29,6 +38,8 @@ const mkDec = (value: any, fallback = 0) => {
 const _shortMarketId = (id: string) => `${id.slice(0, 10)}…${id.slice(-6)}`;
 const _shortAddr = (id: string, head = 8, tail = 4) =>
   id && id.length > head + tail + 3 ? `${id.slice(0, head)}…${id.slice(-tail)}` : id;
+const _shortHash = (id: string | null | undefined, head = 10, tail = 6) =>
+  id ? _shortAddr(id, head, tail) : "—";
 const _cumLevels = (rows: Array<{ price: string; size: string }>) => {
   let total = 0;
   return rows.map((row) => {
@@ -38,6 +49,64 @@ const _cumLevels = (rows: Array<{ price: string; size: string }>) => {
     return { px, sz, total };
   });
 };
+
+const NativeMarketEventsCard = ({ rows, latestBlock, loading, scope }: any) => (
+  <div className="ms-card" style={{padding:0,overflow:"hidden"}}>
+    <div style={{display:"flex",justifyContent:"space-between",gap:16,alignItems:"center",padding:"14px 16px",borderBottom:"1px solid var(--fg-700)"}}>
+      <div>
+        <div className="cap">Native market events</div>
+        <h3 style={{margin:"3px 0 0",fontSize:14,fontWeight:500}}>Recent indexed events</h3>
+      </div>
+      <div className="mono" style={{fontSize:10,color:"var(--fg-500)",textAlign:"right"}}>
+        {latestBlock === null ? "waiting for head" : `last 2,048 blocks · to ${latestBlock.toLocaleString()}`}
+        {scope && <div style={{marginTop:3}}>{scope}</div>}
+      </div>
+    </div>
+    {rows.length === 0 ? (
+      <div className="mono" style={{padding:"16px",fontSize:12.5,color:"var(--fg-400)",lineHeight:1.55}}>
+        {loading
+          ? "Reading /api/v1/native-market-events…"
+          : "No indexed native market events returned for this bounded block window."}
+      </div>
+    ) : (
+      <div style={{overflowX:"auto"}}>
+        <table className="ms-table ms-table--tight">
+          <thead>
+            <tr>
+              <th>Block</th>
+              <th>Event</th>
+              <th>Primary id</th>
+              <th>Emitter</th>
+              <th>Fields</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((event: any, i: number)=>(
+              <tr key={`${event.blockHeight ?? "x"}-${event.txIndex ?? "x"}-${event.logIndex}-${event.eventTopic}-${i}`}>
+                <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
+                  {event.blockHeight === null ? "—" : event.blockHeight.toLocaleString()}
+                  <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>tx {event.txIndex ?? "—"} · log {event.logIndex}</div>
+                </td>
+                <td className="mono" style={{fontSize:11,color:"var(--fg-200)"}}>
+                  {event.eventName ?? _shortHash(event.eventTopic)}
+                  <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>{event.family ?? "market"}</div>
+                </td>
+                <td className="mono" title={event.primaryId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>
+                  {_shortHash(event.primaryId)}
+                  {event.relatedId && <div title={event.relatedId} style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>rel {_shortHash(event.relatedId, 8, 4)}</div>}
+                </td>
+                <td className="mono" title={event.address} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(event.address, 9, 5)}</td>
+                <td className="mono" style={{fontSize:10.5,color:"var(--fg-400)",maxWidth:360}}>
+                  {event.decodedFields.slice(0, 4).map(([k, v]: [string, string])=>`${k}=${v}`).join(" · ") || "decoded payload unavailable"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+);
 
 /* Token glyph — seeded, visually stable */
 const TokenMark = ({ sym, size=24 }: any) => {
@@ -76,7 +145,10 @@ const MarketsPage = ({ go }: any) => {
   const [sort, setSort] = useState("rank");
   const [dir, setDir] = useState(1);
   const [tab, setTab] = useState("all");
+  const head = useChainHead();
   const liveMarkets = useClobMarkets(100);
+  const nativeMarketEvents = useNativeMarketEvents({ latestBlock: head.data?.blockNumber ?? null, limit: 25 });
+  const nativeMarketRows = useMemo(() => nativeMarketEventRows(nativeMarketEvents.data), [nativeMarketEvents.data]);
 
   const liveRows = useMemo(() => {
     return (liveMarkets.data?.markets ?? []).map((row: any, i: number) => {
@@ -277,6 +349,12 @@ const MarketsPage = ({ go }: any) => {
         </table>
       </div>
 
+      <NativeMarketEventsCard
+        rows={nativeMarketRows}
+        latestBlock={head.data?.blockNumber ?? null}
+        loading={nativeMarketEvents.isLoading || head.isLoading}
+      />
+
       <div className="mono" style={{color:"var(--fg-500)",fontSize:11,textAlign:"center",letterSpacing:"0.04em",padding:"6px 0"}}>
         {usingLiveMarkets
           ? "Live CLOB index. Empty rows mean the node has no indexed markets yet, not that demo fixtures are hidden by filters."
@@ -290,6 +368,7 @@ const MarketsPage = ({ go }: any) => {
 const MarketPage = ({ sym, go }: any) => {
   const routeKey = decodeURIComponent(sym ?? "");
   const configuredMarketId = getMarketIdForSymbol(routeKey);
+  const head = useChainHead();
   const liveMarkets = useClobMarkets(100);
   const matchedLiveSummary = liveMarkets.data?.markets.find((row: any) =>
     row.marketId === configuredMarketId || row.marketId === routeKey,
@@ -299,6 +378,8 @@ const MarketPage = ({ sym, go }: any) => {
   const liveTrades = useClobTrades(marketId, 50);
   const liveOhlc = useClobOhlc(marketId);
   const liveBook = useClobOrderBook(marketId, 9);
+  const nativeMarketEvents = useNativeMarketEvents({ latestBlock: head.data?.blockNumber ?? null, limit: 25, primaryId: marketId ?? null });
+  const nativeMarketRows = useMemo(() => nativeMarketEventRows(nativeMarketEvents.data), [nativeMarketEvents.data]);
   const liveMarket = clob.data?.market ?? null;
   const matchedLiveIndex = matchedLiveSummary ? liveMarkets.data?.markets.indexOf(matchedLiveSummary) ?? -1 : -1;
   const tkn = MARKETS.find((m: any) => m.sym === routeKey || getMarketIdForSymbol(m.sym) === marketId) || {
@@ -785,6 +866,13 @@ const MarketPage = ({ sym, go }: any) => {
           </div>
         </div>
       </div>
+
+      <NativeMarketEventsCard
+        rows={nativeMarketRows}
+        latestBlock={head.data?.blockNumber ?? null}
+        loading={nativeMarketEvents.isLoading || head.isLoading}
+        scope={marketId ? `primaryId ${_shortHash(marketId)}` : "unscoped until a live market id is known"}
+      />
     </div>
   );
 };

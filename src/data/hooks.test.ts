@@ -35,6 +35,7 @@ import {
   bridgeTrustDisclosuresFromAddressData,
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
+  fetchNativeMarketEvents,
   fetchTxNativeReceipt,
   fetchMrcMetadataForTokenBalances,
   MRV_NATIVE_RECEIPT_TX_TYPE,
@@ -45,6 +46,7 @@ import {
   normalizeBridgeRouteDisclosure,
   normalizeRedemptionQueueResponse,
   nativeReceiptEventRows,
+  nativeMarketEventRows,
   nativeReceiptMarketEventRows,
   queryClient,
   txFeedToRows,
@@ -179,6 +181,7 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythClobTrades).toBe("function");
     expect(typeof proto.lythClobOhlc).toBe("function");
     expect(typeof proto.lythClobOrderBook).toBe("function");
+    expect(typeof proto.call).toBe("function");
     expect(typeof proto.lythTxFeed).toBe("function");
     expect(typeof proto.lythAddressProfile).toBe("function");
     expect(typeof proto.lythAddressFlow).toBe("function");
@@ -235,6 +238,90 @@ describe("live-SDK seam", () => {
     expect(rpcSpy).toHaveBeenCalledWith(txHash);
     expect((result as Record<string, unknown> | null)?.noEvmProof)
       .toEqual({ verifier: "fixture", digest: `0x${"77".repeat(32)}` });
+  });
+
+  it("reads recent native market events from the dedicated API path", async () => {
+    const marketId = `0x${"44".repeat(32)}`;
+    const response = {
+      schemaVersion: 1,
+      fromBlock: 100,
+      toBlock: 120,
+      limit: 5,
+      filters: { family: "market", primaryId: marketId },
+      events: [
+        {
+          blockHeight: 118,
+          txIndex: 0,
+          logIndex: 2,
+          address: "monoc1market",
+          eventTopic: `0x${"55".repeat(32)}`,
+          decoded: null,
+          decodedJson: JSON.stringify({
+            block_height: 118,
+            tx_index: 0,
+            sequence: 2,
+            family: "market",
+            event_name: "market.order.filled",
+            payload_hash: `0x${"66".repeat(32)}`,
+            market_id: marketId,
+            order_id: `0x${"77".repeat(32)}`,
+            price_lythoshi: "900",
+          }),
+        },
+      ],
+      source: { indexerProvider: "native_events" },
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "get")
+      .mockResolvedValue(apiEnvelope(response));
+    const rpcSpy = vi.spyOn(RpcClient.prototype, "call");
+
+    const result = await fetchNativeMarketEvents({
+      fromBlock: 100,
+      toBlock: 120,
+      limit: 5,
+      primaryId: marketId,
+    });
+
+    expect(apiSpy).toHaveBeenCalledWith("/native-market-events", {
+      fromBlock: 100,
+      toBlock: 120,
+      limit: 5,
+      primaryId: marketId,
+    });
+    expect(rpcSpy).not.toHaveBeenCalled();
+    expect(result?.events).toHaveLength(1);
+    expect(nativeMarketEventRows(result)[0]).toMatchObject({
+      blockHeight: 118,
+      txIndex: 0,
+      eventName: "market.order.filled",
+      primaryId: marketId,
+    });
+  });
+
+  it("falls back to lyth_nativeMarketEvents when the dedicated API path is unavailable", async () => {
+    const response = {
+      schemaVersion: 1,
+      fromBlock: 10,
+      toBlock: 12,
+      limit: 2,
+      filters: { family: "market" },
+      events: [],
+      source: { indexerProvider: "native_events" },
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "get")
+      .mockRejectedValue(new Error("api unavailable"));
+    const rpcSpy = vi
+      .spyOn(RpcClient.prototype, "call")
+      .mockResolvedValue(response);
+
+    const filter = { fromBlock: 10, toBlock: 12, limit: 2 };
+    const result = await fetchNativeMarketEvents(filter);
+
+    expect(apiSpy).toHaveBeenCalledWith("/native-market-events", filter);
+    expect(rpcSpy).toHaveBeenCalledWith("lyth_nativeMarketEvents", [filter]);
+    expect(result).toBe(response);
   });
 
   it("keeps the typed agent reputation response available to UI hooks", () => {

@@ -67,6 +67,8 @@ import {
   type LythUpgradeStatusResponse,
   type MempoolSnapshot,
   type MetricsRangeResponse,
+  type NativeEventsFilter,
+  type NativeEventsResponse,
   type NativeReceiptResponse,
   type OperatorCapabilitiesResponse,
   type OperatorAuthorityResponse,
@@ -493,6 +495,15 @@ export interface NativeReceiptEventDisplayRow {
   decodedFields: Array<[string, string]>;
 }
 
+export interface NativeMarketEventDisplayRow extends NativeReceiptEventDisplayRow {
+  blockHeight: number | null;
+  txIndex: number | null;
+  primaryId: string | null;
+  relatedId: string | null;
+  account: string | null;
+  counterparty: string | null;
+}
+
 export const MRV_NATIVE_TX_EXTENSION_KIND = 0x30;
 export const MRV_NATIVE_TX_EXTENSION_BODY_HEX = "0x01";
 export const MRV_NATIVE_RECEIPT_TX_TYPE = 0x41;
@@ -554,6 +565,42 @@ function nativeFieldDisplay(value: unknown): string {
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return String(value);
   if (value === null || value === undefined) return "—";
   return JSON.stringify(value);
+}
+
+function readNativeEventIdentity(decoded: Record<string, unknown> | null, keys: string[]): string | null {
+  if (!decoded) return null;
+  for (const key of keys) {
+    const value = decoded[key];
+    if (typeof value === "string" && value.trim().length > 0) return value;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    if (typeof value === "bigint") return value.toString();
+  }
+  return null;
+}
+
+function nativeEventDisplayRow(event: {
+  logIndex: number;
+  address: string;
+  eventTopic: string;
+  decoded?: unknown;
+  decodedJson: string;
+}): NativeReceiptEventDisplayRow {
+  const decoded = decodedNativeEventObject(event.decoded, event.decodedJson);
+  const decodedFields = decoded
+    ? Object.entries(decoded)
+        .filter(([key]) => !["block_height", "tx_index", "sequence", "family", "event_name", "payload_hash"].includes(key))
+        .map(([key, value]) => [key, nativeFieldDisplay(value)] as [string, string])
+    : [];
+
+  return {
+    logIndex: event.logIndex,
+    address: event.address,
+    eventTopic: event.eventTopic,
+    family: typeof decoded?.family === "string" ? decoded.family : null,
+    eventName: typeof decoded?.event_name === "string" ? decoded.event_name : null,
+    payloadHash: typeof decoded?.payload_hash === "string" ? decoded.payload_hash : null,
+    decodedFields,
+  };
 }
 
 function readPresentField(value: unknown, keys: string[]): { key: string; value: unknown } | null {
@@ -818,24 +865,7 @@ export function mrvNativeTransactionEvidence(
 export function nativeReceiptEventRows(
   receipt: NativeReceiptResponse<unknown> | null | undefined,
 ): NativeReceiptEventDisplayRow[] {
-  return (receipt?.events ?? []).map((event) => {
-    const decoded = decodedNativeEventObject(event.decoded, event.decodedJson);
-    const decodedFields = decoded
-      ? Object.entries(decoded)
-          .filter(([key]) => !["block_height", "tx_index", "sequence", "family", "event_name", "payload_hash"].includes(key))
-          .map(([key, value]) => [key, nativeFieldDisplay(value)] as [string, string])
-      : [];
-
-    return {
-      logIndex: event.logIndex,
-      address: event.address,
-      eventTopic: event.eventTopic,
-      family: typeof decoded?.family === "string" ? decoded.family : null,
-      eventName: typeof decoded?.event_name === "string" ? decoded.event_name : null,
-      payloadHash: typeof decoded?.payload_hash === "string" ? decoded.payload_hash : null,
-      decodedFields,
-    };
-  });
+  return (receipt?.events ?? []).map(nativeEventDisplayRow);
 }
 
 export function nativeReceiptMarketEventRows(
@@ -856,6 +886,32 @@ export function nativeReceiptMarketEventRows(
         || normalized === "base_amount"
         || normalized === "quote_amount";
     });
+  });
+}
+
+export function nativeMarketEventRows(
+  response: NativeEventsResponse<unknown> | null | undefined,
+): NativeMarketEventDisplayRow[] {
+  return (response?.events ?? []).map((event) => {
+    const decoded = decodedNativeEventObject(event.decoded, event.decodedJson);
+    const row = nativeEventDisplayRow(event);
+    return {
+      ...row,
+      blockHeight: typeof event.blockHeight === "number"
+        ? event.blockHeight
+        : readNativeEventIdentity(decoded, ["block_height"]) !== null
+          ? Number(readNativeEventIdentity(decoded, ["block_height"]))
+          : null,
+      txIndex: typeof event.txIndex === "number"
+        ? event.txIndex
+        : readNativeEventIdentity(decoded, ["tx_index"]) !== null
+          ? Number(readNativeEventIdentity(decoded, ["tx_index"]))
+          : null,
+      primaryId: readNativeEventIdentity(decoded, ["market_id", "listing_id", "order_id", "trade_id"]),
+      relatedId: readNativeEventIdentity(decoded, ["related_id", "maker_order_id", "taker_order_id", "collection_id", "token_id"]),
+      account: readNativeEventIdentity(decoded, ["account", "owner", "seller", "buyer", "maker", "taker"]),
+      counterparty: readNativeEventIdentity(decoded, ["counterparty", "seller", "buyer", "maker", "taker"]),
+    };
   });
 }
 
@@ -2722,6 +2778,83 @@ export function useClobOrderBook(marketId: string | undefined, levels = 20) {
       }
     },
     staleTime: 10_000,
+  });
+}
+
+export const NATIVE_MARKET_EVENTS_LIMIT = 25;
+export const NATIVE_MARKET_EVENTS_BLOCK_WINDOW = 2_048;
+
+interface NativeMarketEventsApiEnvelope {
+  data: NativeEventsResponse<unknown>;
+}
+
+type NativeMarketEventsQuery = Record<string, string | number | bigint | boolean | null | undefined>;
+
+function boundedNativeMarketEventFilter(
+  toBlock: number,
+  limit = NATIVE_MARKET_EVENTS_LIMIT,
+  blockWindow = NATIVE_MARKET_EVENTS_BLOCK_WINDOW,
+  primaryId?: string | null,
+  eventName?: string | null,
+): NativeEventsFilter {
+  const boundedTo = Math.max(0, Math.trunc(toBlock));
+  const boundedWindow = Math.max(1, Math.min(Math.trunc(blockWindow), 100_000));
+  const rowLimit = Math.max(1, Math.min(Math.trunc(limit), 200));
+  return {
+    fromBlock: Math.max(0, boundedTo - boundedWindow + 1),
+    toBlock: boundedTo,
+    limit: rowLimit,
+    primaryId: primaryId ?? null,
+    eventName: eventName ?? null,
+  };
+}
+
+export async function fetchNativeMarketEvents(
+  filter: NativeEventsFilter,
+): Promise<NativeEventsResponse<unknown> | null> {
+  const query = filter as unknown as NativeMarketEventsQuery;
+  try {
+    return await getApiClient()
+      .get<NativeMarketEventsApiEnvelope>("/native-market-events", query)
+      .then((response) => response.data)
+      .catch(() => getRpcClient().call<NativeEventsResponse<unknown>>("lyth_nativeMarketEvents", [filter]));
+  } catch {
+    return null;
+  }
+}
+
+export function useNativeMarketEvents(options: {
+  latestBlock: number | null | undefined;
+  limit?: number;
+  blockWindow?: number;
+  primaryId?: string | null;
+  eventName?: string | null;
+}) {
+  const latestBlock = typeof options.latestBlock === "number" && Number.isFinite(options.latestBlock)
+    ? Math.trunc(options.latestBlock)
+    : null;
+  const filter = latestBlock === null
+    ? null
+    : boundedNativeMarketEventFilter(
+        latestBlock,
+        options.limit ?? NATIVE_MARKET_EVENTS_LIMIT,
+        options.blockWindow ?? NATIVE_MARKET_EVENTS_BLOCK_WINDOW,
+        options.primaryId ?? null,
+        options.eventName ?? null,
+      );
+  const rowLimit = Number(filter?.limit ?? NATIVE_MARKET_EVENTS_LIMIT);
+
+  return useQuery<NativeEventsResponse<unknown> | null>({
+    queryKey: QK.nativeMarketEvents(
+      filter?.fromBlock?.toString() ?? "pending",
+      filter?.toBlock?.toString() ?? "pending",
+      rowLimit,
+      options.primaryId ?? null,
+      options.eventName ?? null,
+    ),
+    enabled: filter !== null && isRpcConfigured(),
+    queryFn: async () => fetchNativeMarketEvents(filter as NativeEventsFilter),
+    staleTime: 15_000,
   });
 }
 
