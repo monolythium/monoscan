@@ -229,6 +229,7 @@ export const QK = {
   walletDelegationHistory: (addr: string) => ["mono", "address", addr, "delegation-history"] as const,
   pendingRewards: (addr: string) => ["mono", "address", addr, "pending-rewards"] as const,
   tokenBalances: (addr: string) => ["mono", "address", addr, "token-balances"] as const,
+  mrcMetadata: (keys: readonly string[]) => ["mono", "mrc", "metadata", keys.join("|")] as const,
   addressLabel: (addr: string) => ["mono", "address", addr, "label"] as const,
   accountCode: (addr: string) => ["mono", "address", addr, "code"] as const,
   networkStatus: () => ["mono", "stats", "network"] as const,

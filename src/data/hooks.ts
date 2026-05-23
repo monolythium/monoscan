@@ -134,6 +134,43 @@ type PendingRewardsRpcClient = RpcClient & {
   lythPendingRewards?: (wallet: string, block?: "latest") => Promise<PendingRewardsLive>;
 };
 
+export interface MrcMetadataBalanceIdentity {
+  assetId?: string | null;
+  tokenId?: string | null;
+}
+
+export interface MrcMetadataBalanceRow {
+  tokenId: string;
+  mrc?: MrcMetadataBalanceIdentity | null;
+}
+
+export interface MrcMetadataRecord {
+  standard: string;
+  assetId: string;
+  tokenId: string | null;
+  name: string | null;
+  symbol: string | null;
+  decimals: number | null;
+  uri: string | null;
+  updatedAtBlock: number;
+}
+
+export interface MrcMetadataResponse {
+  schemaVersion: number;
+  assetId: string;
+  tokenId: string | null;
+  metadata: MrcMetadataRecord | null;
+}
+
+export type MrcMetadataByTokenBalance = Record<string, MrcMetadataResponse>;
+
+type MrcMetadataRpcClient = {
+  lythMrcMetadata?: (assetId: string, tokenId?: string | null) => Promise<MrcMetadataResponse>;
+  call?: <T>(method: string, params?: unknown) => Promise<T>;
+};
+
+export const MRC_METADATA_BALANCE_LIMIT = 8;
+
 /* -------------------------------------------------------------------------- */
 /* bigint → number helpers.                                                    */
 /*                                                                             */
@@ -1435,6 +1472,79 @@ export function useTokenBalances(addr: string | undefined) {
         return null;
       }
     },
+    staleTime: 60_000,
+  });
+}
+
+function mrcMetadataBalanceQueryKey(row: MrcMetadataBalanceRow): string | null {
+  const assetId = row.mrc?.assetId ?? null;
+  if (!assetId) return null;
+  return `${assetId}:${row.mrc?.tokenId ?? ""}:${row.tokenId}`;
+}
+
+function uniqueMrcMetadataBalanceRows(
+  rows: readonly MrcMetadataBalanceRow[],
+  limit = MRC_METADATA_BALANCE_LIMIT,
+): MrcMetadataBalanceRow[] {
+  const out: MrcMetadataBalanceRow[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const assetId = row.mrc?.assetId ?? null;
+    if (!assetId) continue;
+    const rpcKey = `${assetId}:${row.mrc?.tokenId ?? ""}`;
+    if (seen.has(rpcKey)) continue;
+    seen.add(rpcKey);
+    out.push(row);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+export function mrcMetadataBalanceQueryKeys(
+  rows: readonly MrcMetadataBalanceRow[],
+  limit = MRC_METADATA_BALANCE_LIMIT,
+): string[] {
+  return uniqueMrcMetadataBalanceRows(rows, limit).map(mrcMetadataBalanceQueryKey).filter((key): key is string => Boolean(key));
+}
+
+export async function fetchMrcMetadataForTokenBalances(
+  rows: readonly MrcMetadataBalanceRow[],
+  rpc: MrcMetadataRpcClient = getRpcClient(),
+  limit = MRC_METADATA_BALANCE_LIMIT,
+): Promise<MrcMetadataByTokenBalance> {
+  const out: MrcMetadataByTokenBalance = {};
+  await Promise.all(uniqueMrcMetadataBalanceRows(rows, limit).map(async (row) => {
+    const assetId = row.mrc?.assetId ?? null;
+    if (!assetId) return;
+    try {
+      const tokenId = row.mrc?.tokenId ?? null;
+      const response = typeof rpc.lythMrcMetadata === "function"
+        ? await rpc.lythMrcMetadata(assetId, tokenId)
+        : typeof rpc.call === "function"
+          ? await rpc.call<MrcMetadataResponse>(
+              "lyth_mrcMetadata",
+              tokenId === null ? [assetId] : [assetId, tokenId],
+            )
+          : null;
+      if (response?.metadata) {
+        out[row.tokenId] = response;
+      }
+    } catch {
+      // Missing or not-yet-finalized node support should leave wallet rows unchanged.
+    }
+  }));
+  return out;
+}
+
+export function useMrcMetadataForTokenBalances(
+  rows: readonly MrcMetadataBalanceRow[],
+  limit = MRC_METADATA_BALANCE_LIMIT,
+) {
+  const keys = mrcMetadataBalanceQueryKeys(rows, limit);
+  return useQuery<MrcMetadataByTokenBalance>({
+    queryKey: QK.mrcMetadata(keys),
+    enabled: keys.length > 0 && isRpcConfigured(),
+    queryFn: () => fetchMrcMetadataForTokenBalances(rows, getRpcClient(), limit),
     staleTime: 60_000,
   });
 }

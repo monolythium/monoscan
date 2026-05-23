@@ -26,6 +26,8 @@ import {
   apiTxToRpcTx,
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
+  fetchMrcMetadataForTokenBalances,
+  mrcMetadataBalanceQueryKeys,
   nativeReceiptEventRows,
   queryClient,
   txFeedToRows,
@@ -88,6 +90,7 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythIndexerStatus).toBe("function");
     expect(typeof proto.lythGetAccountPolicy).toBe("function");
     expect(typeof proto.lythGetTokenBalances).toBe("function");
+    expect(typeof (proto.lythMrcMetadata ?? proto.call)).toBe("function");
     expect(typeof proto.lythGetAddressLabel).toBe("function");
     expect(typeof proto.lythGetDelegationHistory).toBe("function");
     expect(typeof proto.lythPendingRewards).toBe("function");
@@ -152,6 +155,113 @@ describe("live-SDK seam", () => {
 
     expect(response.record?.sampleCount).toBe(5);
     expect(response.record?.avgAccuracyX10).toBe(86);
+  });
+});
+
+describe("MRC token-balance metadata enrichment", () => {
+  const assetId = `0x${"aa".repeat(32)}`;
+  const tokenId = `0x${"bb".repeat(32)}`;
+
+  it("maps bounded MRC balance rows to native metadata responses", async () => {
+    const calls: Array<[string, string | null | undefined]> = [];
+    const rpc = {
+      async lythMrcMetadata(asset: string, token?: string | null) {
+        calls.push([asset, token]);
+        return {
+          schemaVersion: 1,
+          assetId: asset,
+          tokenId: token ?? null,
+          metadata: {
+            standard: "mrc1155",
+            assetId: asset,
+            tokenId: token ?? null,
+            name: "Artifact #1",
+            symbol: "ART",
+            decimals: 0,
+            uri: "ipfs://artifact/1",
+            updatedAtBlock: 91,
+          },
+        };
+      },
+    };
+
+    const metadata = await fetchMrcMetadataForTokenBalances([
+      { tokenId: "balance-a", mrc: { assetId, tokenId } },
+      { tokenId: "balance-a-duplicate", mrc: { assetId, tokenId } },
+      { tokenId: "balance-b", mrc: { assetId: `0x${"cc".repeat(32)}` } },
+      { tokenId: "balance-c", mrc: { assetId: `0x${"dd".repeat(32)}` } },
+    ], rpc, 2);
+
+    expect(calls).toEqual([
+      [assetId, tokenId],
+      [`0x${"cc".repeat(32)}`, null],
+    ]);
+    expect(Object.keys(metadata)).toEqual(["balance-a", "balance-b"]);
+    expect(metadata["balance-a"].metadata?.name).toBe("Artifact #1");
+    expect(metadata["balance-a"].metadata?.symbol).toBe("ART");
+    expect(metadata["balance-a"].metadata?.decimals).toBe(0);
+    expect(metadata["balance-a"].metadata?.uri).toBe("ipfs://artifact/1");
+  });
+
+  it("omits non-MRC rows, null metadata rows, and failed lookups so display can fall back", async () => {
+    const calls: string[] = [];
+    const rpc = {
+      async lythMrcMetadata(asset: string) {
+        calls.push(asset);
+        if (asset.endsWith("02")) throw new Error("method unavailable");
+        return {
+          schemaVersion: 1,
+          assetId: asset,
+          tokenId: null,
+          metadata: null,
+        };
+      },
+    };
+
+    const rows = [
+      { tokenId: "plain" },
+      { tokenId: "missing-asset", mrc: { tokenId } },
+      { tokenId: "no-row", mrc: { assetId: `0x${"01".repeat(32)}` } },
+      { tokenId: "failed", mrc: { assetId: `0x${"02".repeat(32)}` } },
+    ];
+
+    expect(mrcMetadataBalanceQueryKeys(rows)).toEqual([
+      `${`0x${"01".repeat(32)}`}::no-row`,
+      `${`0x${"02".repeat(32)}`}::failed`,
+    ]);
+    await expect(fetchMrcMetadataForTokenBalances(rows, rpc)).resolves.toEqual({});
+    expect(calls).toEqual([`0x${"01".repeat(32)}`, `0x${"02".repeat(32)}`]);
+  });
+
+  it("falls back to raw lyth_mrcMetadata when the installed SDK wrapper is absent", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const rpc = {
+      async call<T>(method: string, params?: unknown): Promise<T> {
+        calls.push([method, params]);
+        return {
+          schemaVersion: 1,
+          assetId,
+          tokenId: null,
+          metadata: {
+            standard: "mrc20",
+            assetId,
+            tokenId: null,
+            name: "Native Coin",
+            symbol: "NAT",
+            decimals: 8,
+            uri: null,
+            updatedAtBlock: 12,
+          },
+        } as T;
+      },
+    };
+
+    const metadata = await fetchMrcMetadataForTokenBalances([
+      { tokenId: "balance-a", mrc: { assetId } },
+    ], rpc);
+
+    expect(calls).toEqual([["lyth_mrcMetadata", [assetId]]]);
+    expect(metadata["balance-a"].metadata?.symbol).toBe("NAT");
   });
 });
 
