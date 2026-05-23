@@ -2126,8 +2126,6 @@ const getLythJson = async <T,>(path: string, init: RequestInit = {}, token?: str
 
 const GetMonolythiumPage = ({ go }: any) => {
   const [amount, setAmount] = useStateX("2500");
-  const [address, setAddress] = useStateX("");
-  const [email, setEmail] = useStateX("");
   const [tierId, setTierId] = useStateX<GetLythTierId>("12m");
   const [asset, setAsset] = useStateX("usdterc20");
   const [reviewed, setReviewed] = useStateX(false);
@@ -2140,12 +2138,41 @@ const GetMonolythiumPage = ({ go }: any) => {
   const [busy, setBusy] = useStateX(false);
   const [error, setError] = useStateX("");
 
+  // Buyer identity
+  const [buyerType, setBuyerType] = useStateX<"individual" | "company">("individual");
+  const [firstName, setFirstName] = useStateX("");
+  const [lastName, setLastName] = useStateX("");
+  const [companyName, setCompanyName] = useStateX("");
+  const [jurisdiction, setJurisdiction] = useStateX("");
+  const [contactFirstName, setContactFirstName] = useStateX("");
+  const [contactLastName, setContactLastName] = useStateX("");
+  const [email, setEmail] = useStateX("");
+  const [phone, setPhone] = useStateX("");
+  const [addressLine1, setAddressLine1] = useStateX("");
+  const [addressLine2, setAddressLine2] = useStateX("");
+  const [city, setCity] = useStateX("");
+  const [stateProvince, setStateProvince] = useStateX("");
+  const [postalCode, setPostalCode] = useStateX("");
+  const [country, setCountry] = useStateX("");
+  const [confirmedAdult, setConfirmedAdult] = useStateX(false);
+
   const tier = GET_LYTH_TIERS.find(t => t.id === tierId) ?? GET_LYTH_TIERS[3];
   const amountUsd = useMemoX(() => _amountInput(amount), [amount]);
   const validAmount = amountUsd >= GET_LYTH_MIN_USD && amountUsd <= GET_LYTH_MAX_USD;
-  const validAddress = /^(0x[a-fA-F0-9]{40}|mono1[:a-zA-Z0-9]{8,}|lyth1[0-9a-z]{20,})$/.test(address.trim());
-  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-  const canPrepare = validAmount && validAddress && validEmail;
+  const trimmedEmail = email.trim();
+  const trimmedPhone = phone.trim();
+  const validEmail = trimmedEmail === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail);
+  const validPhone = trimmedPhone === "" || /^[+\d][\d\s().-]{5,}$/.test(trimmedPhone);
+  const hasContact = (trimmedEmail !== "" && validEmail) || (trimmedPhone !== "" && validPhone);
+  const validIdentity = buyerType === "individual"
+    ? (firstName.trim().length > 0 && lastName.trim().length > 0)
+    : (companyName.trim().length > 0 && jurisdiction.trim().length > 0 && contactFirstName.trim().length > 0 && contactLastName.trim().length > 0);
+  const validAddress = addressLine1.trim().length > 0
+    && city.trim().length > 0
+    && stateProvince.trim().length > 0
+    && postalCode.trim().length > 0
+    && country.trim().length > 0;
+  const canPrepare = validAmount && validIdentity && hasContact && validAddress && confirmedAdult;
   const baseLyth = amountUsd > 0 ? amountUsd * 40 : 0;
   const totalLyth = allocation?.lythAmount ?? baseLyth * tier.multiplier;
   const bonusLyth = Math.max(0, totalLyth - baseLyth);
@@ -2219,7 +2246,7 @@ const GetMonolythiumPage = ({ go }: any) => {
 
   const startCheckout = async () => {
     if (!canPrepare) {
-      window.__msToast?.("Enter a valid amount, wallet address, and email before checkout.");
+      window.__msToast?.("Complete the form: amount, identity, contact (email or phone), address, and the age confirmation.");
       return;
     }
     setBusy(true);
@@ -2228,7 +2255,24 @@ const GetMonolythiumPage = ({ go }: any) => {
     try {
       const auth = await getLythJson<{ token: string }>("/auth/register", {
         method: "POST",
-        body: JSON.stringify({ email: email.trim(), walletAddress: address.trim() }),
+        body: JSON.stringify({
+          buyerType,
+          firstName: buyerType === "individual" ? firstName.trim() : undefined,
+          lastName: buyerType === "individual" ? lastName.trim() : undefined,
+          companyName: buyerType === "company" ? companyName.trim() : undefined,
+          jurisdiction: buyerType === "company" ? jurisdiction.trim() : undefined,
+          contactFirstName: buyerType === "company" ? contactFirstName.trim() : undefined,
+          contactLastName: buyerType === "company" ? contactLastName.trim() : undefined,
+          email: trimmedEmail || undefined,
+          phone: trimmedPhone || undefined,
+          addressLine1: addressLine1.trim(),
+          addressLine2: addressLine2.trim() || undefined,
+          city: city.trim(),
+          stateProvince: stateProvince.trim(),
+          postalCode: postalCode.trim(),
+          country: country.trim(),
+          confirmedAdult: true,
+        }),
       });
 
       let reservation: any;
@@ -2340,18 +2384,108 @@ const GetMonolythiumPage = ({ go }: any) => {
       <section className="get-grid" id="get-builder">
         <Card title="Allocation builder" right={<span className="pill gold">Preview</span>}>
           <div className="get-form">
+            <div className="get-field">
+              <span>Buying as</span>
+              <div className="get-tier-grid" style={{gridTemplateColumns:"repeat(2, minmax(0, 1fr))"}}>
+                <button
+                  type="button"
+                  className={`get-tier ${buyerType === "individual" ? "is-active" : ""}`}
+                  onClick={()=>setBuyerType("individual")}
+                >
+                  <b>Individual</b>
+                  <span className="mono">person</span>
+                </button>
+                <button
+                  type="button"
+                  className={`get-tier ${buyerType === "company" ? "is-active" : ""}`}
+                  onClick={()=>setBuyerType("company")}
+                >
+                  <b>Company</b>
+                  <span className="mono">on behalf of an entity</span>
+                </button>
+              </div>
+            </div>
+
+            {buyerType === "individual" ? (
+              <div className="get-row" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                <label className="get-field">
+                  <span>First name</span>
+                  <input value={firstName} onChange={e=>setFirstName(e.target.value)} placeholder="Jane" autoComplete="given-name"/>
+                </label>
+                <label className="get-field">
+                  <span>Last name</span>
+                  <input value={lastName} onChange={e=>setLastName(e.target.value)} placeholder="Doe" autoComplete="family-name"/>
+                </label>
+              </div>
+            ) : (
+              <>
+                <div className="get-row" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <label className="get-field">
+                    <span>Company legal name</span>
+                    <input value={companyName} onChange={e=>setCompanyName(e.target.value)} placeholder="Acme Holdings Ltd." autoComplete="organization"/>
+                  </label>
+                  <label className="get-field">
+                    <span>Jurisdiction of incorporation</span>
+                    <input value={jurisdiction} onChange={e=>setJurisdiction(e.target.value)} placeholder="British Columbia, Canada"/>
+                  </label>
+                </div>
+                <div className="get-row" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                  <label className="get-field">
+                    <span>Contact first name</span>
+                    <input value={contactFirstName} onChange={e=>setContactFirstName(e.target.value)} placeholder="Jane" autoComplete="given-name"/>
+                  </label>
+                  <label className="get-field">
+                    <span>Contact last name</span>
+                    <input value={contactLastName} onChange={e=>setContactLastName(e.target.value)} placeholder="Doe" autoComplete="family-name"/>
+                  </label>
+                </div>
+              </>
+            )}
+
+            <div className="get-row" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <label className="get-field">
+                <span>Email{!trimmedPhone ? " *" : ""}</span>
+                <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" type="email" autoComplete="email"/>
+                <small className={email && !validEmail ? "is-warn" : ""}>
+                  {!trimmedEmail && !trimmedPhone ? "Email or phone — provide at least one." : "Used for reservation receipts."}
+                </small>
+              </label>
+              <label className="get-field">
+                <span>Phone{!trimmedEmail ? " *" : ""}</span>
+                <input value={phone} onChange={e=>setPhone(e.target.value)} placeholder="+1 555 555 5555" type="tel" autoComplete="tel"/>
+                <small className={phone && !validPhone ? "is-warn" : ""}>
+                  Include country code.
+                </small>
+              </label>
+            </div>
+
             <label className="get-field">
-              <span>Monolythium address</span>
-              <input value={address} onChange={e=>setAddress(e.target.value)} placeholder="0x... or mono1..." spellCheck={false}/>
-              <small className={address && !validAddress ? "is-warn" : ""}>
-                Destination wallet for the allocation.
-              </small>
+              <span>Address line 1</span>
+              <input value={addressLine1} onChange={e=>setAddressLine1(e.target.value)} placeholder="Street and number" autoComplete="address-line1"/>
             </label>
             <label className="get-field">
-              <span>Email</span>
-              <input value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" type="email"/>
-              <small className={email && !validEmail ? "is-warn" : ""}>Used for reservation receipts and checkout recovery.</small>
+              <span>Address line 2 <small className="cap" style={{opacity:0.6,marginLeft:6}}>optional</small></span>
+              <input value={addressLine2} onChange={e=>setAddressLine2(e.target.value)} placeholder="Apartment, suite, unit" autoComplete="address-line2"/>
             </label>
+            <div className="get-row" style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr",gap:12}}>
+              <label className="get-field">
+                <span>City</span>
+                <input value={city} onChange={e=>setCity(e.target.value)} autoComplete="address-level2"/>
+              </label>
+              <label className="get-field">
+                <span>State / Province</span>
+                <input value={stateProvince} onChange={e=>setStateProvince(e.target.value)} autoComplete="address-level1"/>
+              </label>
+              <label className="get-field">
+                <span>Postal code</span>
+                <input value={postalCode} onChange={e=>setPostalCode(e.target.value)} autoComplete="postal-code"/>
+              </label>
+            </div>
+            <label className="get-field">
+              <span>Country</span>
+              <input value={country} onChange={e=>setCountry(e.target.value)} placeholder="e.g. Canada" autoComplete="country-name"/>
+            </label>
+
             <label className="get-field">
               <span>Amount</span>
               <div className="get-money">
@@ -2410,8 +2544,32 @@ const GetMonolythiumPage = ({ go }: any) => {
               </div>
             </div>
 
+            <label className="get-field" style={{
+              display:"flex",
+              flexDirection:"row",
+              alignItems:"flex-start",
+              gap:10,
+              padding:"10px 12px",
+              border:"1px solid var(--fg-700, #2a2a2a)",
+              borderRadius:6,
+            }}>
+              <input
+                type="checkbox"
+                checked={confirmedAdult}
+                onChange={e=>setConfirmedAdult(e.target.checked)}
+                style={{marginTop:3}}
+              />
+              <span style={{fontSize:13,lineHeight:1.5}}>
+                I confirm I am <b>18 or older</b> (or, if buying on behalf of a company, that I am authorized to act for the company and the company is duly organized in the stated jurisdiction).
+              </span>
+            </label>
+
+            <p style={{fontSize:11,lineHeight:1.55,color:"var(--fg-500, #888)",margin:"4px 2px 0"}}>
+              Your information is collected by Mono Labs R&amp;D LLC (San Francisco, CA) to process your allocation, contact you about your reservation, and meet identity-verification obligations. By submitting, you consent to this use of your information.
+            </p>
+
             <div className="get-actions">
-              <button className="ov-cta ov-cta--primary" onClick={startCheckout} disabled={busy}>
+              <button className="ov-cta ov-cta--primary" onClick={startCheckout} disabled={busy || !canPrepare}>
                 {busy ? "Creating payment…" : "Create payment"}
               </button>
               <button className="ov-cta" onClick={loadPool} type="button">Refresh pool</button>
@@ -2439,12 +2597,12 @@ const GetMonolythiumPage = ({ go }: any) => {
               {reviewed ? (
                 <div className="get-review is-ready">
                   <span className="pill ok">Ready</span>
-                  <p>Payment details are generated here. Send funds only to the address returned in the payment card.</p>
+                  <p>Payment details are generated here. Send funds only to the address returned in the payment card. Your LYTH destination wallet is collected later — after payment clears and the Monolythium network supports wallet creation.</p>
                 </div>
               ) : (
                 <div className="get-review">
                   <span className="pill warn">Draft</span>
-                  <p>Complete the builder to create a reservation and payment address on Monoscan.</p>
+                  <p>Complete the builder to create a reservation and payment address. Wallet address for LYTH delivery is collected later, when the Monolythium network is live.</p>
                 </div>
               )}
             </div>
