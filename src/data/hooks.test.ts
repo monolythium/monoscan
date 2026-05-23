@@ -33,6 +33,7 @@ import {
   normalizeBridgeRouteDisclosure,
   normalizeRedemptionQueueResponse,
   nativeReceiptEventRows,
+  nativeReceiptMarketEventRows,
   queryClient,
   txFeedToRows,
 } from "./hooks";
@@ -536,7 +537,7 @@ describe("API execution-unit transformations", () => {
   });
 
   it("maps native RISC-V receipt events into transaction-detail display rows", () => {
-    const rows = nativeReceiptEventRows({
+    const receipt = {
       txHash: `0x${"22".repeat(32)}`,
       blockHash: `0x${"33".repeat(32)}`,
       blockHeight: 100,
@@ -581,7 +582,8 @@ describe("API execution-unit transformations", () => {
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
-    });
+    };
+    const rows = nativeReceiptEventRows(receipt);
 
     expect(rows).toEqual([
       {
@@ -597,5 +599,73 @@ describe("API execution-unit transformations", () => {
         ],
       },
     ]);
+    expect(nativeReceiptMarketEventRows(receipt)).toEqual([]);
+  });
+
+  it("extracts native market events from decoded receipt fields", () => {
+    const rows = nativeReceiptMarketEventRows({
+      txHash: `0x${"22".repeat(32)}`,
+      blockHash: `0x${"33".repeat(32)}`,
+      blockHeight: 101,
+      txIndex: 0,
+      schema: "riscv.receipt.v1",
+      artifactHash: `0x${"aa".repeat(32)}`,
+      counters: { cycles: 10, syscallUnits: 1, stateIoUnits: 0 },
+      fee: {
+        total_lythoshi: "1",
+        total_lyth: "0.00000001",
+        cycles_used: 10,
+        base_price_per_cycle_lythoshi: "0",
+        state_io_units: 0,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "1",
+      },
+      reverted: false,
+      nativeDeltaCount: 0,
+      eventCount: 2,
+      events: [
+        {
+          blockHeight: 101,
+          txIndex: 0,
+          logIndex: 0,
+          address: "monoc1market",
+          eventTopic: `0x${"12".repeat(32)}`,
+          decoded: null,
+          decodedJson: JSON.stringify({
+            family: "native.market",
+            event_name: "market.order.filled",
+            payload_hash: `0x${"55".repeat(32)}`,
+            market_id: `0x${"66".repeat(32)}`,
+            price_lythoshi: "100000000",
+          }),
+        },
+        {
+          blockHeight: 101,
+          txIndex: 0,
+          logIndex: 1,
+          address: "monoc1agent",
+          eventTopic: `0x${"13".repeat(32)}`,
+          decoded: null,
+          decodedJson: JSON.stringify({
+            family: "agent",
+            event_name: "agent.updated",
+          }),
+        },
+      ],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      address: "monoc1market",
+      family: "native.market",
+      eventName: "market.order.filled",
+    });
+    expect(rows[0].decodedFields).toContainEqual(["market_id", `0x${"66".repeat(32)}`]);
+    expect(rows[0].decodedFields).toContainEqual(["price_lythoshi", "100000000"]);
   });
 });

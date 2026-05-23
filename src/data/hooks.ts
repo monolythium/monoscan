@@ -537,6 +537,27 @@ export function nativeReceiptEventRows(
   });
 }
 
+export function nativeReceiptMarketEventRows(
+  receipt: NativeReceiptResponse<unknown> | null | undefined,
+): NativeReceiptEventDisplayRow[] {
+  return nativeReceiptEventRows(receipt).filter((row) => {
+    const family = row.family?.toLowerCase() ?? "";
+    const name = row.eventName?.toLowerCase() ?? "";
+    if (family.includes("market") || family.includes("clob") || name.includes("market") || name.includes("clob")) {
+      return true;
+    }
+    return row.decodedFields.some(([key]) => {
+      const normalized = key.toLowerCase();
+      return normalized === "market_id"
+        || normalized === "order_id"
+        || normalized === "trade_id"
+        || normalized === "price_lythoshi"
+        || normalized === "base_amount"
+        || normalized === "quote_amount";
+    });
+  });
+}
+
 function apiActivityToRpcActivity(row: ApiAddressActivityEntry): AddressActivityEntry {
   return {
     blockHeight: numToBig(row.blockHeight),
