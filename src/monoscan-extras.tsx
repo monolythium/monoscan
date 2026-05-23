@@ -17,6 +17,7 @@ import {
   useAddressLabel,
   useAddressProfile,
   useAgentReputation,
+  useNativeAgentState,
   useActivePrecompiles,
   useBlsRoundCertificate,
   useBlockByHash,
@@ -55,12 +56,14 @@ import {
   bridgeTrustDisclosureDisplaySlice,
   bridgeTrustDisclosuresFromAddressData,
   mergeBridgeTrustDisclosures,
+  nativeAgentStateRows,
   type MrcMetadataResponse,
   type MrcHoldersResponse,
   type MrcAccountRecord,
   type MrcAccountResponse,
   type MrcPolicyRecord,
   type MrcPolicySpendRecord,
+  type NativeAgentStateDisplayRow,
   type BridgeTrustDisclosureRow,
   type MrvNativeTransactionEvidence,
   mrvNativeTransactionEvidence,
@@ -289,6 +292,65 @@ const AgentReputationCard = ({ reputation }: { reputation: AgentReputationRespon
       ) : (
         <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"12px 16px 0"}}>
           No reputation records reported for this provider category.
+        </p>
+      )}
+    </Card>
+  );
+};
+
+function nativeAgentKindLabel(kind: NativeAgentStateDisplayRow["kind"]): string {
+  if (kind === "spendingPolicy") return "Policy";
+  if (kind === "policySpend") return "Spend";
+  return "Escrow";
+}
+
+const NativeAgentStateCard = ({
+  rows,
+  loading,
+}: {
+  rows: {
+    spendingPolicies: NativeAgentStateDisplayRow[];
+    policySpends: NativeAgentStateDisplayRow[];
+    escrows: NativeAgentStateDisplayRow[];
+  };
+  loading: boolean;
+}) => {
+  const allRows = [...rows.spendingPolicies, ...rows.policySpends, ...rows.escrows];
+  return (
+    <Card
+      title="Native agent state"
+      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>lyth_nativeAgentState</span>}
+    >
+      {allRows.length > 0 ? (
+        <table className="ms-table ms-table--tight">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>ID</th>
+              <th>Account</th>
+              <th>Status</th>
+              <th style={{textAlign:"right"}}>Amount</th>
+              <th style={{textAlign:"right"}}>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            {allRows.map((row, index) => (
+              <tr key={`${row.kind}-${row.primaryId ?? index}-${row.blockHeight ?? "pending"}`}>
+                <td>{nativeAgentKindLabel(row.kind)}</td>
+                <td className="mono" title={row.primaryId ?? ""}>{row.primaryId ? _short(row.primaryId, 10) : "—"}</td>
+                <td className="mono" title={row.account ?? ""}>{row.account ? _short(row.account, 12) : "—"}</td>
+                <td className="mono">{row.status ?? "—"}</td>
+                <td className="mono num" style={{textAlign:"right"}}>{row.amount ?? "—"}</td>
+                <td className="mono num" style={{textAlign:"right"}}>
+                  {row.blockHeight === null ? "—" : row.blockHeight.toLocaleString()}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"12px 16px 0"}}>
+          {loading ? "Reading /api/v1/native-agent-state..." : "No native agent policy or escrow rows reported for this account."}
         </p>
       )}
     </Card>
@@ -1054,6 +1116,7 @@ const WalletPage = ({ addr, go }: any) => {
   const addressLabel = useAddressLabel(addr);
   const code = useAccountCode(addr);
   const agentReputation = useAgentReputation(addr);
+  const nativeAgentState = useNativeAgentState({ account: addr, includePolicySpends: true, limit: 25 });
   const mrcAccount = useMrcAccount(addr, 6);
   const fixtureWallet = WALLETS.find(w => w.addr === addr);
   const profileAccount = profile.data?.account ?? null;
@@ -1113,6 +1176,13 @@ const WalletPage = ({ addr, go }: any) => {
   const bridgeTrustDisclosureChecked = profile.isFetched && tokenBalances.isFetched && bridgeRouteDiscovery.isFetched;
   const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
   const liveAgentReputation = agentReputation.data ?? null;
+  const liveNativeAgentRows = nativeAgentStateRows(nativeAgentState.data);
+  const hasLiveNativeAgentState =
+    liveNativeAgentRows.spendingPolicies.length > 0
+    || liveNativeAgentRows.policySpends.length > 0
+    || liveNativeAgentRows.escrows.length > 0
+    || nativeAgentState.isLoading
+    || nativeAgentState.isFetched;
   const liveMrcAccount = mrcAccount.data ?? null;
   const liveMrcSpendRows = liveMrcAccount?.policySpends ?? [];
   const liveMrcPolicy = liveMrcAccount?.policyAccount?.policy ?? null;
@@ -1159,7 +1229,7 @@ const WalletPage = ({ addr, go }: any) => {
         </div>
       </section>
 
-      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || liveRedemptionQueue || codeValue !== null || profileAccount || liveAgentReputation || liveMrcAccount) && (
+      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || liveRedemptionQueue || codeValue !== null || profileAccount || liveAgentReputation || hasLiveNativeAgentState || liveMrcAccount) && (
         <section className="tx-split">
           <Card title="Live account">
             <div className="tx-kv">
@@ -1299,6 +1369,7 @@ const WalletPage = ({ addr, go }: any) => {
             </Card>
           )}
           {liveAgentReputation && <AgentReputationCard reputation={liveAgentReputation}/>}
+          {hasLiveNativeAgentState && <NativeAgentStateCard rows={liveNativeAgentRows} loading={nativeAgentState.isLoading}/>}
         </section>
       )}
 
@@ -2799,4 +2870,4 @@ const tagFor = (addr) => {
 
 
 /* Named exports — replaces the legacy window-attach pattern. */
-export { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, BridgeTrustDisclosuresCard };
+export { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, BridgeTrustDisclosuresCard, NativeAgentStateCard };

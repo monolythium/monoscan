@@ -38,6 +38,7 @@ import {
   fetchBridgeRouteDisclosures,
   fetchMrcAccount,
   fetchMrcHoldersForTokenBalances,
+  fetchNativeAgentState,
   fetchNativeMarketEvents,
   fetchNativeMarketState,
   fetchTxNativeReceipt,
@@ -56,6 +57,7 @@ import {
   normalizeBridgeRouteDisclosure,
   normalizeRedemptionQueueResponse,
   nativeReceiptEventRows,
+  nativeAgentStateRows,
   nativeMarketEventRows,
   nativeMarketStateRows,
   nativeReceiptMarketEventRows,
@@ -494,6 +496,125 @@ describe("live-SDK seam", () => {
 
     expect(apiSpy).toHaveBeenCalledWith("/native-market-state", { account: "monoc1maker" });
     expect(rpcSpy).toHaveBeenCalledWith("lyth_nativeMarketState", [{ account: "monoc1maker" }]);
+    expect(result).toBe(response);
+  });
+
+  it("reads native agent state without fabricating missing policy or escrow rows", async () => {
+    const policyId = `0x${"aa".repeat(32)}`;
+    const escrowId = `0x${"bb".repeat(32)}`;
+    const owner = "mono1agentowner";
+    const response = {
+      schemaVersion: 1,
+      limit: 5,
+      filters: { policyId: null, escrowId: null, account: owner, includePolicySpends: true },
+      spendingPolicies: [{
+        policyId,
+        owner,
+        controller: "mono1agentcontroller",
+        assetId: `0x${"cc".repeat(32)}`,
+        enabled: true,
+        perActionLimit: "100",
+        windowLimit: "500",
+        windowSecs: 60,
+        updatedAtBlock: 42,
+      }],
+      policySpends: [{
+        policyId,
+        controller: "mono1agentcontroller",
+        assetId: `0x${"cc".repeat(32)}`,
+        window: 7,
+        amount: "25",
+        spent: "125",
+        updatedAtBlock: 43,
+      }],
+      escrows: [{
+        escrowId,
+        buyer: owner,
+        provider: "mono1agentprovider",
+        arbiter: "mono1agentarbiter",
+        assetId: `0x${"cc".repeat(32)}`,
+        amount: "1000",
+        termsHash: `0x${"dd".repeat(32)}`,
+        round: 2,
+        buyerAccepted: true,
+        providerAccepted: false,
+        submittedPayloadHash: null,
+        status: "accepted",
+        resolution: null,
+        lastActor: owner,
+        createdAtBlock: 40,
+        updatedAtBlock: 44,
+      }],
+      source: { indexerProvider: "native_agent_state", projection: "native_agent_state" },
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "nativeAgentState")
+      .mockResolvedValue(apiEnvelope(response));
+    const rpcSpy = vi.spyOn(RpcClient.prototype, "lythNativeAgentState");
+
+    const result = await fetchNativeAgentState({ account: owner, includePolicySpends: true, limit: 5 });
+    const rows = nativeAgentStateRows(result);
+
+    expect(apiSpy).toHaveBeenCalledWith({ account: owner, includePolicySpends: true, limit: 5 });
+    expect(rpcSpy).not.toHaveBeenCalled();
+    expect(rows.spendingPolicies[0]).toMatchObject({
+      kind: "spendingPolicy",
+      primaryId: policyId,
+      account: owner,
+      counterparty: "mono1agentcontroller",
+      amount: "500",
+      blockHeight: 42,
+    });
+    expect(rows.policySpends[0]).toMatchObject({
+      kind: "policySpend",
+      amount: "25",
+      blockHeight: 43,
+    });
+    expect(rows.escrows[0]).toMatchObject({
+      kind: "escrow",
+      primaryId: escrowId,
+      status: "accepted",
+      amount: "1000",
+      blockHeight: 44,
+    });
+    expect(nativeAgentStateRows({ ...response, spendingPolicies: [], policySpends: [], escrows: [] }))
+      .toEqual({ spendingPolicies: [], policySpends: [], escrows: [] });
+  });
+
+  it("falls back to lyth_nativeAgentState with a valid account-scoped filter", async () => {
+    const response = {
+      schemaVersion: 1,
+      limit: 5,
+      filters: { policyId: null, escrowId: null, account: "mono1agentowner", includePolicySpends: true },
+      spendingPolicies: [],
+      policySpends: [],
+      escrows: [],
+      source: { indexerProvider: "native_agent_state", projection: "native_agent_state" },
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "nativeAgentState")
+      .mockRejectedValue(new Error("api unavailable"));
+    const rpcSpy = vi
+      .spyOn(RpcClient.prototype, "lythNativeAgentState")
+      .mockResolvedValue(response);
+
+    const result = await fetchNativeAgentState({
+      account: "mono1agentowner",
+      policyId: `0x${"aa".repeat(32)}`,
+      includePolicySpends: true,
+      limit: 5,
+    });
+
+    expect(apiSpy).toHaveBeenCalledWith({
+      policyId: `0x${"aa".repeat(32)}`,
+      includePolicySpends: true,
+      limit: 5,
+    });
+    expect(rpcSpy).toHaveBeenCalledWith({
+      policyId: `0x${"aa".repeat(32)}`,
+      includePolicySpends: true,
+      limit: 5,
+    });
     expect(result).toBe(response);
   });
 
