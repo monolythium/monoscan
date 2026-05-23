@@ -100,6 +100,34 @@ export const queryClient = new QueryClient({
 /** How often to long-poll the chain head until WS lands (mono-core OI-0069). */
 export const HEAD_POLL_MS = 2_000;
 
+export interface PendingRewardsRowLive {
+  cluster: number;
+  weightBps: number;
+  unsettledAmountLythoshi: string;
+}
+
+export interface PendingRewardsLive {
+  wallet: string;
+  totalAmountLythoshi: string;
+  settledPendingLythoshi: string;
+  unsettledAmountLythoshi: string;
+  autoCompound: boolean;
+  rows: PendingRewardsRowLive[];
+  block: unknown;
+}
+
+interface PendingRewardsEnvelope {
+  data: PendingRewardsLive;
+}
+
+type PendingRewardsApiClient = ReturnType<typeof getApiClient> & {
+  addressPendingRewards?: (address: string, block?: "latest") => Promise<PendingRewardsEnvelope>;
+};
+
+type PendingRewardsRpcClient = RpcClient & {
+  lythPendingRewards?: (wallet: string, block?: "latest") => Promise<PendingRewardsLive>;
+};
+
 /* -------------------------------------------------------------------------- */
 /* bigint → number helpers.                                                    */
 /*                                                                             */
@@ -196,8 +224,8 @@ export function apiBlockToRpcHeader(block: ApiBlockHeader): BlockHeader {
     parent_hash: block.parentHash,
     state_root: block.stateRoot,
     timestamp: numToBig(block.timestamp),
-    gas_used: numToBig(readRequiredNumberField(block, ["executionUnitsUsed", "gasUsed", "gas_used"])),
-    gas_limit: numToBig(readRequiredNumberField(block, ["executionUnitLimit", "gasLimit", "gas_limit"])),
+    executionUnitsUsed: numToBig(readRequiredNumberField(block, ["executionUnitsUsed", "gasUsed", "gas_used"])),
+    executionUnitLimit: numToBig(readRequiredNumberField(block, ["executionUnitLimit", "gasLimit", "gas_limit"])),
   };
 }
 
@@ -227,7 +255,7 @@ export function apiReceiptToRpcReceipt(receipt: ApiTransactionReceipt): Transact
     block_number: numToBig(receipt.blockHeight),
     tx_index: receipt.txIndex,
     status: receipt.status,
-    gas_used: numToBig(readRequiredNumberField(receipt, ["executionUnitsUsed", "gasUsed", "gas_used"])),
+    executionUnitsUsed: numToBig(readRequiredNumberField(receipt, ["executionUnitsUsed", "gasUsed", "gas_used"])),
   };
 }
 
@@ -269,7 +297,7 @@ export function decodedTxToRpcReceipt(decoded: DecodeTxResponse): TransactionRec
     block_number: numToBig(Number(decoded.blockNumber)),
     tx_index: decoded.txIndex,
     status: decoded.status === "success" ? 1 : decoded.status === "reverted" ? 0 : -1,
-    gas_used: numToBig(readNumberField(decoded, ["executionUnitsUsed", "gasUsed"]) ?? 0),
+    executionUnitsUsed: numToBig(readNumberField(decoded, ["executionUnitsUsed", "gasUsed"]) ?? 0),
   };
 }
 
@@ -1261,6 +1289,36 @@ export function useWalletDelegations(addr: string | undefined) {
       }
     },
     staleTime: 60_000,
+  });
+}
+
+export function usePendingRewards(addr: string | undefined) {
+  return useQuery<PendingRewardsLive | null>({
+    queryKey: QK.pendingRewards(addr ?? ""),
+    enabled: Boolean(addr) && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        const api = getApiClient() as PendingRewardsApiClient;
+        const response =
+          typeof api.addressPendingRewards === "function"
+            ? await api.addressPendingRewards(addr as string, "latest")
+            : await api.get<PendingRewardsEnvelope>(
+                `/addresses/${encodeURIComponent(addr as string)}/pending-rewards`,
+                { block: "latest" },
+              );
+        return response.data;
+      } catch {
+        try {
+          const rpc = getRpcClient() as PendingRewardsRpcClient;
+          return typeof rpc.lythPendingRewards === "function"
+            ? await rpc.lythPendingRewards(addr as string, "latest")
+            : null;
+        } catch {
+          return null;
+        }
+      }
+    },
+    staleTime: 30_000,
   });
 }
 
