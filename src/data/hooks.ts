@@ -22,6 +22,7 @@
  */
 
 import { QueryClient, useQuery } from "@tanstack/react-query";
+import * as CoreSdk from "@monolythium/core-sdk";
 import {
   parseQuantityBig,
   type AccountPolicy,
@@ -170,6 +171,54 @@ type MrcMetadataRpcClient = {
 };
 
 export const MRC_METADATA_BALANCE_LIMIT = 8;
+/** Upstream metadata contract required before Monoscan can show bridge route trust rows. */
+export const BRIDGE_ROUTE_DISCLOSURE_UPSTREAM_FIELD =
+  "AddressProfileResponse.bridgeRouteDisclosures or TokenBalanceRecord.bridgeRouteDisclosure(s)";
+
+export type BridgeAdminControl = "none" | "consensusOnly" | "operatorKey" | "unknown";
+export type BridgeCircuitBreakerState = "armed" | "paused" | "disabled" | "unknown";
+export type BridgeRiskTier = "low" | "medium" | "high" | "blocked";
+
+export interface BridgeVerifierDisclosure {
+  model: string;
+  participantCount: number;
+  threshold: number;
+}
+
+export interface BridgeRouteDisclosure {
+  routeId: string;
+  bridge: string;
+  asset: string;
+  sourceChain: string;
+  destinationChain: string;
+  verifier: BridgeVerifierDisclosure;
+  drainCapAtomic: string;
+  finalityBlocks: number;
+  cooldownSeconds: number;
+  adminControl: BridgeAdminControl;
+  circuitBreaker: BridgeCircuitBreakerState;
+  insuranceAtomic: string;
+  lastIncidentDate?: string | null;
+}
+
+export interface BridgeRouteAssessment {
+  routeId: string;
+  accepted: boolean;
+  score: number;
+  riskTier: BridgeRiskTier;
+  blockedReasons: string[];
+  warnings: string[];
+}
+
+type CoreBridgeHelpers = {
+  assessBridgeRoute?: (route: BridgeRouteDisclosure) => BridgeRouteAssessment;
+  rankBridgeRoutes?: (routes: readonly BridgeRouteDisclosure[]) => Array<{
+    route: BridgeRouteDisclosure;
+    assessment: BridgeRouteAssessment;
+  }>;
+};
+
+const sdkBridgeHelpers = CoreSdk as unknown as CoreBridgeHelpers;
 
 /* -------------------------------------------------------------------------- */
 /* bigint → number helpers.                                                    */
@@ -254,6 +303,12 @@ function readObjectField(value: unknown, keys: string[]): unknown | null {
     if (row[key] !== undefined) return row[key];
   }
   return null;
+}
+
+function unknownRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function indexerHeightFromUnknown(value: unknown): number | null {
@@ -1547,6 +1602,288 @@ export function useMrcMetadataForTokenBalances(
     queryFn: () => fetchMrcMetadataForTokenBalances(rows, getRpcClient(), limit),
     staleTime: 60_000,
   });
+}
+
+export interface BridgeTrustDisclosureRow {
+  route: BridgeRouteDisclosure;
+  assessment: BridgeRouteAssessment;
+  source: string;
+}
+
+export type BridgeRouteDisclosureSource = {
+  value: unknown;
+  source: string;
+};
+
+const BRIDGE_DISCLOSURE_KEYS = [
+  "bridgeRouteDisclosure",
+  "bridge_route_disclosure",
+  "bridgeTrustDisclosure",
+  "bridge_trust_disclosure",
+  "routeDisclosure",
+] as const;
+
+const BRIDGE_DISCLOSURES_KEYS = [
+  "bridgeRouteDisclosures",
+  "bridge_route_disclosures",
+  "bridgeTrustDisclosures",
+  "bridge_trust_disclosures",
+  "routeDisclosures",
+] as const;
+
+function bridgeRouteDisclosureKey(route: BridgeRouteDisclosure): string {
+  return [
+    route.routeId,
+    route.bridge,
+    route.asset,
+    route.sourceChain,
+    route.destinationChain,
+  ].join("|");
+}
+
+function bridgeRouteMarkerPresent(row: Record<string, unknown>): boolean {
+  return [
+    "routeId",
+    "route_id",
+    "id",
+    "bridge",
+    "asset",
+    "sourceChain",
+    "source_chain",
+    "destinationChain",
+    "destination_chain",
+    "verifier",
+    "verifierConfig",
+    "verifier_config",
+    "drainCapAtomic",
+    "drain_cap_atomic",
+    "insuranceAtomic",
+    "insurance_atomic",
+  ].some((key) => {
+    const value = row[key];
+    return typeof value === "string" || typeof value === "number" || typeof value === "bigint" || unknownRecord(value) !== null;
+  });
+}
+
+function readBridgeEnum<T extends string>(value: unknown, keys: string[], allowed: readonly T[], fallback: T): T {
+  const raw = readStringField(value, keys);
+  if (!raw) return fallback;
+  return allowed.includes(raw as T) ? raw as T : fallback;
+}
+
+function readBridgeNumber(value: unknown, keys: string[]): number {
+  const n = readNumberField(value, keys);
+  return n !== null && Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0;
+}
+
+function readBridgeString(value: unknown, keys: string[], fallback = ""): string {
+  return readStringField(value, keys)?.trim() ?? fallback;
+}
+
+function bridgeDisclosureValues(value: unknown, source: string): BridgeRouteDisclosureSource[] {
+  const row = unknownRecord(value);
+  if (!row) return [];
+  const out: BridgeRouteDisclosureSource[] = [];
+  for (const key of BRIDGE_DISCLOSURE_KEYS) {
+    if (row[key] !== undefined) {
+      out.push({ value: row[key], source });
+    }
+  }
+  for (const key of BRIDGE_DISCLOSURES_KEYS) {
+    const raw = row[key];
+    if (Array.isArray(raw)) {
+      raw.forEach((entry, index) => out.push({ value: entry, source: `${source}[${index}]` }));
+    } else if (raw !== undefined) {
+      out.push({ value: raw, source });
+    }
+  }
+  return out;
+}
+
+export function normalizeBridgeRouteDisclosure(value: unknown): BridgeRouteDisclosure | null {
+  const row = unknownRecord(value);
+  if (!row || !bridgeRouteMarkerPresent(row)) return null;
+
+  const verifier = unknownRecord(readObjectField(row, ["verifier", "verifierConfig", "verifier_config"])) ?? {};
+  const lastIncidentDate = readStringField(row, ["lastIncidentDate", "last_incident_date", "incidentDate", "incident_date"]);
+
+  return {
+    routeId: readBridgeString(row, ["routeId", "route_id", "id"]),
+    bridge: readBridgeString(row, ["bridge", "bridgeName", "bridge_name"]),
+    asset: readBridgeString(row, ["asset", "assetId", "asset_id", "tokenId", "token_id"]),
+    sourceChain: readBridgeString(row, ["sourceChain", "source_chain", "fromChain", "from_chain"]),
+    destinationChain: readBridgeString(row, ["destinationChain", "destination_chain", "toChain", "to_chain"]),
+    verifier: {
+      model: readBridgeString(verifier, ["model", "type"]),
+      participantCount: readBridgeNumber(verifier, ["participantCount", "participant_count", "participants", "signerCount", "signer_count"]),
+      threshold: readBridgeNumber(verifier, ["threshold", "required", "requiredSigners", "required_signers"]),
+    },
+    drainCapAtomic: readBridgeString(row, ["drainCapAtomic", "drain_cap_atomic", "drainCap", "drain_cap"], "0"),
+    finalityBlocks: readBridgeNumber(row, ["finalityBlocks", "finality_blocks", "finalityDelayBlocks", "finality_delay_blocks"]),
+    cooldownSeconds: readBridgeNumber(row, ["cooldownSeconds", "cooldown_seconds", "cooldown"]),
+    adminControl: readBridgeEnum<BridgeAdminControl>(
+      row,
+      ["adminControl", "admin_control", "monoAdminControl", "mono_admin_control"],
+      ["none", "consensusOnly", "operatorKey", "unknown"],
+      "unknown",
+    ),
+    circuitBreaker: readBridgeEnum<BridgeCircuitBreakerState>(
+      row,
+      ["circuitBreaker", "circuit_breaker", "breaker"],
+      ["armed", "paused", "disabled", "unknown"],
+      "unknown",
+    ),
+    insuranceAtomic: readBridgeString(row, ["insuranceAtomic", "insurance_atomic", "slashableInsuranceAtomic", "slashable_insurance_atomic"], "0"),
+    lastIncidentDate,
+  };
+}
+
+function decimalStringIsPositive(value: string): boolean {
+  const trimmed = value.trim();
+  return /^[0-9]+$/.test(trimmed) && /[1-9]/.test(trimmed);
+}
+
+function fallbackAssessBridgeRoute(route: BridgeRouteDisclosure): BridgeRouteAssessment {
+  const blockedReasons: string[] = [];
+  const warnings: string[] = [];
+
+  if (route.routeId.trim() === "") blockedReasons.push("route id missing");
+  if (route.bridge.trim() === "") blockedReasons.push("bridge name missing");
+  if (route.asset.trim() === "") blockedReasons.push("asset disclosure missing");
+  if (route.verifier.model.trim() === "") blockedReasons.push("verifier model missing");
+  if (route.verifier.threshold < 2 || route.verifier.participantCount < 2) {
+    blockedReasons.push("verifier set must not be 1-of-1");
+  }
+  if (route.verifier.threshold > route.verifier.participantCount) {
+    blockedReasons.push("verifier threshold exceeds participant count");
+  }
+  if (!decimalStringIsPositive(route.drainCapAtomic)) {
+    blockedReasons.push("per-asset drain cap missing or zero");
+  }
+  if (route.finalityBlocks === 0) blockedReasons.push("route finality delay missing");
+  if (route.cooldownSeconds === 0) blockedReasons.push("route cooldown missing");
+  if (route.adminControl !== "none" && route.adminControl !== "consensusOnly") {
+    blockedReasons.push("Mono-side admin control is not consensus-only");
+  }
+  if (route.circuitBreaker === "paused") {
+    blockedReasons.push("route circuit breaker is paused");
+  } else if (route.circuitBreaker === "disabled" || route.circuitBreaker === "unknown") {
+    blockedReasons.push("route circuit breaker missing");
+  }
+  if (!decimalStringIsPositive(route.insuranceAtomic)) {
+    blockedReasons.push("slashable insurance pool missing or zero");
+  }
+  if (route.lastIncidentDate != null) {
+    warnings.push("route reports a prior bridge incident");
+  }
+
+  if (blockedReasons.length > 0) {
+    return {
+      routeId: route.routeId,
+      accepted: false,
+      score: 0,
+      riskTier: "blocked",
+      blockedReasons,
+      warnings,
+    };
+  }
+
+  let score = 100;
+  if (route.verifier.threshold * 3 <= route.verifier.participantCount) {
+    score -= 10;
+    warnings.push("verifier threshold is below one-third-plus quorum");
+  }
+  if (route.cooldownSeconds < 3_600) {
+    score -= 10;
+    warnings.push("cooldown is under one hour");
+  }
+  if (route.finalityBlocks < 2) {
+    score -= 5;
+    warnings.push("finality delay is under two blocks");
+  }
+
+  return {
+    routeId: route.routeId,
+    accepted: true,
+    score,
+    riskTier: score >= 90 ? "low" : score >= 75 ? "medium" : "high",
+    blockedReasons,
+    warnings,
+  };
+}
+
+function assessBridgeRouteWithSdkFallback(route: BridgeRouteDisclosure): BridgeRouteAssessment {
+  return typeof sdkBridgeHelpers.assessBridgeRoute === "function"
+    ? sdkBridgeHelpers.assessBridgeRoute(route)
+    : fallbackAssessBridgeRoute(route);
+}
+
+function rankBridgeRoutesWithSdkFallback(routes: readonly BridgeRouteDisclosure[]) {
+  if (typeof sdkBridgeHelpers.rankBridgeRoutes === "function") {
+    return sdkBridgeHelpers.rankBridgeRoutes(routes);
+  }
+  return routes
+    .map((route) => ({ route, assessment: assessBridgeRouteWithSdkFallback(route) }))
+    .sort((left, right) => {
+      if (left.assessment.accepted !== right.assessment.accepted) {
+        return left.assessment.accepted ? -1 : 1;
+      }
+      if (left.assessment.score !== right.assessment.score) {
+        return right.assessment.score - left.assessment.score;
+      }
+      if (left.route.cooldownSeconds !== right.route.cooldownSeconds) {
+        return left.route.cooldownSeconds - right.route.cooldownSeconds;
+      }
+      if (left.route.finalityBlocks !== right.route.finalityBlocks) {
+        return left.route.finalityBlocks - right.route.finalityBlocks;
+      }
+      return left.assessment.routeId.localeCompare(right.assessment.routeId);
+    });
+}
+
+export function assessBridgeTrustDisclosures(
+  sources: readonly BridgeRouteDisclosureSource[],
+): BridgeTrustDisclosureRow[] {
+  const rows: BridgeTrustDisclosureRow[] = [];
+  const seen = new Set<string>();
+
+  for (const source of sources) {
+    const route = normalizeBridgeRouteDisclosure(source.value);
+    if (!route) continue;
+    const row = {
+      route,
+      assessment: assessBridgeRouteWithSdkFallback(route),
+      source: source.source,
+    };
+    const key = bridgeRouteDisclosureKey(row.route);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(row);
+  }
+
+  const sourceByKey = new Map(rows.map((row) => [bridgeRouteDisclosureKey(row.route), row.source]));
+  return rankBridgeRoutesWithSdkFallback(rows.map((row) => row.route)).map(({ route, assessment }) => ({
+    route,
+    assessment,
+    source: sourceByKey.get(bridgeRouteDisclosureKey(route)) ?? "upstream",
+  }));
+}
+
+export function bridgeTrustDisclosuresFromAddressData(
+  profile: unknown,
+  tokenBalances: readonly unknown[] = [],
+): BridgeTrustDisclosureRow[] {
+  const sources: BridgeRouteDisclosureSource[] = [];
+  sources.push(...bridgeDisclosureValues(profile, "addressProfile"));
+
+  const profileRow = unknownRecord(profile);
+  const profileBalances = Array.isArray(profileRow?.tokenBalances) ? profileRow.tokenBalances : [];
+  [...profileBalances, ...tokenBalances].forEach((balance, index) => {
+    const tokenId = readStringField(balance, ["tokenId", "token_id"]);
+    sources.push(...bridgeDisclosureValues(balance, tokenId ? `tokenBalance:${tokenId}` : `tokenBalance:${index}`));
+  });
+
+  return assessBridgeTrustDisclosures(sources);
 }
 
 export function useRichList(tokenId: string | undefined, limit = 30) {
