@@ -39,6 +39,7 @@ import {
   fetchMrcAccount,
   fetchMrcHoldersForTokenBalances,
   fetchNativeMarketEvents,
+  fetchNativeMarketState,
   fetchTxNativeReceipt,
   fetchMrcMetadataForTokenBalances,
   mergeBridgeTrustDisclosures,
@@ -56,6 +57,7 @@ import {
   normalizeRedemptionQueueResponse,
   nativeReceiptEventRows,
   nativeMarketEventRows,
+  nativeMarketStateRows,
   nativeReceiptMarketEventRows,
   queryClient,
   txFeedToRows,
@@ -384,6 +386,103 @@ describe("live-SDK seam", () => {
 
     expect(apiSpy).toHaveBeenCalledWith("/native-market-events", filter);
     expect(rpcSpy).toHaveBeenCalledWith("lyth_nativeMarketEvents", [filter]);
+    expect(result).toBe(response);
+  });
+
+  it("reads native market current state from the dedicated API path", async () => {
+    const marketId = `0x${"88".repeat(32)}`;
+    const response = {
+      schemaVersion: 1,
+      filters: { primaryId: marketId },
+      spotMarkets: [{
+        market_id: marketId,
+        base_asset: `0x${"01".repeat(32)}`,
+        quote_asset: `0x${"02".repeat(32)}`,
+        status: "open",
+        registered_at_block: 120,
+      }],
+      spotOrders: [{
+        order_id: `0x${"89".repeat(32)}`,
+        market_id: marketId,
+        maker: "monoc1maker",
+        side: "buy",
+        price_lythoshi: "900",
+        remaining_amount: "12",
+        status: "open",
+      }],
+      nftListings: [{
+        listing_id: `0x${"90".repeat(32)}`,
+        collection_id: `0x${"91".repeat(32)}`,
+        token_id: "7",
+        seller: "monoc1seller",
+        price_lythoshi: "1000",
+      }],
+      collectionRoyalties: [{
+        collection_id: `0x${"91".repeat(32)}`,
+        royalty_recipient: "monoc1artist",
+        royalty_bps: 250,
+      }],
+      source: { indexerProvider: "native_market_state" },
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "get")
+      .mockResolvedValue(apiEnvelope(response));
+    const rpcSpy = vi.spyOn(RpcClient.prototype, "call");
+
+    const result = await fetchNativeMarketState({ primaryId: marketId });
+    const rows = nativeMarketStateRows(result);
+
+    expect(apiSpy).toHaveBeenCalledWith("/native-market-state", { primaryId: marketId });
+    expect(rpcSpy).not.toHaveBeenCalled();
+    expect(rows.spotMarkets[0]).toMatchObject({
+      kind: "spotMarket",
+      primaryId: marketId,
+      marketId,
+      quoteAsset: `0x${"02".repeat(32)}`,
+      status: "open",
+      blockHeight: 120,
+    });
+    expect(rows.spotOrders[0]).toMatchObject({
+      kind: "spotOrder",
+      marketId,
+      account: "monoc1maker",
+      side: "buy",
+      price: "900",
+      amount: "12",
+    });
+    expect(rows.nftListings[0]).toMatchObject({
+      kind: "nftListing",
+      account: "monoc1seller",
+      tokenId: "7",
+    });
+    expect(rows.collectionRoyalties[0]).toMatchObject({
+      kind: "collectionRoyalty",
+      account: "monoc1artist",
+      amount: "250",
+    });
+  });
+
+  it("falls back to lyth_nativeMarketState when the dedicated state API path is unavailable", async () => {
+    const response = {
+      schemaVersion: 1,
+      filters: {},
+      spotMarkets: [],
+      spotOrders: [],
+      nftListings: [],
+      collectionRoyalties: [],
+      source: { indexerProvider: "native_market_state" },
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "get")
+      .mockRejectedValue(new Error("api unavailable"));
+    const rpcSpy = vi
+      .spyOn(RpcClient.prototype, "call")
+      .mockResolvedValue(response);
+
+    const result = await fetchNativeMarketState();
+
+    expect(apiSpy).toHaveBeenCalledWith("/native-market-state", {});
+    expect(rpcSpy).toHaveBeenCalledWith("lyth_nativeMarketState", [{}]);
     expect(result).toBe(response);
   });
 

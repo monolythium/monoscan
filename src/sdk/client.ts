@@ -289,6 +289,8 @@ export const QK = {
       primaryId ?? "all",
       eventName ?? "all",
     ] as const,
+  nativeMarketState: (primaryId: string | null = null) =>
+    ["mono", "markets", "native-state", primaryId ?? "all"] as const,
   dagRecent: () => ["mono", "dag", "recent"] as const,
   verticesAtRound: (round: number | string) => ["mono", "dag", "vertices", round] as const,
   dagParents: (round: number | string) => ["mono", "dag", "parents", round] as const,
