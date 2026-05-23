@@ -50,6 +50,12 @@ export function getLythTokenId(): string {
   return configured && HASH32_RE.test(configured) ? configured : DEFAULT_LYTH_TOKEN_ID;
 }
 
+export function getNativeMarketForwarderAddress(): string | null {
+  const configured = import.meta.env.VITE_MONOSCAN_MRV_NATIVE_MARKET_FORWARDER as string | undefined;
+  const trimmed = configured?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
 let _marketIds: Record<string, string> | null = null;
 
 function parseMarketIds(): Record<string, string> {

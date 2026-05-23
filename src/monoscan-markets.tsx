@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import {
-  buildPlaceSpotLimitOrderPlan,
+  buildNativeSpotLimitOrderForwarderInput,
   type SpotLimitOrderSide,
 } from "@monolythium/core-sdk";
 import { MARKETS } from "./data/mock";
@@ -25,7 +25,7 @@ import {
   useNativeMarketEvents,
   useNativeMarketState,
 } from "./data/hooks";
-import { getMarketIdForSymbol } from "./sdk/client";
+import { getMarketIdForSymbol, getNativeMarketForwarderAddress } from "./sdk/client";
 
 /* ----- formatters ----- */
 const mkFmt = (n: any, dp?: any) => {
@@ -52,6 +52,8 @@ const _positiveIntegerText = (value: unknown, fallback: string): string => {
   if (typeof value === "bigint" && value > 0n) return value.toString(10);
   return fallback;
 };
+const NATIVE_MARKET_FORWARDER_MAX_CYCLES = "22000";
+const NATIVE_MARKET_MRV_EXECUTION_UNIT_LIMIT_HEX = "0x200000";
 const _cumLevels = (rows: Array<{ price: string; size: string }>) => {
   let total = 0;
   return rows.map((row) => {
@@ -66,42 +68,65 @@ export interface MarketOrderWalletRequestArgs {
   marketId: string | null | undefined;
   baseTokenId: string | null | undefined;
   quoteTokenId: string | null | undefined;
+  ownerAddress: string | null | undefined;
+  orderNonce: string | number | bigint;
+  forwarderContractAddress: string | null | undefined;
   side: SpotLimitOrderSide;
   price: string;
   quantity: string;
   expiryBlock?: string | number | bigint;
+  maxCycles?: string | number | bigint;
+  executionUnitLimitHex?: string;
 }
 
 export interface MarketOrderWalletRequest {
-  method: "eth_sendTransaction";
+  method: "monolythium_submitMrvNativeCall";
   params: [{
-    to: string;
-    value: "0x0";
-    data: string;
-    mempoolClass: number;
+    contractAddress: string;
+    input: string;
+    executionUnitLimitHex: string;
+    valueWeiHex: "0x0";
   }];
 }
 
 export function buildMarketOrderWalletRequest(args: MarketOrderWalletRequestArgs): MarketOrderWalletRequest {
-  if (!args.marketId || !args.baseTokenId || !args.quoteTokenId) {
-    throw new Error("Live CLOB market metadata is required before placing an order.");
+  if (!args.marketId) {
+    throw new Error("Live native market id is required before placing an order.");
   }
-  const plan = buildPlaceSpotLimitOrderPlan({
+  const owner = args.ownerAddress?.trim();
+  if (!owner) {
+    throw new Error("Wallet account is required before placing an order.");
+  }
+  const forwarder = args.forwarderContractAddress?.trim();
+  if (!forwarder) {
+    throw new Error("MRV native market forwarder address is not configured.");
+  }
+  const forwarderInput = buildNativeSpotLimitOrderForwarderInput({
     marketId: args.marketId,
-    baseTokenId: args.baseTokenId,
-    quoteTokenId: args.quoteTokenId,
+    owner,
+    nonce: args.orderNonce,
     side: args.side,
     price: args.price.trim(),
     quantity: args.quantity.trim(),
-    expiryBlock: args.expiryBlock ?? 0,
-  });
+    expiresAtBlock: args.expiryBlock ?? 0,
+  }, args.maxCycles ?? NATIVE_MARKET_FORWARDER_MAX_CYCLES);
   return {
-    method: plan.method,
+    method: "monolythium_submitMrvNativeCall",
     params: [{
-      ...plan.params[0],
-      mempoolClass: plan.mempoolClass,
+      contractAddress: forwarder,
+      input: forwarderInput.input,
+      executionUnitLimitHex:
+        args.executionUnitLimitHex ?? NATIVE_MARKET_MRV_EXECUTION_UNIT_LIMIT_HEX,
+      valueWeiHex: "0x0",
     }],
   };
+}
+
+function _walletAccount(result: unknown): string {
+  if (Array.isArray(result) && typeof result[0] === "string" && result[0].length > 0) {
+    return result[0];
+  }
+  throw new Error("Monolythium wallet did not return an account.");
 }
 
 function _walletTxHash(result: unknown): string | null {
@@ -557,6 +582,7 @@ const MarketPage = ({ sym, go }: any) => {
   const [orderType, setOrderType] = useState<"swap" | "limit" | "market">("limit");
   const [orderPrice, setOrderPrice] = useState("1");
   const [orderQuantity, setOrderQuantity] = useState("1");
+  const [orderNonce, setOrderNonce] = useState("0");
   const [orderExpiryBlock, setOrderExpiryBlock] = useState("0");
   const [orderMarketSeed, setOrderMarketSeed] = useState<string | null>(null);
   const [orderSubmit, setOrderSubmit] = useState<{
@@ -581,6 +607,7 @@ const MarketPage = ({ sym, go }: any) => {
   const takerFeeBps = liveMarket?.takerFeeBps ?? 5;
   const orderBaseTokenId = liveMarket?.baseToken ?? null;
   const orderQuoteTokenId = liveMarket?.quoteToken ?? null;
+  const nativeMarketForwarderAddress = getNativeMarketForwarderAddress();
   const suggestedOrderPrice = _positiveIntegerText(
     orderSide === "buy" ? liveMarket?.bestBidPrice : liveMarket?.bestAskPrice,
     _positiveIntegerText(liveMarket?.lastTradePrice, _positiveIntegerText(liveMarket?.tickSize, "1")),
@@ -591,6 +618,7 @@ const MarketPage = ({ sym, go }: any) => {
     if (!marketId || !liveMarket || orderMarketSeed === marketId) return;
     setOrderPrice(suggestedOrderPrice);
     setOrderQuantity(suggestedOrderQuantity);
+    setOrderNonce("0");
     setOrderExpiryBlock("0");
     setOrderMarketSeed(marketId);
     setOrderSubmit({ state: "idle" });
@@ -600,27 +628,31 @@ const MarketPage = ({ sym, go }: any) => {
     && orderSubmit.state !== "submitting"
     && orderPrice.trim().length > 0
     && orderQuantity.trim().length > 0
-    && Boolean(marketId && orderBaseTokenId && orderQuoteTokenId);
+    && orderNonce.trim().length > 0
+    && Boolean(marketId && nativeMarketForwarderAddress);
   const submitMarketOrder = async () => {
     try {
       if (orderType !== "limit") {
-        throw new Error("Only limit orders are wired for native CLOB submission.");
+        throw new Error("Only limit orders are wired for native market submission.");
       }
       const provider = typeof window !== "undefined" ? window.monolythium : undefined;
       if (!provider?.request) {
         throw new Error("Monolythium wallet provider not detected.");
       }
       setOrderSubmit({ state: "submitting", message: "awaiting wallet" });
+      const accounts = await provider.request({ method: "eth_requestAccounts", params: [] });
       const request = buildMarketOrderWalletRequest({
         marketId,
         baseTokenId: orderBaseTokenId,
         quoteTokenId: orderQuoteTokenId,
+        ownerAddress: _walletAccount(accounts),
+        orderNonce: orderNonce.trim() || "0",
+        forwarderContractAddress: nativeMarketForwarderAddress,
         side: orderSide,
         price: orderPrice,
         quantity: orderQuantity,
         expiryBlock: orderExpiryBlock.trim() || "0",
       });
-      await provider.request({ method: "eth_requestAccounts", params: [] });
       const result = await provider.request(request);
       const txHash = _walletTxHash(result);
       setOrderSubmit({
@@ -909,6 +941,17 @@ const MarketPage = ({ sym, go }: any) => {
           </div>
 
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 10px",background:"rgba(255,255,255,0.025)",borderRadius:8,border:"1px solid var(--fg-700)"}}>
+            <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Order nonce</span>
+            <input
+              value={orderNonce}
+              onChange={(event)=>setOrderNonce(event.currentTarget.value)}
+              inputMode="numeric"
+              className="mono num"
+              style={{fontSize:12,color:"var(--fg-200)",textAlign:"right",width:120}}
+            />
+          </div>
+
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 10px",background:"rgba(255,255,255,0.025)",borderRadius:8,border:"1px solid var(--fg-700)"}}>
             <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Expiry block</span>
             <input
               value={orderExpiryBlock}
@@ -928,8 +971,10 @@ const MarketPage = ({ sym, go }: any) => {
               ? "Submitting"
               : orderType !== "limit"
                 ? "Limit only"
-                : !marketId || !orderBaseTokenId || !orderQuoteTokenId
+                : !marketId
                   ? "Live market required"
+                  : !nativeMarketForwarderAddress
+                    ? "Forwarder required"
                   : `Place ${orderSide} limit`}
           </button>
 
