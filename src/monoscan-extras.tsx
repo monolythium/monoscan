@@ -139,6 +139,8 @@ function tokenBalanceStandardLabel(standard: string | null | undefined): string 
       return "MRC-721";
     case "mrc1155":
       return "MRC-1155";
+    case "mrc4626":
+      return "MRC-4626";
     default:
       return "Indexed";
   }

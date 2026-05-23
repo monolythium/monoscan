@@ -777,6 +777,42 @@ describe("MRC token-balance metadata enrichment", () => {
     expect(calls).toEqual([["lyth_mrcMetadata", [assetId]]]);
     expect(metadata["balance-a"].metadata?.symbol).toBe("NAT");
   });
+
+  it("treats MRC-4626 vault share balances as asset-scoped metadata rows", async () => {
+    const vaultId = `0x${"46".repeat(32)}`;
+    const calls: Array<[string, string | null | undefined]> = [];
+    const rpc = {
+      async lythMrcMetadata(asset: string, token?: string | null) {
+        calls.push([asset, token]);
+        return {
+          schemaVersion: 1,
+          assetId: asset,
+          tokenId: token ?? null,
+          metadata: {
+            standard: "mrc4626",
+            assetId: asset,
+            tokenId: token ?? null,
+            name: "Vault Shares",
+            symbol: "vLYTH",
+            decimals: 8,
+            uri: null,
+            updatedAtBlock: 146,
+          },
+        };
+      },
+    };
+
+    const rows = [
+      { tokenId: vaultId, mrc: { standard: "mrc4626", assetId: vaultId } },
+    ];
+
+    expect(mrcMetadataBalanceQueryKeys(rows)).toEqual([`${vaultId}::${vaultId}`]);
+    const metadata = await fetchMrcMetadataForTokenBalances(rows, rpc);
+
+    expect(calls).toEqual([[vaultId, null]]);
+    expect(metadata[vaultId].tokenId).toBeNull();
+    expect(metadata[vaultId].metadata?.standard).toBe("mrc4626");
+  });
 });
 
 describe("MRC token-balance holder enrichment", () => {
@@ -834,6 +870,53 @@ describe("MRC token-balance holder enrichment", () => {
     expect(holders["balance-a"].holders[0].address).toBe("0x1111111111111111111111111111111111111111");
   });
 
+  it("maps MRC-4626 vault share balances through the asset-scoped REST holder route", async () => {
+    const vaultId = `0x${"46".repeat(32)}`;
+    const calls: Array<[string, unknown]> = [];
+    const api = {
+      async get<T>(path: string, query?: unknown): Promise<T> {
+        calls.push([path, query]);
+        return {
+          schemaVersion: 1,
+          standard: "mrc4626",
+          assetId: vaultId,
+          tokenId: null,
+          limit: 3,
+          holders: [{
+            rank: 1,
+            address: "0x2222222222222222222222222222222222222222",
+            balance: "100000000",
+            updatedAtBlock: 146,
+          }],
+        } as T;
+      },
+    };
+    const rpc = {
+      async call() {
+        throw new Error("RPC fallback should not run");
+      },
+    };
+
+    const rows = [
+      { tokenId: vaultId, mrc: { standard: "mrc4626", assetId: vaultId } },
+      { tokenId: "duplicate-vault-row", mrc: { standard: "mrc4626", assetId: vaultId } },
+      { tokenId: "collection", mrc: { standard: "mrc721", assetId } },
+    ];
+
+    expect(mrcHoldersBalanceQueryKeys(rows)).toEqual([
+      `mrc4626:${vaultId}:null:${vaultId}`,
+    ]);
+
+    const holders = await fetchMrcHoldersForTokenBalances(rows, { api, rpc }, 3);
+
+    expect(calls).toEqual([
+      [`/mrc/mrc4626/${vaultId}/holders`, { limit: 3 }],
+    ]);
+    expect(Object.keys(holders)).toEqual([vaultId]);
+    expect(holders[vaultId].tokenId).toBeNull();
+    expect(holders[vaultId].holders[0].balance).toBe("100000000");
+  });
+
   it("falls back to lyth_mrcHolders JSON-RPC when REST is unavailable", async () => {
     const calls: Array<[string, unknown]> = [];
     const api = {
@@ -861,6 +944,36 @@ describe("MRC token-balance holder enrichment", () => {
 
     expect(calls).toEqual([["lyth_mrcHolders", ["mrc721", assetId, tokenId, 6]]]);
     expect(holders["balance-a"].standard).toBe("mrc721");
+  });
+
+  it("falls back to lyth_mrcHolders JSON-RPC with null token id for MRC-4626", async () => {
+    const vaultId = `0x${"46".repeat(32)}`;
+    const calls: Array<[string, unknown]> = [];
+    const api = {
+      async get() {
+        throw new Error("not found");
+      },
+    };
+    const rpc = {
+      async call<T>(method: string, params?: unknown): Promise<T> {
+        calls.push([method, params]);
+        return {
+          schemaVersion: 1,
+          standard: "mrc4626",
+          assetId: vaultId,
+          tokenId: null,
+          limit: 6,
+          holders: [],
+        } as T;
+      },
+    };
+
+    const holders = await fetchMrcHoldersForTokenBalances([
+      { tokenId: vaultId, mrc: { standard: "mrc4626", assetId: vaultId } },
+    ], { api, rpc });
+
+    expect(calls).toEqual([["lyth_mrcHolders", ["mrc4626", vaultId, null, 6]]]);
+    expect(holders[vaultId].tokenId).toBeNull();
   });
 
   it("ignores non-native, collection-scope, and failed holder lookups", async () => {
@@ -1255,10 +1368,11 @@ describe("API execution-unit transformations", () => {
             block_height: 100,
             tx_index: 0,
             sequence: 0,
-            family: "agent",
-            event_name: "agent.escrow.created",
+            family: "mrc",
+            event_name: "mrc4626.deposit",
             payload_hash: `0x${"44".repeat(32)}`,
             amount_lythoshi: "440000000000",
+            share_amount: "120000000",
             contract_address: "monoc1escrowcontract",
           }),
         },
@@ -1276,11 +1390,12 @@ describe("API execution-unit transformations", () => {
         logIndex: 0,
         address: "monoc1nativeeventemitter",
         eventTopic: `0x${"11".repeat(32)}`,
-        family: "agent",
-        eventName: "agent.escrow.created",
+        family: "mrc",
+        eventName: "mrc4626.deposit",
         payloadHash: `0x${"44".repeat(32)}`,
         decodedFields: [
           ["amount_lythoshi", "440000000000"],
+          ["share_amount", "120000000"],
           ["contract_address", "monoc1escrowcontract"],
         ],
       },
