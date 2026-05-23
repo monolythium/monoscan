@@ -148,6 +148,7 @@ describe("NativeAgentStateCard", () => {
       primaryId: `0x${"aa".repeat(32)}`,
       account: "mono1agentowner",
       counterparty: "mono1agentcontroller",
+      nonce: "6",
       assetId: `0x${"cc".repeat(32)}`,
       status: "enabled",
       amount: "500",
@@ -159,6 +160,7 @@ describe("NativeAgentStateCard", () => {
       primaryId: `0x${"bb".repeat(32)}`,
       account: "mono1agentprovider",
       counterparty: null,
+      nonce: "4",
       assetId: null,
       status: "active",
       amount: null,
@@ -178,6 +180,8 @@ describe("NativeAgentStateCard", () => {
     expect(html).toContain("Service");
     expect(html).toContain("mono1agentowner");
     expect(html).toContain("mono1agentprovider");
+    expect(html).toContain("6");
+    expect(html).toContain("4");
     expect(html).not.toContain("No native agent state rows");
   });
 

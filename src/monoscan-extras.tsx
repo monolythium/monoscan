@@ -354,6 +354,7 @@ const NativeAgentStateCard = ({
               <th>ID</th>
               <th>Account</th>
               <th>Counterparty</th>
+              <th style={{textAlign:"right"}}>Nonce</th>
               <th>Status</th>
               <th style={{textAlign:"right"}}>Amount</th>
               <th style={{textAlign:"right"}}>Updated</th>
@@ -366,6 +367,7 @@ const NativeAgentStateCard = ({
                 <td className="mono" title={row.primaryId ?? ""}>{row.primaryId ? _short(row.primaryId, 10) : "—"}</td>
                 <td className="mono" title={row.account ?? ""}>{row.account ? _short(row.account, 12) : "—"}</td>
                 <td className="mono" title={row.counterparty ?? ""}>{row.counterparty ? _short(row.counterparty, 12) : "—"}</td>
+                <td className="mono num" style={{textAlign:"right"}}>{row.nonce ?? "—"}</td>
                 <td className="mono">{row.status ?? "—"}</td>
                 <td className="mono num" style={{textAlign:"right"}}>{row.amount ?? "—"}</td>
                 <td className="mono num" style={{textAlign:"right"}}>
