@@ -31,6 +31,7 @@ import {
   useLatestCheckpoint,
   useLatestTransactions,
   useMetricsRange,
+  useMrcMetadataForTokenBalances,
   useNetworkStatus,
   useOperatorCapabilities,
   usePeerSummary,
@@ -45,6 +46,7 @@ import {
   useVerticesAtRound,
   useWalletDelegations,
   useWalletDelegationHistory,
+  type MrcMetadataResponse,
   nativeReceiptEventRows,
 } from "./data/hooks";
 import { getLythTokenId } from "./sdk/client";
@@ -138,6 +140,29 @@ function tokenBalanceSecondary(row: IndexedTokenBalanceRow): string | null {
   const parts = [`balance key ${_short(row.tokenId, 8)}`];
   if (mrc.tokenId) parts.unshift(`token ${_short(mrc.tokenId, 8)}`);
   return parts.join(" · ");
+}
+function tokenBalancePrimaryWithMetadata(row: IndexedTokenBalanceRow, metadata: MrcMetadataResponse | undefined): string {
+  const meta = metadata?.metadata ?? null;
+  if (!meta) return tokenBalancePrimary(row);
+  const name = meta.name?.trim();
+  const symbol = meta.symbol?.trim();
+  const label = name || symbol;
+  if (!label) return tokenBalancePrimary(row);
+  return symbol && name && symbol !== name
+    ? `${name} (${symbol})`
+    : label;
+}
+function tokenBalanceMetadataLines(row: IndexedTokenBalanceRow, metadata: MrcMetadataResponse | undefined): string[] {
+  const fallback = tokenBalanceSecondary(row);
+  const meta = metadata?.metadata ?? null;
+  if (!meta) return fallback ? [fallback] : [];
+  const parts = [
+    tokenBalanceStandardLabel(meta.standard),
+    meta.decimals !== null ? `${meta.decimals} decimals` : null,
+    meta.uri,
+  ].filter((part): part is string => Boolean(part));
+  if (fallback) parts.push(fallback);
+  return parts;
 }
 function reputationScopeLabel(reputation: AgentReputationResponse): string {
   return reputation.categoryScope === "category"
@@ -743,6 +768,7 @@ const WalletPage = ({ addr, go }: any) => {
   const liveTokenBalances = (profile.data?.tokenBalances?.length
     ? profile.data.tokenBalances
     : (tokenBalances.data ?? [])) as IndexedTokenBalanceRow[];
+  const tokenBalanceMetadata = useMrcMetadataForTokenBalances(liveTokenBalances);
   const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
   const liveAgentReputation = agentReputation.data ?? null;
   const profileActivityKind = profile.data?.activity?.kind ?? null;
@@ -872,14 +898,15 @@ const WalletPage = ({ addr, go }: any) => {
                 <thead><tr><th>Asset</th><th style={{textAlign:"right"}}>Balance</th><th style={{textAlign:"right"}}>Updated</th></tr></thead>
                 <tbody>
                   {liveTokenBalances.map((row: IndexedTokenBalanceRow)=>{
-                    const secondary = tokenBalanceSecondary(row);
+                    const metadata = tokenBalanceMetadata.data?.[row.tokenId];
+                    const metadataLines = tokenBalanceMetadataLines(row, metadata);
                     return (
                     <tr key={row.tokenId}>
                       <td className="mono" style={{fontSize:11}}>
-                        {tokenBalancePrimary(row)}
-                        {secondary && (
-                          <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>{secondary}</div>
-                        )}
+                        {tokenBalancePrimaryWithMetadata(row, metadata)}
+                        {metadataLines.map((line) => (
+                          <div key={line} style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>{line}</div>
+                        ))}
                       </td>
                       <td className="mono num" style={{textAlign:"right"}}>{String(row.balance)}</td>
                       <td className="mono num" style={{textAlign:"right"}}>{Number(row.updatedAtBlock).toLocaleString()}</td>
