@@ -129,13 +129,13 @@ type MrcTokenBalanceIdentity = {
   assetId?: string | null;
   tokenId?: string | null;
 };
-type IndexedTokenBalanceRow = {
+export type IndexedTokenBalanceRow = {
   tokenId: string;
   balance: string | number | bigint;
   updatedAtBlock: string | number | bigint;
   mrc?: MrcTokenBalanceIdentity | null;
 };
-function tokenBalanceStandardLabel(standard: string | null | undefined): string {
+export function tokenBalanceStandardLabel(standard: string | null | undefined): string {
   switch (standard) {
     case "mrc20":
       return "MRC-20";
@@ -144,7 +144,7 @@ function tokenBalanceStandardLabel(standard: string | null | undefined): string 
     case "mrc1155":
       return "MRC-1155";
     case "mrc4626":
-      return "MRC-4626";
+      return "MRC-4626 vault shares";
     default:
       return "Indexed";
   }
@@ -161,7 +161,7 @@ function tokenBalanceSecondary(row: IndexedTokenBalanceRow): string | null {
   if (mrc.tokenId) parts.unshift(`token ${_short(mrc.tokenId, 8)}`);
   return parts.join(" · ");
 }
-function tokenBalancePrimaryWithMetadata(row: IndexedTokenBalanceRow, metadata: MrcMetadataResponse | undefined): string {
+export function tokenBalancePrimaryWithMetadata(row: IndexedTokenBalanceRow, metadata: MrcMetadataResponse | undefined): string {
   const meta = metadata?.metadata ?? null;
   if (!meta) return tokenBalancePrimary(row);
   const name = meta.name?.trim();
@@ -172,7 +172,7 @@ function tokenBalancePrimaryWithMetadata(row: IndexedTokenBalanceRow, metadata: 
     ? `${name} (${symbol})`
     : label;
 }
-function tokenBalanceMetadataLines(row: IndexedTokenBalanceRow, metadata: MrcMetadataResponse | undefined): string[] {
+export function tokenBalanceMetadataLines(row: IndexedTokenBalanceRow, metadata: MrcMetadataResponse | undefined): string[] {
   const fallback = tokenBalanceSecondary(row);
   const meta = metadata?.metadata ?? null;
   if (!meta) return fallback ? [fallback] : [];

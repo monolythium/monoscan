@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BridgeTrustDisclosuresCard, MrvNativeEvidenceCard, redemptionTicketStatusText } from "./monoscan-extras";
+import {
+  BridgeTrustDisclosuresCard,
+  MrvNativeEvidenceCard,
+  redemptionTicketStatusText,
+  tokenBalanceMetadataLines,
+  tokenBalancePrimaryWithMetadata,
+  tokenBalanceStandardLabel,
+  type IndexedTokenBalanceRow,
+} from "./monoscan-extras";
 import {
   bridgeTrustDisclosuresFromAddressData,
   MRV_NATIVE_RECEIPT_TX_TYPE,
@@ -11,6 +19,7 @@ import {
   NO_EVM_RECEIPT_PROOF_TYPE,
   mrvNativeTransactionEvidence,
   verifyNoEvmReceiptProofConsistency,
+  type MrcMetadataResponse,
   type NoEvmReceiptProofTranscript,
 } from "./data/hooks";
 
@@ -45,6 +54,50 @@ describe("redemptionTicketStatusText", () => {
     expect(redemptionTicketStatusText(true)).toBe("Cooldown complete · payout unavailable");
     expect(redemptionTicketStatusText(false)).toBe("Cooldown active");
     expect(redemptionTicketStatusText(null)).toBe("Cooldown state pending");
+  });
+});
+
+describe("token-balance MRC display labels", () => {
+  const vaultId = `0x${"46".repeat(32)}`;
+  const addressProfileVaultBalance: IndexedTokenBalanceRow = {
+    tokenId: vaultId,
+    balance: "700",
+    updatedAtBlock: 92,
+    mrc: {
+      standard: "mrc4626",
+      assetId: vaultId,
+      tokenId: null,
+    },
+  };
+
+  it("labels address-profile MRC-4626 balances as vault shares without metadata", () => {
+    const primary = tokenBalancePrimaryWithMetadata(addressProfileVaultBalance, undefined);
+
+    expect(tokenBalanceStandardLabel(addressProfileVaultBalance.mrc?.standard)).toBe("MRC-4626 vault shares");
+    expect(primary).toContain("MRC-4626 vault shares");
+    expect(primary).not.toContain("Indexed");
+    expect(primary).not.toContain("Unknown");
+  });
+
+  it("keeps the MRC-4626 vault-share standard visible when metadata is present", () => {
+    const metadata: MrcMetadataResponse = {
+      schemaVersion: 1,
+      assetId: vaultId,
+      tokenId: null,
+      metadata: {
+        standard: "mrc4626",
+        assetId: vaultId,
+        tokenId: null,
+        name: "Vault Shares",
+        symbol: "vLYTH",
+        decimals: 8,
+        uri: null,
+        updatedAtBlock: 146,
+      },
+    };
+
+    expect(tokenBalancePrimaryWithMetadata(addressProfileVaultBalance, metadata)).toBe("Vault Shares (vLYTH)");
+    expect(tokenBalanceMetadataLines(addressProfileVaultBalance, metadata)).toContain("MRC-4626 vault shares");
   });
 });
 
