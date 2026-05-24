@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { keccak256 } from "ethers/crypto";
 import type { ReactElement } from "react";
 import {
   AgentReputationCard,
@@ -23,7 +24,15 @@ import {
   MRV_NATIVE_RECEIPT_TX_TYPE,
   MRV_NATIVE_TX_EXTENSION_BODY_HEX,
   MRV_NATIVE_TX_EXTENSION_KIND,
+  NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM,
+  NO_EVM_BINARY_RECEIPT_LEAF_DOMAIN,
+  NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA,
+  NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM,
+  NO_EVM_COMPACT_RECEIPT_PROOF_TYPE,
   NO_EVM_RECEIPTS_ROOT_ALGORITHM,
+  NO_EVM_RECEIPT_CODEC,
+  NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+  NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
   NO_EVM_RECEIPT_PROOF_SCHEMA,
   NO_EVM_RECEIPT_PROOF_TYPE,
   mrvNativeTransactionEvidence,
@@ -31,6 +40,7 @@ import {
   type MrcMetadataResponse,
   type NativeAgentStateDisplayRows,
   type NativeAgentStateDisplayRow,
+  type NoEvmCompactReceiptProofTranscript,
   type NoEvmReceiptProofTranscript,
 } from "./data/hooks";
 
@@ -84,6 +94,89 @@ function noEvmReceiptProofTranscript(
     ...transcript,
     receiptsRoot: overrides.receiptsRoot ?? consistency.computedReceiptsRoot,
     targetReceiptHash: overrides.targetReceiptHash ?? consistency.computedTargetReceiptHash ?? transcript.targetReceiptHash,
+  };
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const body = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(body.length / 2);
+  for (let index = 0; index < body.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(body.slice(index, index + 2), 16);
+  }
+  return bytes;
+}
+
+function testU32Le(value: number): Uint8Array {
+  const bytes = new Uint8Array(4);
+  bytes[0] = value & 0xff;
+  bytes[1] = (value >>> 8) & 0xff;
+  bytes[2] = (value >>> 16) & 0xff;
+  bytes[3] = (value >>> 24) & 0xff;
+  return bytes;
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    combined.set(part, offset);
+    offset += part.length;
+  }
+  return combined;
+}
+
+function compactReceiptLeafHash(receipt: Uint8Array, txIndex: number): string {
+  return keccak256(concatBytes([
+    new TextEncoder().encode(NO_EVM_BINARY_RECEIPT_LEAF_DOMAIN),
+    testU32Le(txIndex),
+    testU32Le(receipt.length),
+    receipt,
+  ]));
+}
+
+function compactNoEvmReceiptProofTranscript(
+  overrides: Partial<NoEvmCompactReceiptProofTranscript> = {},
+): NoEvmCompactReceiptProofTranscript {
+  const targetReceiptBytes = overrides.targetReceiptBytes ?? "0x04050607";
+  const targetReceipt = hexToBytes(targetReceiptBytes);
+  const txIndex = overrides.txIndex ?? 0;
+  const receiptsRoot = overrides.receiptsRoot ?? compactReceiptLeafHash(targetReceipt, txIndex);
+  const targetReceiptHash = overrides.targetReceiptHash ?? keccak256(targetReceipt);
+  return {
+    schema: NO_EVM_RECEIPT_PROOF_SCHEMA,
+    proofKind: "compactInclusion",
+    proofType: NO_EVM_COMPACT_RECEIPT_PROOF_TYPE,
+    historySource: "indexerReceiptArchive",
+    rootAlgorithm: NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM,
+    receiptCodec: NO_EVM_RECEIPT_CODEC,
+    blockHash: `0x${"cd".repeat(32)}`,
+    txHash: `0x${"ab".repeat(32)}`,
+    receiptsRoot,
+    targetReceiptHash,
+    blockHeight: 321,
+    txIndex,
+    receiptCount: 1,
+    compactInclusionProof: {
+      schema: NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA,
+      treeAlgorithm: NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM,
+      root: receiptsRoot,
+      leafHash: receiptsRoot,
+      siblingHashes: [],
+      pathSides: [],
+    },
+    archiveProof: {
+      schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+      source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+      manifestHash: `0x${"44".repeat(32)}`,
+      contentHash: `0x${"55".repeat(32)}`,
+      signatures: [],
+    },
+    targetReceiptBytes,
+    missingProofMaterial: [
+      "signed archive or snapshot manifest binding receipt bytes to blockHash and receiptsRoot",
+    ],
+    ...overrides,
   };
 }
 
@@ -460,6 +553,69 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain(`target ${noEvmProof.targetReceiptHash.slice(0, 18)}`);
     expect(html).toContain("Receipt transcript");
     expect(html).toContain("2 receipt blobs · receiptCount 2 · txIndex 1");
+    expect(html).not.toContain("Finality proof");
+  });
+
+  it("renders compact indexer archive receipt proof material without implying validator finality", () => {
+    const noEvmProof = compactNoEvmReceiptProofTranscript();
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"ab".repeat(32)}`,
+      blockNumber: 321n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      txHash: `0x${"ab".repeat(32)}`,
+      blockHash: `0x${"cd".repeat(32)}`,
+      blockHeight: 321,
+      txIndex: 0,
+      schema: "riscv.receipt.v1",
+      txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+      artifactHash: `0x${"ef".repeat(32)}`,
+      receiptCommitment: `0x${"19".repeat(32)}`,
+      noEvmProof,
+      counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
+      fee: {
+        total_lythoshi: "12",
+        total_lyth: "0.00000012",
+        cycles_used: 12,
+        base_price_per_cycle_lythoshi: "1",
+        state_io_units: 1,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "0",
+      },
+      reverted: false,
+      nativeDeltaCount: 1,
+      eventCount: 2,
+      events: [],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    } as any);
+
+    const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
+
+    expect(html).toContain("compact inclusion verified");
+    expect(html).toContain("verified · compact receipt inclusion · canonicalReceiptInclusion · indexer receipt archive · block 321 · tx 1/1 · compact Merkle path 0 sibling hashes");
+    expect(html).toContain("Proof material");
+    expect(html).toContain("indexer receipt archive · compact inclusion proof");
+    expect(html).toContain("Compact proof check");
+    expect(html).toContain("verified · compact path verified");
+    expect(html).toContain("Compact inclusion");
+    expect(html).toContain(`root ${noEvmProof.receiptsRoot.slice(0, 18)}`);
+    expect(html).toContain("Archive binding");
+    expect(html).toContain("indexerReceiptArchiveContentDigest");
+    expect(html).toContain("manifest 0x4444444444444444");
+    expect(html).toContain("content 0x5555555555555555");
+    expect(html).toContain("Archive signatures");
+    expect(html).toContain("absent · validator finality not asserted");
+    expect(html).not.toContain("live block cache");
     expect(html).not.toContain("Finality proof");
   });
 

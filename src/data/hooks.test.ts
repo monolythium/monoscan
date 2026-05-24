@@ -17,6 +17,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { keccak256 } from "ethers/crypto";
 import {
   ApiClient,
   RpcClient,
@@ -50,7 +51,15 @@ import {
   MRV_NATIVE_RECEIPT_TX_TYPE,
   MRV_NATIVE_TX_EXTENSION_BODY_HEX,
   MRV_NATIVE_TX_EXTENSION_KIND,
+  NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM,
+  NO_EVM_BINARY_RECEIPT_LEAF_DOMAIN,
+  NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA,
+  NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM,
+  NO_EVM_COMPACT_RECEIPT_PROOF_TYPE,
   NO_EVM_RECEIPTS_ROOT_ALGORITHM,
+  NO_EVM_RECEIPT_CODEC,
+  NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+  NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
   NO_EVM_RECEIPT_PROOF_SCHEMA,
   NO_EVM_RECEIPT_PROOF_TYPE,
   mrvNativeTransactionEvidence,
@@ -69,6 +78,7 @@ import {
   structuredNativeReceiptFee,
   txFeedToRows,
   verifyNoEvmReceiptProofConsistency,
+  type NoEvmCompactReceiptProofTranscript,
   type NoEvmReceiptProofTranscript,
 } from "./hooks";
 import { isWebSocketEnabled, resetRpcClient } from "../sdk/client";
@@ -81,7 +91,7 @@ afterEach(() => {
 });
 
 type NativeReceiptFixture = Omit<NativeReceiptResponse<unknown>, "noEvmProof"> & {
-  noEvmProof?: NoEvmReceiptProofTranscript | Record<string, unknown> | null;
+  noEvmProof?: NoEvmReceiptProofTranscript | NoEvmCompactReceiptProofTranscript | Record<string, unknown> | null;
   [key: string]: unknown;
 };
 
@@ -142,6 +152,89 @@ function noEvmReceiptProofTranscript(
     ...transcript,
     receiptsRoot: overrides.receiptsRoot ?? consistency.computedReceiptsRoot,
     targetReceiptHash: overrides.targetReceiptHash ?? consistency.computedTargetReceiptHash ?? transcript.targetReceiptHash,
+  };
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const body = hex.startsWith("0x") ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(body.length / 2);
+  for (let index = 0; index < body.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(body.slice(index, index + 2), 16);
+  }
+  return bytes;
+}
+
+function testU32Le(value: number): Uint8Array {
+  const bytes = new Uint8Array(4);
+  bytes[0] = value & 0xff;
+  bytes[1] = (value >>> 8) & 0xff;
+  bytes[2] = (value >>> 16) & 0xff;
+  bytes[3] = (value >>> 24) & 0xff;
+  return bytes;
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    combined.set(part, offset);
+    offset += part.length;
+  }
+  return combined;
+}
+
+function compactReceiptLeafHash(receipt: Uint8Array, txIndex: number): string {
+  return keccak256(concatBytes([
+    new TextEncoder().encode(NO_EVM_BINARY_RECEIPT_LEAF_DOMAIN),
+    testU32Le(txIndex),
+    testU32Le(receipt.length),
+    receipt,
+  ]));
+}
+
+function compactNoEvmReceiptProofTranscript(
+  overrides: Partial<NoEvmCompactReceiptProofTranscript> = {},
+): NoEvmCompactReceiptProofTranscript {
+  const targetReceiptBytes = overrides.targetReceiptBytes ?? "0x04050607";
+  const targetReceipt = hexToBytes(targetReceiptBytes);
+  const txIndex = overrides.txIndex ?? 0;
+  const receiptsRoot = overrides.receiptsRoot ?? compactReceiptLeafHash(targetReceipt, txIndex);
+  const targetReceiptHash = overrides.targetReceiptHash ?? keccak256(targetReceipt);
+  return {
+    schema: NO_EVM_RECEIPT_PROOF_SCHEMA,
+    proofKind: "compactInclusion",
+    proofType: NO_EVM_COMPACT_RECEIPT_PROOF_TYPE,
+    historySource: "indexerReceiptArchive",
+    rootAlgorithm: NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM,
+    receiptCodec: NO_EVM_RECEIPT_CODEC,
+    blockHash: `0x${"33".repeat(32)}`,
+    txHash: `0x${"22".repeat(32)}`,
+    receiptsRoot,
+    targetReceiptHash,
+    blockHeight: 100,
+    txIndex,
+    receiptCount: 1,
+    compactInclusionProof: {
+      schema: NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA,
+      treeAlgorithm: NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM,
+      root: receiptsRoot,
+      leafHash: receiptsRoot,
+      siblingHashes: [],
+      pathSides: [],
+    },
+    archiveProof: {
+      schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+      source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+      manifestHash: `0x${"44".repeat(32)}`,
+      contentHash: `0x${"55".repeat(32)}`,
+      signatures: [],
+    },
+    targetReceiptBytes,
+    missingProofMaterial: [
+      "signed archive or snapshot manifest binding receipt bytes to blockHash and receiptsRoot",
+    ],
+    ...overrides,
   };
 }
 
@@ -2466,7 +2559,7 @@ describe("API execution-unit transformations", () => {
       validMrvV1: true,
     });
     expect(evidence?.blockers).toContain(
-      "native-receipt.noEvmProof returned null; Monoscan treats the no-EVM receipt proof evidence as missing until a bounded receipts transcript is available.",
+      "native-receipt.noEvmProof returned null; Monoscan treats the no-EVM receipt proof evidence as missing until a bounded receipts transcript or compact receipt inclusion proof is available.",
     );
   });
 
@@ -2520,7 +2613,64 @@ describe("API execution-unit transformations", () => {
       validationErrors: [],
     });
     expect(evidence?.blockers).not.toContain(
-      "native-receipt.noEvmProof must return a bounded receipts transcript before Monoscan can render no-EVM receipt proof evidence.",
+      "native-receipt.noEvmProof must return a bounded receipts transcript or compact receipt inclusion proof before Monoscan can render no-EVM receipt proof evidence.",
+    );
+  });
+
+  it("accepts compact no-EVM receipt proofs sourced from the indexer receipt archive", () => {
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      txHash: `0x${"78".repeat(32)}`,
+      blockHash: `0x${"35".repeat(32)}`,
+      blockHeight: 123,
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"78".repeat(32)}`,
+      blockNumber: 123n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"78".repeat(32)}`,
+        blockHash: `0x${"35".repeat(32)}`,
+        blockHeight: 123,
+        txIndex: 0,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof,
+      }),
+    } as any);
+
+    expect(evidence).toMatchObject({
+      proofState: "present",
+      proofFieldSource: "native-receipt.noEvmProof",
+      proofFieldState: "present",
+    });
+    expect(evidence?.proof).toMatchObject({
+      source: "native-receipt.noEvmProof",
+      proofKind: "compactInclusion",
+      historySource: "indexerReceiptArchive",
+      materialLabel: "indexer receipt archive · compact inclusion proof",
+      summary: "canonicalReceiptInclusion · indexer receipt archive · block 123 · tx 1/1 · compact Merkle path 0 sibling hashes",
+      transcript: noEvmProof,
+      consistency: {
+        state: "verified",
+        proofKind: "compactInclusion",
+        historySource: "indexerReceiptArchive",
+        computedReceiptsRoot: noEvmProof.receiptsRoot,
+        computedTargetReceiptHash: noEvmProof.targetReceiptHash,
+        receiptCountMatches: null,
+        targetReceiptAvailable: true,
+        compactPathMatches: true,
+        mismatches: [],
+      },
+      validationErrors: [],
+    });
+    expect(evidence?.blockers).not.toContain(
+      "native-receipt.noEvmProof must return a bounded receipts transcript or compact receipt inclusion proof before Monoscan can render no-EVM receipt proof evidence.",
     );
   });
 
@@ -2624,7 +2774,7 @@ describe("API execution-unit transformations", () => {
     expect(evidence?.proof?.validationErrors).toContain("receiptTranscript[1] must be a 0x byte blob");
     expect(evidence?.proof?.validationErrors).toContain("txIndex must be less than receiptCount");
     expect(evidence?.blockers).toContain(
-      `native-receipt.noEvmProof returned an invalid bounded receipts transcript: receiptTranscript[1] must be a 0x byte blob; schema must be ${NO_EVM_RECEIPT_PROOF_SCHEMA}; txIndex must be less than receiptCount.`,
+      `native-receipt.noEvmProof returned an invalid bounded receipts transcript: schema must be ${NO_EVM_RECEIPT_PROOF_SCHEMA}; txIndex must be less than receiptCount; receiptTranscript[1] must be a 0x byte blob.`,
     );
   });
 
@@ -2654,7 +2804,7 @@ describe("API execution-unit transformations", () => {
       "GET /api/v1/transactions/{hash}/native-receipt or lyth_nativeReceipt(txHash) must return txType 0x41, artifactHash, counters, and events for MRV receipt evidence.",
     );
     expect(evidence?.blockers).toContain(
-      "native-receipt.noEvmProof must return a bounded receipts transcript before Monoscan can render no-EVM receipt proof evidence.",
+      "native-receipt.noEvmProof must return a bounded receipts transcript or compact receipt inclusion proof before Monoscan can render no-EVM receipt proof evidence.",
     );
   });
 
