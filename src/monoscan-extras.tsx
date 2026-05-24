@@ -68,9 +68,12 @@ import {
   type NativeAgentStateDisplayRow,
   type BridgeTrustDisclosureRow,
   type MrvNativeTransactionEvidence,
+  type NoEvmCompactReceiptProofTranscript,
+  type NoEvmReceiptProofTranscript,
   mrvNativeTransactionEvidence,
   nativeReceiptEventRows,
   nativeReceiptMarketEventRows,
+  noEvmReceiptProofMaterialLabel,
   structuredNativeReceiptFee,
 } from "./data/hooks";
 import { getLythTokenId } from "./sdk/client";
@@ -2333,6 +2336,16 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
   const extension = evidence.extension;
   const proofTranscript = evidence.proof?.transcript ?? null;
   const proofConsistency = evidence.proof?.consistency ?? null;
+  const proofKind = evidence.proof?.proofKind ?? proofConsistency?.proofKind ?? null;
+  const compactProofTranscript = proofKind === "compactInclusion" && proofTranscript
+    ? proofTranscript as NoEvmCompactReceiptProofTranscript
+    : null;
+  const boundedProofTranscript = proofKind !== "compactInclusion" && proofTranscript
+    ? proofTranscript as NoEvmReceiptProofTranscript
+    : null;
+  const proofMaterialValue = evidence.proof?.materialLabel
+    ?? (proofTranscript ? noEvmReceiptProofMaterialLabel(proofTranscript) : null);
+  const proofEvidenceLabel = proofKind === "compactInclusion" ? "compact receipt inclusion" : "bounded receipts transcript";
   const submittedValue = extension
     ? `${mrvEvidenceStateText(evidence.submittedState)} · kind ${_hexByte(extension.kind)} · body ${extension.bodyHex ?? "not exposed"} · ${extension.source}`
     : "missing · extension not exposed";
@@ -2350,15 +2363,15 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
     : "—";
   const proofValue = evidence.proof
     ? proofTranscript
-      ? `${proofConsistency?.state ?? "mismatch"} · bounded receipts transcript · ${evidence.proof.summary} · ${evidence.proof.source}`
-      : `invalid · bounded receipts transcript · ${evidence.proof.summary} · ${evidence.proof.source}`
+      ? `${proofConsistency?.state ?? "mismatch"} · ${proofEvidenceLabel} · ${evidence.proof.summary} · ${evidence.proof.source}`
+      : `invalid · ${proofEvidenceLabel} · ${evidence.proof.summary} · ${evidence.proof.source}`
     : evidence.proofFieldState === "explicit-null"
       ? `missing · ${evidence.proofFieldSource} returned null; no-EVM receipt proof evidence not rendered`
       : "missing · native-receipt.noEvmProof not returned; no-EVM receipt proof evidence not rendered";
   const proofPillText = evidence.proofState === "present"
-    ? "transcript verified"
+    ? compactProofTranscript ? "compact inclusion verified" : "transcript verified"
     : proofConsistency?.state === "mismatch"
-      ? "transcript mismatch"
+      ? compactProofTranscript ? "compact inclusion mismatch" : "transcript mismatch"
     : evidence.proofState === "invalid"
       ? "proof evidence invalid"
       : "proof evidence blocked";
@@ -2371,12 +2384,32 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
   const proofReceiptRootValue = proofTranscript
     ? `${_short(proofTranscript.receiptsRoot, 18)} · target ${_short(proofTranscript.targetReceiptHash, 18)}`
     : null;
-  const proofTranscriptValue = proofTranscript
-    ? `${receiptBlobCountLabel(proofTranscript.receiptTranscript.length)} · receiptCount ${proofTranscript.receiptCount.toLocaleString()} · txIndex ${proofTranscript.txIndex.toLocaleString()}`
+  const proofTranscriptValue = boundedProofTranscript
+    ? `${receiptBlobCountLabel(boundedProofTranscript.receiptTranscript.length)} · receiptCount ${boundedProofTranscript.receiptCount.toLocaleString()} · txIndex ${boundedProofTranscript.txIndex.toLocaleString()}`
+    : null;
+  const compactInclusionValue = compactProofTranscript
+    ? `root ${_short(compactProofTranscript.compactInclusionProof.root, 18)} · leaf ${_short(compactProofTranscript.compactInclusionProof.leafHash, 18)} · ${compactProofTranscript.compactInclusionProof.siblingHashes.length.toLocaleString()} sibling hashes`
+    : null;
+  const compactTargetValue = compactProofTranscript
+    ? `${_short(compactProofTranscript.targetReceiptBytes, 18)} · target hash ${_short(compactProofTranscript.targetReceiptHash, 18)}`
+    : null;
+  const archiveProof = compactProofTranscript?.archiveProof ?? null;
+  const archiveBindingValue = archiveProof
+    ? `${archiveProof.source} · manifest ${_short(archiveProof.manifestHash, 18)} · content ${_short(archiveProof.contentHash, 18)}`
+    : compactProofTranscript?.historySource === "indexerReceiptArchive"
+      ? "absent · archive binding not returned"
+      : null;
+  const archiveSignatureCount = archiveProof?.signatures.length ?? 0;
+  const archiveSignaturesValue = compactProofTranscript?.historySource === "indexerReceiptArchive"
+    ? archiveSignatureCount > 0
+      ? `present · ${archiveSignatureCount.toLocaleString()} archive signature${archiveSignatureCount === 1 ? "" : "s"} · validator finality not asserted`
+      : "absent · validator finality not asserted"
     : null;
   const proofConsistencyValue = proofConsistency
     ? proofConsistency.state === "verified"
-      ? `verified · computed ${_short(proofConsistency.computedReceiptsRoot, 18)} · target ${proofConsistency.computedTargetReceiptHash ? _short(proofConsistency.computedTargetReceiptHash, 18) : "missing"}`
+      ? compactProofTranscript
+        ? `verified · compact path verified · computed ${_short(proofConsistency.computedReceiptsRoot, 18)} · target ${proofConsistency.computedTargetReceiptHash ? _short(proofConsistency.computedTargetReceiptHash, 18) : "missing"}`
+        : `verified · computed ${_short(proofConsistency.computedReceiptsRoot, 18)} · target ${proofConsistency.computedTargetReceiptHash ? _short(proofConsistency.computedTargetReceiptHash, 18) : "missing"}`
       : `mismatch · ${proofConsistency.mismatches.join("; ")} · computed ${_short(proofConsistency.computedReceiptsRoot, 18)}`
     : null;
 
@@ -2396,10 +2429,15 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
         <KV label="Execution result" value={resultValue} mono/>
         {evidence.pqCheckpoint && <KV label="PQ checkpoint" value={evidence.pqCheckpoint} mono/>}
         <KV label="No-EVM receipt proof" value={proofValue} mono/>
-        {proofConsistencyValue && <KV label="Transcript check" value={proofConsistencyValue} mono/>}
-        {proofCodecValue && <KV label="Transcript codec" value={proofCodecValue} mono/>}
-        {proofAnchorValue && <KV label="Transcript anchors" value={proofAnchorValue} mono/>}
+        {proofMaterialValue && <KV label="Proof material" value={proofMaterialValue} mono/>}
+        {proofConsistencyValue && <KV label={compactProofTranscript ? "Compact proof check" : "Transcript check"} value={proofConsistencyValue} mono/>}
+        {proofCodecValue && <KV label={compactProofTranscript ? "Proof codec" : "Transcript codec"} value={proofCodecValue} mono/>}
+        {proofAnchorValue && <KV label={compactProofTranscript ? "Proof anchors" : "Transcript anchors"} value={proofAnchorValue} mono/>}
         {proofReceiptRootValue && <KV label="Receipt root" value={proofReceiptRootValue} mono/>}
+        {compactInclusionValue && <KV label="Compact inclusion" value={compactInclusionValue} mono/>}
+        {compactTargetValue && <KV label="Target receipt" value={compactTargetValue} mono/>}
+        {archiveBindingValue && <KV label="Archive binding" value={archiveBindingValue} mono/>}
+        {archiveSignaturesValue && <KV label="Archive signatures" value={archiveSignaturesValue} mono/>}
         {proofTranscriptValue && <KV label="Receipt transcript" value={proofTranscriptValue} mono/>}
       </div>
       {evidence.blockers.length > 0 && (

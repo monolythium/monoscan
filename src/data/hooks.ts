@@ -724,8 +724,19 @@ export const MRV_NATIVE_TX_EXTENSION_BODY_HEX = "0x01";
 export const MRV_NATIVE_RECEIPT_TX_TYPE = 0x41;
 export const NO_EVM_RECEIPT_PROOF_SCHEMA = "mono.no_evm_receipt_proof.v1";
 export const NO_EVM_RECEIPT_PROOF_TYPE = "canonicalReceiptsTranscript";
+export const NO_EVM_COMPACT_RECEIPT_PROOF_TYPE = "canonicalReceiptInclusion";
+export const NO_EVM_RECEIPT_CODEC = "bincode(protocore_evm::Receipt)";
 export const NO_EVM_RECEIPTS_ROOT_DOMAIN = "monolythium/v2/receipts_root/1";
 export const NO_EVM_RECEIPTS_ROOT_ALGORITHM = `keccak256("${NO_EVM_RECEIPTS_ROOT_DOMAIN}" || receipts_len_u32_le || (idx_u32_le || receipt_len_u32_le || receipt_bytes)*)`;
+export const NO_EVM_LEGACY_RECEIPTS_ROOT_ALGORITHM = "keccak256(monolythium/v2/receipts_root/1 || len || indexed bincode receipts)";
+export const NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM = "keccak256(monolythium/v4.1/receipts_root_empty/1|receipt_leaf/1|receipt_node/1 binary Merkle)";
+export const NO_EVM_BINARY_RECEIPTS_ROOT_EMPTY_DOMAIN = "monolythium/v4.1/receipts_root_empty/1";
+export const NO_EVM_BINARY_RECEIPT_LEAF_DOMAIN = "monolythium/v4.1/receipt_leaf/1";
+export const NO_EVM_BINARY_RECEIPT_NODE_DOMAIN = "monolythium/v4.1/receipt_node/1";
+export const NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA = "mono.no_evm_receipt_compact_inclusion.v1";
+export const NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM = "binary-keccak-receipt-tree";
+export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA = "mono.no_evm_receipt_archive_binding.v1";
+export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE = "indexerReceiptArchiveContentDigest";
 
 const HEX_BYTES_RE = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HASH32_RE = /^0x[0-9a-fA-F]{64}$/;
@@ -733,6 +744,8 @@ const U32_MAX = 0xffff_ffff;
 const textEncoder = new TextEncoder();
 
 export type MrvNativeEvidenceState = "present" | "missing" | "invalid";
+export type NoEvmReceiptProofKind = "boundedCacheTranscript" | "compactInclusion";
+export type NoEvmReceiptProofHistorySource = "legacyUnspecified" | "liveBlockCache" | "indexerReceiptArchive";
 
 export interface MrvNativeExtensionEvidence {
   kind: number;
@@ -743,7 +756,10 @@ export interface MrvNativeExtensionEvidence {
 
 export interface NoEvmReceiptProofTranscript {
   schema: typeof NO_EVM_RECEIPT_PROOF_SCHEMA;
+  proofKind?: "boundedCacheTranscript";
   proofType: typeof NO_EVM_RECEIPT_PROOF_TYPE;
+  historySource?: "legacyUnspecified" | "liveBlockCache";
+  archiveProof?: null;
   rootAlgorithm: string;
   receiptCodec: string;
   blockHash: string;
@@ -756,22 +772,70 @@ export interface NoEvmReceiptProofTranscript {
   receiptTranscript: string[];
 }
 
+export interface NoEvmCompactInclusionProof {
+  schema: typeof NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA;
+  treeAlgorithm: typeof NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM;
+  root: string;
+  leafHash: string;
+  siblingHashes: string[];
+  pathSides: boolean[];
+}
+
+export interface NoEvmReceiptArchiveProofBinding {
+  schema: typeof NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA;
+  source: typeof NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE;
+  manifestHash: string;
+  contentHash: string;
+  signatures: unknown[];
+}
+
+export interface NoEvmCompactReceiptProofTranscript {
+  schema: typeof NO_EVM_RECEIPT_PROOF_SCHEMA;
+  proofKind: "compactInclusion";
+  proofType: typeof NO_EVM_COMPACT_RECEIPT_PROOF_TYPE;
+  historySource: "liveBlockCache" | "indexerReceiptArchive";
+  rootAlgorithm: string;
+  receiptCodec: string;
+  blockHash: string;
+  txHash: string;
+  receiptsRoot: string;
+  targetReceiptHash: string;
+  blockHeight: number;
+  txIndex: number;
+  receiptCount: number;
+  compactInclusionProof: NoEvmCompactInclusionProof;
+  archiveProof?: NoEvmReceiptArchiveProofBinding | null;
+  targetReceiptBytes: string;
+  receiptTranscript?: string[];
+  missingProofMaterial?: string[];
+}
+
+export type NoEvmReceiptProofMaterial =
+  | NoEvmReceiptProofTranscript
+  | NoEvmCompactReceiptProofTranscript;
+
 export type NoEvmReceiptProofConsistencyState = "verified" | "mismatch";
 
 export interface NoEvmReceiptProofConsistency {
   state: NoEvmReceiptProofConsistencyState;
+  proofKind: NoEvmReceiptProofKind;
+  historySource: NoEvmReceiptProofHistorySource;
   computedReceiptsRoot: string;
   computedTargetReceiptHash: string | null;
-  receiptCountMatches: boolean;
+  receiptCountMatches: boolean | null;
   targetReceiptAvailable: boolean;
+  compactPathMatches: boolean | null;
   mismatches: string[];
 }
 
 export interface MrvNativeProofEvidence {
   source: string;
   summary: string;
+  proofKind: NoEvmReceiptProofKind | null;
+  historySource: NoEvmReceiptProofHistorySource | null;
+  materialLabel: string | null;
   raw: unknown;
-  transcript: NoEvmReceiptProofTranscript | null;
+  transcript: NoEvmReceiptProofMaterial | null;
   consistency: NoEvmReceiptProofConsistency | null;
   validationErrors: string[];
 }
@@ -1332,43 +1396,76 @@ function proofSummary(value: unknown): string {
 
 function readTranscriptString(
   row: Record<string, unknown>,
-  key: keyof NoEvmReceiptProofTranscript,
+  key: string,
   errors: string[],
+  label = key,
 ): string | null {
   const value = row[key];
   if (typeof value !== "string" || value.trim() === "") {
-    errors.push(`${key} missing`);
+    errors.push(`${label} missing`);
     return null;
   }
   return value.trim();
 }
 
+function readOptionalTranscriptString(row: Record<string, unknown>, key: string): string | null {
+  const value = row[key];
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
 function readTranscriptHash32(
   row: Record<string, unknown>,
-  key: keyof NoEvmReceiptProofTranscript,
+  key: string,
   errors: string[],
+  label = key,
 ): string | null {
-  const value = readTranscriptString(row, key, errors);
+  const value = readTranscriptString(row, key, errors, label);
   if (value !== null && !HASH32_RE.test(value)) {
-    errors.push(`${key} must be a 32-byte 0x hex value`);
+    errors.push(`${label} must be a 32-byte 0x hex value`);
   }
   return value;
 }
 
 function readTranscriptNumber(
   row: Record<string, unknown>,
-  key: keyof NoEvmReceiptProofTranscript,
+  key: string,
   errors: string[],
+  label = key,
 ): number | null {
   const value = readNumberField(row, [key]);
   if (value === null) {
-    errors.push(`${key} missing`);
+    errors.push(`${label} missing`);
     return null;
   }
   if (!Number.isInteger(value) || value < 0) {
-    errors.push(`${key} must be a non-negative integer`);
+    errors.push(`${label} must be a non-negative integer`);
   }
   return value;
+}
+
+function readProofKind(
+  row: Record<string, unknown>,
+  proofType: string | null,
+  errors: string[],
+): NoEvmReceiptProofKind | null {
+  const value = readOptionalTranscriptString(row, "proofKind");
+  const proofKind = value ?? (proofType === NO_EVM_COMPACT_RECEIPT_PROOF_TYPE ? "compactInclusion" : "boundedCacheTranscript");
+  if (proofKind === "boundedCacheTranscript" || proofKind === "compactInclusion") return proofKind;
+  errors.push("proofKind must be boundedCacheTranscript or compactInclusion");
+  return null;
+}
+
+function readProofHistorySource(
+  row: Record<string, unknown>,
+  errors: string[],
+): NoEvmReceiptProofHistorySource | null {
+  const value = readOptionalTranscriptString(row, "historySource");
+  if (value === null) return null;
+  if (value === "legacyUnspecified" || value === "liveBlockCache" || value === "indexerReceiptArchive") {
+    return value;
+  }
+  errors.push("historySource must be legacyUnspecified, liveBlockCache, or indexerReceiptArchive");
+  return null;
 }
 
 function readReceiptTranscript(
@@ -1387,6 +1484,152 @@ function readReceiptTranscript(
     }
     return entry.trim();
   });
+}
+
+function readOptionalStringArray(
+  row: Record<string, unknown>,
+  key: string,
+  errors: string[],
+): string[] | undefined {
+  const value = row[key];
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    errors.push(`${key} must be an array`);
+    return undefined;
+  }
+  const strings: string[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const item = value[index];
+    if (typeof item !== "string" || item.trim() === "") {
+      errors.push(`${key}[${index}] must be a non-empty string`);
+    } else {
+      strings.push(item.trim());
+    }
+  }
+  return strings;
+}
+
+function readCompactInclusionProof(
+  value: unknown,
+  errors: string[],
+): NoEvmCompactInclusionProof | null {
+  const row = unknownRecord(value);
+  if (!row) {
+    errors.push("compactInclusionProof must be an object");
+    return null;
+  }
+
+  const startErrorCount = errors.length;
+  const schema = readTranscriptString(row, "schema", errors, "compactInclusionProof.schema");
+  const treeAlgorithm = readTranscriptString(row, "treeAlgorithm", errors, "compactInclusionProof.treeAlgorithm");
+  const root = readTranscriptHash32(row, "root", errors, "compactInclusionProof.root");
+  const leafHash = readTranscriptHash32(row, "leafHash", errors, "compactInclusionProof.leafHash");
+  const siblingHashesValue = row.siblingHashes;
+  const pathSidesValue = row.pathSides;
+  const siblingHashes: string[] = [];
+  const pathSides: boolean[] = [];
+
+  if (!Array.isArray(siblingHashesValue)) {
+    errors.push("compactInclusionProof.siblingHashes must be an array");
+  } else {
+    siblingHashesValue.forEach((hash, index) => {
+      if (typeof hash !== "string" || !HASH32_RE.test(hash.trim())) {
+        errors.push(`compactInclusionProof.siblingHashes[${index}] must be a 32-byte 0x hex value`);
+      } else {
+        siblingHashes.push(hash.trim());
+      }
+    });
+  }
+
+  if (!Array.isArray(pathSidesValue)) {
+    errors.push("compactInclusionProof.pathSides must be an array");
+  } else {
+    pathSidesValue.forEach((side, index) => {
+      if (typeof side !== "boolean") {
+        errors.push(`compactInclusionProof.pathSides[${index}] must be a boolean`);
+      } else {
+        pathSides.push(side);
+      }
+    });
+  }
+
+  if (schema !== null && schema !== NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA) {
+    errors.push(`compactInclusionProof.schema must be ${NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA}`);
+  }
+  if (treeAlgorithm !== null && treeAlgorithm !== NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM) {
+    errors.push(`compactInclusionProof.treeAlgorithm must be ${NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM}`);
+  }
+  if (Array.isArray(siblingHashesValue) && Array.isArray(pathSidesValue) && siblingHashesValue.length !== pathSidesValue.length) {
+    errors.push("compactInclusionProof siblingHashes/pathSides length mismatch");
+  }
+
+  if (
+    errors.length > startErrorCount
+    || schema !== NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA
+    || treeAlgorithm !== NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM
+    || root === null
+    || leafHash === null
+  ) {
+    return null;
+  }
+
+  return {
+    schema,
+    treeAlgorithm,
+    root,
+    leafHash,
+    siblingHashes,
+    pathSides,
+  };
+}
+
+function readArchiveProofBinding(
+  value: unknown,
+  errors: string[],
+): NoEvmReceiptArchiveProofBinding | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const row = unknownRecord(value);
+  if (!row) {
+    errors.push("archiveProof must be an object");
+    return undefined;
+  }
+
+  const startErrorCount = errors.length;
+  const schema = readTranscriptString(row, "schema", errors, "archiveProof.schema");
+  const source = readTranscriptString(row, "source", errors, "archiveProof.source");
+  const manifestHash = readTranscriptHash32(row, "manifestHash", errors, "archiveProof.manifestHash");
+  const contentHash = readTranscriptHash32(row, "contentHash", errors, "archiveProof.contentHash");
+  const signaturesValue = row.signatures;
+  const signatures = Array.isArray(signaturesValue) ? signaturesValue : [];
+
+  if (schema !== null && schema !== NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA) {
+    errors.push(`archiveProof.schema must be ${NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA}`);
+  }
+  if (source !== null && source !== NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE) {
+    errors.push(`archiveProof.source must be ${NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE}`);
+  }
+  if (!Array.isArray(signaturesValue)) {
+    errors.push("archiveProof.signatures must be an array");
+  }
+
+  if (
+    errors.length > startErrorCount
+    || schema !== NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA
+    || source !== NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE
+    || manifestHash === null
+    || contentHash === null
+  ) {
+    return undefined;
+  }
+
+  return {
+    schema,
+    source,
+    manifestHash,
+    contentHash,
+    signatures,
+  };
 }
 
 function u32Le(value: number): Uint8Array {
@@ -1408,6 +1651,12 @@ function hexBytesToUint8Array(value: string): Uint8Array | null {
   return bytes;
 }
 
+function bytesToHex(bytes: Uint8Array): string {
+  return `0x${Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
 function concatUint8Arrays(parts: Uint8Array[]): Uint8Array {
   const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
   const combined = new Uint8Array(totalLength);
@@ -1419,7 +1668,12 @@ function concatUint8Arrays(parts: Uint8Array[]): Uint8Array {
   return combined;
 }
 
-function computeNoEvmReceiptsRoot(receipts: Uint8Array[]): string {
+function hashUint8Arrays(parts: Uint8Array[]): Uint8Array {
+  const hash = hexBytesToUint8Array(keccak256(concatUint8Arrays(parts)));
+  return hash ?? new Uint8Array();
+}
+
+function computeNoEvmLegacyReceiptsRoot(receipts: Uint8Array[]): string {
   const rootParts = [
     textEncoder.encode(NO_EVM_RECEIPTS_ROOT_DOMAIN),
     u32Le(receipts.length),
@@ -1430,47 +1684,204 @@ function computeNoEvmReceiptsRoot(receipts: Uint8Array[]): string {
   return keccak256(concatUint8Arrays(rootParts));
 }
 
+function computeNoEvmReceiptLeafHashBytes(receipt: Uint8Array, txIndex: number): Uint8Array {
+  return hashUint8Arrays([
+    textEncoder.encode(NO_EVM_BINARY_RECEIPT_LEAF_DOMAIN),
+    u32Le(txIndex),
+    u32Le(receipt.length),
+    receipt,
+  ]);
+}
+
+function computeNoEvmReceiptNodeHashBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+  return hashUint8Arrays([
+    textEncoder.encode(NO_EVM_BINARY_RECEIPT_NODE_DOMAIN),
+    left,
+    right,
+  ]);
+}
+
+function computeNoEvmBinaryReceiptsRoot(receipts: Uint8Array[]): string {
+  if (receipts.length === 0) {
+    return keccak256(concatUint8Arrays([
+      textEncoder.encode(NO_EVM_BINARY_RECEIPTS_ROOT_EMPTY_DOMAIN),
+      u32Le(0),
+    ]));
+  }
+
+  let level = receipts.map((receipt, index) => computeNoEvmReceiptLeafHashBytes(receipt, index));
+  while (level.length > 1) {
+    const nextLevel: Uint8Array[] = [];
+    for (let index = 0; index < level.length; index += 2) {
+      const left = level[index];
+      const right = level[index + 1] ?? left;
+      nextLevel.push(computeNoEvmReceiptNodeHashBytes(left, right));
+    }
+    level = nextLevel;
+  }
+  return bytesToHex(level[0]);
+}
+
+function rootAlgorithmUsesBinaryTree(rootAlgorithm: string): boolean {
+  return rootAlgorithm === NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM
+    || rootAlgorithm === NO_EVM_LEGACY_RECEIPTS_ROOT_ALGORITHM
+    || rootAlgorithm === NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM;
+}
+
+function isSupportedNoEvmRootAlgorithm(rootAlgorithm: string): boolean {
+  return rootAlgorithm === NO_EVM_RECEIPTS_ROOT_ALGORITHM
+    || rootAlgorithm === NO_EVM_LEGACY_RECEIPTS_ROOT_ALGORITHM
+    || rootAlgorithm === NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM
+    || rootAlgorithm === NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM;
+}
+
+function computeNoEvmReceiptsRoot(receipts: Uint8Array[], rootAlgorithm: string): string {
+  return rootAlgorithmUsesBinaryTree(rootAlgorithm)
+    ? computeNoEvmBinaryReceiptsRoot(receipts)
+    : computeNoEvmLegacyReceiptsRoot(receipts);
+}
+
+function computeCompactRootFromPath(
+  leafHash: Uint8Array,
+  siblingHashes: Uint8Array[],
+  pathSides: boolean[],
+): Uint8Array {
+  let current = leafHash;
+  for (let index = 0; index < siblingHashes.length; index += 1) {
+    const sibling = siblingHashes[index];
+    current = pathSides[index]
+      ? computeNoEvmReceiptNodeHashBytes(sibling, current)
+      : computeNoEvmReceiptNodeHashBytes(current, sibling);
+  }
+  return current;
+}
+
+function noEvmReceiptProofKind(transcript: NoEvmReceiptProofMaterial): NoEvmReceiptProofKind {
+  return transcript.proofKind ?? "boundedCacheTranscript";
+}
+
+function noEvmReceiptProofHistorySource(transcript: NoEvmReceiptProofMaterial): NoEvmReceiptProofHistorySource {
+  return transcript.historySource ?? "legacyUnspecified";
+}
+
+export function noEvmReceiptProofHistorySourceLabel(source: NoEvmReceiptProofHistorySource): string {
+  switch (source) {
+    case "indexerReceiptArchive":
+      return "indexer receipt archive";
+    case "liveBlockCache":
+      return "live block cache";
+    case "legacyUnspecified":
+      return "legacy/unspecified receipt material";
+  }
+}
+
+export function noEvmReceiptProofKindLabel(kind: NoEvmReceiptProofKind): string {
+  return kind === "compactInclusion" ? "compact inclusion proof" : "bounded receipts transcript";
+}
+
+export function noEvmReceiptProofMaterialLabel(transcript: NoEvmReceiptProofMaterial): string {
+  return `${noEvmReceiptProofHistorySourceLabel(noEvmReceiptProofHistorySource(transcript))} · ${noEvmReceiptProofKindLabel(noEvmReceiptProofKind(transcript))}`;
+}
+
 export function verifyNoEvmReceiptProofConsistency(
-  transcript: NoEvmReceiptProofTranscript,
+  transcript: NoEvmReceiptProofMaterial,
 ): NoEvmReceiptProofConsistency {
-  const receiptBytes = transcript.receiptTranscript.map(hexBytesToUint8Array);
+  const proofKind = noEvmReceiptProofKind(transcript);
+  if (proofKind === "compactInclusion") {
+    return verifyNoEvmCompactReceiptProofConsistency(transcript as NoEvmCompactReceiptProofTranscript);
+  }
+
+  const bounded = transcript as NoEvmReceiptProofTranscript;
+  const receiptBytes = bounded.receiptTranscript.map(hexBytesToUint8Array);
   const decodedReceipts = receiptBytes.filter((receipt): receipt is Uint8Array => receipt !== null);
-  const computedReceiptsRoot = computeNoEvmReceiptsRoot(decodedReceipts);
-  const computedTargetReceiptHash = decodedReceipts[transcript.txIndex]
-    ? keccak256(decodedReceipts[transcript.txIndex])
+  const computedReceiptsRoot = computeNoEvmReceiptsRoot(decodedReceipts, bounded.rootAlgorithm);
+  const computedTargetReceiptHash = decodedReceipts[bounded.txIndex]
+    ? keccak256(decodedReceipts[bounded.txIndex])
     : null;
-  const receiptCountMatches = transcript.receiptCount === transcript.receiptTranscript.length;
+  const receiptCountMatches = bounded.receiptCount === bounded.receiptTranscript.length;
   const targetReceiptAvailable = computedTargetReceiptHash !== null;
   const mismatches: string[] = [];
 
-  if (transcript.rootAlgorithm !== NO_EVM_RECEIPTS_ROOT_ALGORITHM) {
-    mismatches.push(`rootAlgorithm must be ${NO_EVM_RECEIPTS_ROOT_ALGORITHM}`);
+  if (!isSupportedNoEvmRootAlgorithm(bounded.rootAlgorithm)) {
+    mismatches.push(`rootAlgorithm must be ${NO_EVM_RECEIPTS_ROOT_ALGORITHM} or ${NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM}`);
   }
   if (!receiptCountMatches) {
-    mismatches.push(`receiptCount ${transcript.receiptCount} does not match ${receiptBlobLabel(transcript.receiptTranscript.length)}`);
+    mismatches.push(`receiptCount ${bounded.receiptCount} does not match ${receiptBlobLabel(bounded.receiptTranscript.length)}`);
   }
-  if (computedReceiptsRoot !== transcript.receiptsRoot.toLowerCase()) {
+  if (computedReceiptsRoot !== bounded.receiptsRoot.toLowerCase()) {
     mismatches.push("receiptsRoot mismatch");
   }
   if (!targetReceiptAvailable) {
     mismatches.push("receiptTranscript does not include txIndex receipt");
-  } else if (computedTargetReceiptHash !== transcript.targetReceiptHash.toLowerCase()) {
+  } else if (computedTargetReceiptHash !== bounded.targetReceiptHash.toLowerCase()) {
     mismatches.push("targetReceiptHash mismatch");
   }
 
   return {
     state: mismatches.length > 0 ? "mismatch" : "verified",
+    proofKind,
+    historySource: noEvmReceiptProofHistorySource(bounded),
     computedReceiptsRoot,
     computedTargetReceiptHash,
     receiptCountMatches,
     targetReceiptAvailable,
+    compactPathMatches: null,
+    mismatches,
+  };
+}
+
+function verifyNoEvmCompactReceiptProofConsistency(
+  transcript: NoEvmCompactReceiptProofTranscript,
+): NoEvmReceiptProofConsistency {
+  const targetReceipt = hexBytesToUint8Array(transcript.targetReceiptBytes);
+  const computedTargetReceiptHash = targetReceipt ? keccak256(targetReceipt) : null;
+  const computedLeafHashBytes = targetReceipt ? computeNoEvmReceiptLeafHashBytes(targetReceipt, transcript.txIndex) : null;
+  const computedLeafHash = computedLeafHashBytes ? bytesToHex(computedLeafHashBytes) : null;
+  const siblingHashes = transcript.compactInclusionProof.siblingHashes
+    .map(hexBytesToUint8Array)
+    .filter((hash): hash is Uint8Array => hash !== null);
+  const compactPathRoot = computedLeafHashBytes && siblingHashes.length === transcript.compactInclusionProof.siblingHashes.length
+    ? computeCompactRootFromPath(computedLeafHashBytes, siblingHashes, transcript.compactInclusionProof.pathSides)
+    : null;
+  const computedReceiptsRoot = compactPathRoot ? bytesToHex(compactPathRoot) : transcript.compactInclusionProof.root.toLowerCase();
+  const compactPathMatches = computedReceiptsRoot === transcript.compactInclusionProof.root.toLowerCase();
+  const targetReceiptAvailable = computedTargetReceiptHash !== null;
+  const mismatches: string[] = [];
+
+  if (!isSupportedNoEvmRootAlgorithm(transcript.rootAlgorithm)) {
+    mismatches.push(`rootAlgorithm must be ${NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM}`);
+  }
+  if (!targetReceiptAvailable) {
+    mismatches.push("targetReceiptBytes must be a 0x byte blob");
+  } else if (computedTargetReceiptHash !== transcript.targetReceiptHash.toLowerCase()) {
+    mismatches.push("targetReceiptHash mismatch");
+  }
+  if (computedLeafHash !== null && computedLeafHash !== transcript.compactInclusionProof.leafHash.toLowerCase()) {
+    mismatches.push("compactInclusionProof.leafHash mismatch");
+  }
+  if (transcript.receiptsRoot.toLowerCase() !== transcript.compactInclusionProof.root.toLowerCase()) {
+    mismatches.push("receiptsRoot must equal compactInclusionProof.root");
+  }
+  if (!compactPathMatches) {
+    mismatches.push("compact inclusion path mismatch");
+  }
+
+  return {
+    state: mismatches.length > 0 ? "mismatch" : "verified",
+    proofKind: "compactInclusion",
+    historySource: transcript.historySource,
+    computedReceiptsRoot,
+    computedTargetReceiptHash,
+    receiptCountMatches: null,
+    targetReceiptAvailable,
+    compactPathMatches,
     mismatches,
   };
 }
 
 export function validateNoEvmReceiptProofTranscript(
   value: unknown,
-): { transcript: NoEvmReceiptProofTranscript | null; errors: string[] } {
+): { transcript: NoEvmReceiptProofMaterial | null; errors: string[] } {
   const row = unknownRecord(value);
   if (!row) {
     return { transcript: null, errors: ["noEvmProof must be an object"] };
@@ -1479,6 +1890,8 @@ export function validateNoEvmReceiptProofTranscript(
   const errors: string[] = [];
   const schema = readTranscriptString(row, "schema", errors);
   const proofType = readTranscriptString(row, "proofType", errors);
+  const proofKind = readProofKind(row, proofType, errors);
+  const historySource = readProofHistorySource(row, errors);
   const rootAlgorithm = readTranscriptString(row, "rootAlgorithm", errors);
   const receiptCodec = readTranscriptString(row, "receiptCodec", errors);
   const blockHash = readTranscriptHash32(row, "blockHash", errors);
@@ -1488,13 +1901,9 @@ export function validateNoEvmReceiptProofTranscript(
   const blockHeight = readTranscriptNumber(row, "blockHeight", errors);
   const txIndex = readTranscriptNumber(row, "txIndex", errors);
   const receiptCount = readTranscriptNumber(row, "receiptCount", errors);
-  const receiptTranscript = readReceiptTranscript(row, errors);
 
   if (schema !== null && schema !== NO_EVM_RECEIPT_PROOF_SCHEMA) {
     errors.push(`schema must be ${NO_EVM_RECEIPT_PROOF_SCHEMA}`);
-  }
-  if (proofType !== null && proofType !== NO_EVM_RECEIPT_PROOF_TYPE) {
-    errors.push(`proofType must be ${NO_EVM_RECEIPT_PROOF_TYPE}`);
   }
   if (txIndex !== null && receiptCount !== null && txIndex >= receiptCount) {
     errors.push("txIndex must be less than receiptCount");
@@ -1504,6 +1913,91 @@ export function validateNoEvmReceiptProofTranscript(
   }
   if (receiptCount !== null && receiptCount > U32_MAX) {
     errors.push("receiptCount must fit in u32");
+  }
+
+  if (proofKind === "compactInclusion") {
+    const compactInclusionProof = readCompactInclusionProof(row.compactInclusionProof, errors);
+    const archiveProof = readArchiveProofBinding(row.archiveProof, errors);
+    const targetReceiptBytes = readTranscriptString(row, "targetReceiptBytes", errors);
+    const missingProofMaterial = readOptionalStringArray(row, "missingProofMaterial", errors);
+    if (proofType !== null && proofType !== NO_EVM_COMPACT_RECEIPT_PROOF_TYPE) {
+      errors.push(`proofType must be ${NO_EVM_COMPACT_RECEIPT_PROOF_TYPE}`);
+    }
+    if (historySource === null) {
+      errors.push("historySource missing");
+    } else if (historySource !== "liveBlockCache" && historySource !== "indexerReceiptArchive") {
+      errors.push("historySource must be liveBlockCache or indexerReceiptArchive for compactInclusion proofs");
+    }
+    if (rootAlgorithm !== null && !rootAlgorithmUsesBinaryTree(rootAlgorithm)) {
+      errors.push(`rootAlgorithm must be ${NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM}`);
+    }
+    if (receiptCodec !== null && receiptCodec !== NO_EVM_RECEIPT_CODEC) {
+      errors.push(`receiptCodec must be ${NO_EVM_RECEIPT_CODEC}`);
+    }
+    if (archiveProof !== undefined && archiveProof !== null && historySource !== "indexerReceiptArchive") {
+      errors.push("archiveProof requires historySource indexerReceiptArchive");
+    }
+    if (targetReceiptBytes !== null && !HEX_BYTES_RE.test(targetReceiptBytes)) {
+      errors.push("targetReceiptBytes must be a 0x byte blob");
+    }
+
+    if (
+      errors.length > 0
+      || schema !== NO_EVM_RECEIPT_PROOF_SCHEMA
+      || proofType !== NO_EVM_COMPACT_RECEIPT_PROOF_TYPE
+      || historySource === null
+      || (historySource !== "liveBlockCache" && historySource !== "indexerReceiptArchive")
+      || rootAlgorithm === null
+      || receiptCodec === null
+      || blockHash === null
+      || txHash === null
+      || receiptsRoot === null
+      || targetReceiptHash === null
+      || blockHeight === null
+      || txIndex === null
+      || receiptCount === null
+      || compactInclusionProof === null
+      || targetReceiptBytes === null
+    ) {
+      return { transcript: null, errors };
+    }
+
+    return {
+      transcript: {
+        schema,
+        proofKind: "compactInclusion",
+        proofType,
+        historySource,
+        rootAlgorithm,
+        receiptCodec,
+        blockHash,
+        txHash,
+        receiptsRoot,
+        targetReceiptHash,
+        blockHeight,
+        txIndex,
+        receiptCount,
+        compactInclusionProof,
+        ...(archiveProof !== undefined ? { archiveProof } : {}),
+        targetReceiptBytes,
+        ...(missingProofMaterial ? { missingProofMaterial } : {}),
+      },
+      errors: [],
+    };
+  }
+
+  const receiptTranscript = readReceiptTranscript(row, errors);
+  if (proofType !== null && proofType !== NO_EVM_RECEIPT_PROOF_TYPE) {
+    errors.push(`proofType must be ${NO_EVM_RECEIPT_PROOF_TYPE}`);
+  }
+  if (historySource === "indexerReceiptArchive") {
+    errors.push("historySource indexerReceiptArchive requires compactInclusion proofKind");
+  }
+  if (row.compactInclusionProof !== undefined && row.compactInclusionProof !== null) {
+    errors.push("boundedCacheTranscript proof cannot carry compactInclusionProof");
+  }
+  if (row.archiveProof !== undefined && row.archiveProof !== null) {
+    errors.push("boundedCacheTranscript proof cannot carry archiveProof");
   }
   if (receiptCount !== null && receiptTranscript.length > receiptCount) {
     errors.push("receiptTranscript cannot exceed receiptCount");
@@ -1526,21 +2020,29 @@ export function validateNoEvmReceiptProofTranscript(
     return { transcript: null, errors };
   }
 
+  const transcript: NoEvmReceiptProofTranscript = {
+    schema,
+    proofType,
+    rootAlgorithm,
+    receiptCodec,
+    blockHash,
+    txHash,
+    receiptsRoot,
+    targetReceiptHash,
+    blockHeight,
+    txIndex,
+    receiptCount,
+    receiptTranscript,
+  };
+  if (Object.prototype.hasOwnProperty.call(row, "proofKind")) {
+    transcript.proofKind = "boundedCacheTranscript";
+  }
+  if (historySource !== null) {
+    transcript.historySource = historySource as "legacyUnspecified" | "liveBlockCache";
+  }
+
   return {
-    transcript: {
-      schema,
-      proofType,
-      rootAlgorithm,
-      receiptCodec,
-      blockHash,
-      txHash,
-      receiptsRoot,
-      targetReceiptHash,
-      blockHeight,
-      txIndex,
-      receiptCount,
-      receiptTranscript,
-    },
+    transcript,
     errors: [],
   };
 }
@@ -1549,18 +2051,46 @@ function receiptBlobLabel(count: number): string {
   return `${count} receipt blob${count === 1 ? "" : "s"}`;
 }
 
-function noEvmReceiptProofSummary(transcript: NoEvmReceiptProofTranscript): string {
-  return `${transcript.proofType} · block ${transcript.blockHeight} · tx ${transcript.txIndex + 1}/${transcript.receiptCount} · ${receiptBlobLabel(transcript.receiptTranscript.length)}`;
+function noEvmReceiptProofSummary(transcript: NoEvmReceiptProofMaterial): string {
+  if (noEvmReceiptProofKind(transcript) === "compactInclusion") {
+    const compact = transcript as NoEvmCompactReceiptProofTranscript;
+    const siblingCount = compact.compactInclusionProof.siblingHashes.length;
+    return `${compact.proofType} · ${noEvmReceiptProofHistorySourceLabel(compact.historySource)} · block ${compact.blockHeight} · tx ${compact.txIndex + 1}/${compact.receiptCount} · compact Merkle path ${siblingCount} sibling hash${siblingCount === 1 ? "" : "es"}`;
+  }
+  const bounded = transcript as NoEvmReceiptProofTranscript;
+  return `${bounded.proofType} · block ${bounded.blockHeight} · tx ${bounded.txIndex + 1}/${bounded.receiptCount} · ${receiptBlobLabel(bounded.receiptTranscript.length)}`;
+}
+
+function detectNoEvmReceiptProofKind(value: unknown): NoEvmReceiptProofKind | null {
+  const row = unknownRecord(value);
+  if (!row) return null;
+  const proofKind = readOptionalTranscriptString(row, "proofKind");
+  const proofType = readOptionalTranscriptString(row, "proofType");
+  if (proofKind === "compactInclusion" || proofType === NO_EVM_COMPACT_RECEIPT_PROOF_TYPE) {
+    return "compactInclusion";
+  }
+  if (proofKind === "boundedCacheTranscript" || proofType === NO_EVM_RECEIPT_PROOF_TYPE) {
+    return "boundedCacheTranscript";
+  }
+  return null;
+}
+
+function proofEvidenceBlockerLabel(proofKind: NoEvmReceiptProofKind | null): string {
+  return proofKind === "compactInclusion" ? "compact receipt inclusion proof" : "bounded receipts transcript";
 }
 
 function noEvmReceiptProofEvidence(source: string, value: unknown): MrvNativeProofEvidence {
   const { transcript, errors } = validateNoEvmReceiptProofTranscript(value);
   const consistency = transcript ? verifyNoEvmReceiptProofConsistency(transcript) : null;
+  const proofKind = transcript ? noEvmReceiptProofKind(transcript) : detectNoEvmReceiptProofKind(value);
   return {
     source,
     raw: value,
     transcript,
     consistency,
+    proofKind,
+    historySource: transcript ? noEvmReceiptProofHistorySource(transcript) : null,
+    materialLabel: transcript ? noEvmReceiptProofMaterialLabel(transcript) : null,
     validationErrors: errors,
     summary: transcript
       ? noEvmReceiptProofSummary(transcript)
@@ -1648,16 +2178,16 @@ export function mrvNativeTransactionEvidence(
   }
   if (!proof) {
     blockers.push(proofField.state === "explicit-null"
-      ? `${proofField.source} returned null; Monoscan treats the no-EVM receipt proof evidence as missing until a bounded receipts transcript is available.`
-      : "native-receipt.noEvmProof must return a bounded receipts transcript before Monoscan can render no-EVM receipt proof evidence.",
+      ? `${proofField.source} returned null; Monoscan treats the no-EVM receipt proof evidence as missing until a bounded receipts transcript or compact receipt inclusion proof is available.`
+      : "native-receipt.noEvmProof must return a bounded receipts transcript or compact receipt inclusion proof before Monoscan can render no-EVM receipt proof evidence.",
     );
   } else if (!proof.transcript) {
     blockers.push(
-      `${proof.source} returned an invalid bounded receipts transcript: ${proof.validationErrors.join("; ") || "unknown validation error"}.`,
+      `${proof.source} returned an invalid ${proofEvidenceBlockerLabel(proof.proofKind)}: ${proof.validationErrors.join("; ") || "unknown validation error"}.`,
     );
   } else if (proof.consistency?.state === "mismatch") {
     blockers.push(
-      `${proof.source} returned a bounded receipts transcript that failed self-consistency: ${proof.consistency.mismatches.join("; ")}.`,
+      `${proof.source} returned a ${proofEvidenceBlockerLabel(proof.proofKind)} that failed self-consistency: ${proof.consistency.mismatches.join("; ")}.`,
     );
   }
 
