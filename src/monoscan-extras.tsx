@@ -166,6 +166,17 @@ export function transactionFeeValueLabel(
     ? `${fixtureFee.toFixed(4)} ${fixtureDenom}`
     : "—";
 }
+export function adr0039FeeDetailText(detail: string | null | undefined): string {
+  if (!detail) return "—";
+  return detail
+    .replace(/\bgas price\b/gi, "execution unit price")
+    .replace(/\bgas used\b/gi, "execution units used")
+    .replace(/\bgas limit\b/gi, "execution unit limit")
+    .replace(/\bper gas\b/gi, "per execution unit")
+    .replace(/\bgwei\b/gi, "lythoshi")
+    .replace(/\bwei\b/gi, "lythoshi")
+    .replace(/\bgas\b/gi, "execution units");
+}
 type MrcTokenBalanceIdentity = {
   standard?: string | null;
   assetId?: string | null;
@@ -2140,7 +2151,7 @@ const TxPage = ({ hash, go }: any) => {
           <div className="tx-kv">
             <KV label="Fee" value={tx.feeLabel ?? transactionFeeValueLabel(null, tx.fee, tx.feeDenom)} mono/>
             {(tx.feeDetailTexts ?? []).map((detail: string, index: number) => (
-              <KV key={`${index}-${detail}`} label={index === 0 ? "Fee detail" : "Fee rates"} value={detail} mono/>
+              <KV key={`${index}-${detail}`} label={index === 0 ? "Fee detail" : "Fee rates"} value={adr0039FeeDetailText(detail)} mono/>
             ))}
             <KV label="Execution units" value={`${_fmt(tx.gasUsed)} / ${_fmt(tx.gasLimit)}`}/>
             <KV label="Execution utilization" value={tx.gasLimit > 0 ? `${((tx.gasUsed/tx.gasLimit)*100).toFixed(1)}%` : "—"}/>
@@ -2193,8 +2204,8 @@ const TxPage = ({ hash, go }: any) => {
                 <>
                   <KV label="Total fee" value={transactionFeeValueLabel(liveNativeFee.display, null)} mono/>
                   <KV label="Total fee lythoshi" value={liveNativeFee.display.totalLythoshi} mono/>
-                  <KV label="Fee detail" value={liveNativeFee.display.detailTexts[0]} mono/>
-                  <KV label="Fee rates" value={liveNativeFee.display.detailTexts[1]} mono/>
+                  <KV label="Fee detail" value={adr0039FeeDetailText(liveNativeFee.display.detailTexts[0])} mono/>
+                  <KV label="Fee rates" value={adr0039FeeDetailText(liveNativeFee.display.detailTexts[1])} mono/>
                 </>
               ) : (
                 <KV label="Fee" value="invalid ADR-0039 fee object" mono/>
