@@ -20,9 +20,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { keccak256 } from "ethers/crypto";
 import {
   ApiClient,
+  CHAIN_REGISTRY,
   RpcClient,
   type AgentReputationResponse,
   type NativeReceiptResponse,
+  type ReceiptProofTrustPolicy,
 } from "@monolythium/core-sdk";
 import { MlDsa65Backend, bytesToHex as sdkBytesToHex } from "@monolythium/core-sdk/crypto";
 import {
@@ -92,12 +94,25 @@ import {
 } from "./hooks";
 import { isWebSocketEnabled, resetRpcClient } from "../sdk/client";
 
+const originalTestnetReceiptProofTrust = CHAIN_REGISTRY["testnet-69420"].receipt_proof_trust;
+
 afterEach(() => {
   // Clear the singletons + RQ cache so tests don't leak state.
   queryClient.clear();
   resetRpcClient();
+  setTestnetReceiptProofTrust(originalTestnetReceiptProofTrust);
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
+
+function setTestnetReceiptProofTrust(policy: ReceiptProofTrustPolicy | null | undefined): void {
+  const testnet = CHAIN_REGISTRY["testnet-69420"];
+  if (policy == null) {
+    delete testnet.receipt_proof_trust;
+  } else {
+    testnet.receipt_proof_trust = policy;
+  }
+}
 
 type NativeReceiptFixture = Omit<NativeReceiptResponse<unknown>, "noEvmProof"> & {
   noEvmProof?: NoEvmReceiptProofTranscript | NoEvmCompactReceiptProofTranscript | Record<string, unknown> | null;
@@ -247,6 +262,7 @@ const validArchiveProofSignature =
   `mono.snapshot.sig.v1:0x${"ab".repeat(20)}:0x${"12".repeat(64)}`;
 const validArchiveSignatureDigest = `0x${"66".repeat(32)}`;
 const verifiedArchiveSigner = MlDsa65Backend.fromSeed(new Uint8Array(32).fill(12));
+const untrustedArchiveSigner = MlDsa65Backend.fromSeed(new Uint8Array(32).fill(13));
 const verifiedArchiveTrustOptions: NoEvmArchiveVerificationTrustOptions = {
   publicKeys: [verifiedArchiveSigner.publicKey()],
   threshold: 1,
@@ -320,6 +336,55 @@ function compactNoEvmReceiptProofTranscript(
     ],
     ...overrides,
   };
+}
+
+function registryReceiptProofTrustPolicy(
+  overrides: {
+    archiveSigner?: MlDsa65Backend;
+    archiveThreshold?: number;
+    finalityChainId?: number;
+    finalityMode?: "cluster" | "multisig";
+  } = {},
+): ReceiptProofTrustPolicy {
+  const finalityMode = overrides.finalityMode ?? "cluster";
+  return {
+    archive: {
+      signature_threshold: overrides.archiveThreshold ?? 1,
+      signers: [{
+        public_key: sdkBytesToHex((overrides.archiveSigner ?? verifiedArchiveSigner).publicKey()),
+        signer_id: (overrides.archiveSigner ?? verifiedArchiveSigner).getAddress(),
+      }],
+    },
+    finality: finalityMode === "cluster"
+      ? {
+          mode: "cluster",
+          chain_id: overrides.finalityChainId ?? 69_420,
+          cluster_public_key: verifiedBlsClusterPublicKey,
+          committee_size: 7,
+          threshold: 1,
+        }
+      : {
+          mode: "multisig",
+          chain_id: overrides.finalityChainId ?? 69_420,
+          threshold: 1,
+          signers: [],
+        },
+  };
+}
+
+function compactVerifiedTrustProof(): NoEvmCompactReceiptProofTranscript {
+  return compactNoEvmReceiptProofTranscript({
+    blockHeight: 130,
+    finalityEvidence: verifiedBlsFinalityEvidence(),
+    archiveProof: {
+      schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+      source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+      manifestHash: `0x${"44".repeat(32)}`,
+      contentHash: `0x${"55".repeat(32)}`,
+      signatureDigest: validArchiveSignatureDigest,
+      signatures: [signedArchiveProofSignature(verifiedArchiveSigner, validArchiveSignatureDigest)],
+    },
+  });
 }
 
 function apiEnvelope<T>(data: T) {
@@ -3263,6 +3328,104 @@ describe("API execution-unit transformations", () => {
     expect(evidence?.blockers).toContain(
       `native-receipt.noEvmProof returned an invalid compact receipt inclusion proof: ${error}.`,
     );
+  });
+
+  it("uses bundled registry archive and cluster finality trust when env and options are absent", () => {
+    setTestnetReceiptProofTrust(registryReceiptProofTrustPolicy());
+    const noEvmProof = compactVerifiedTrustProof();
+
+    expect(verifyNoEvmReceiptArchiveProofSignatures(noEvmProof)).toMatchObject({
+      state: "verified",
+      reason: null,
+      signatureSource: "exactHeight",
+      result: {
+        verified: true,
+        validSigners: [verifiedArchiveSigner.getAddress()],
+      },
+    });
+    expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof)).toMatchObject({
+      state: "verified",
+      reason: null,
+      result: {
+        verified: true,
+        acceptedSignatureCount: 1,
+        requiredSignatureCount: 1,
+      },
+    });
+  });
+
+  it("keeps no-EVM proof trust unconfigured when the bundled registry policy is null", () => {
+    setTestnetReceiptProofTrust(null);
+    const noEvmProof = compactVerifiedTrustProof();
+
+    expect(verifyNoEvmReceiptArchiveProofSignatures(noEvmProof)).toMatchObject({
+      state: "unconfigured",
+      result: null,
+      reason: "trusted archive signer config not configured",
+    });
+    expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof)).toMatchObject({
+      state: "unverified",
+      result: null,
+      reason: "trusted BLS finality key not configured",
+    });
+  });
+
+  it("lets explicit no-EVM trust options override the bundled registry policy", () => {
+    setTestnetReceiptProofTrust(registryReceiptProofTrustPolicy({
+      archiveSigner: untrustedArchiveSigner,
+      finalityChainId: 69_421,
+    }));
+    const noEvmProof = compactVerifiedTrustProof();
+
+    expect(verifyNoEvmReceiptArchiveProofSignatures(noEvmProof, verifiedArchiveTrustOptions))
+      .toMatchObject({
+        state: "verified",
+        reason: null,
+      });
+    expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof, verifiedBlsTrustOptions))
+      .toMatchObject({
+        state: "verified",
+        reason: null,
+      });
+  });
+
+  it("lets env no-EVM trust config override the bundled registry policy", () => {
+    setTestnetReceiptProofTrust(registryReceiptProofTrustPolicy());
+    vi.stubEnv("VITE_MONOSCAN_CHAIN_ID", "69421");
+    vi.stubEnv("VITE_MONOSCAN_TRUSTED_BLS_CLUSTER_PUBKEY", verifiedBlsClusterPublicKey);
+    vi.stubEnv("VITE_MONOSCAN_TRUSTED_BLS_COMMITTEE_SIZE", "7");
+    vi.stubEnv("VITE_MONOSCAN_TRUSTED_BLS_THRESHOLD", "1");
+    vi.stubEnv("VITE_MONOSCAN_TRUSTED_ARCHIVE_PUBKEYS", sdkBytesToHex(untrustedArchiveSigner.publicKey()));
+    vi.stubEnv("VITE_MONOSCAN_TRUSTED_ARCHIVE_THRESHOLD", "1");
+    const noEvmProof = compactVerifiedTrustProof();
+
+    expect(verifyNoEvmReceiptArchiveProofSignatures(noEvmProof)).toMatchObject({
+      state: "mismatch",
+      signatureSource: "exactHeight",
+      result: {
+        verified: false,
+        validSigners: [],
+      },
+    });
+    expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof)).toMatchObject({
+      state: "mismatch",
+      result: {
+        verified: false,
+        signatureValid: false,
+      },
+      reason: "BLS signature invalid",
+    });
+  });
+
+  it("fails closed when the bundled registry finality policy uses multisig mode", () => {
+    setTestnetReceiptProofTrust(registryReceiptProofTrustPolicy({ finalityMode: "multisig" }));
+    const noEvmProof = compactVerifiedTrustProof();
+
+    expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof)).toMatchObject({
+      state: "mismatch",
+      result: null,
+      reason: "registry BLS finality trust policy mode multisig is not supported by Monoscan threshold-cluster verification",
+    });
   });
 
   it("accepts BLS finality evidence on compact no-EVM receipt proofs as certificate material", () => {

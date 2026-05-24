@@ -80,6 +80,7 @@ import {
   type NoEvmArchiveSignatureVerification,
   type NoEvmArchiveTrustedSigner,
   type NoEvmBlsFinalityVerification,
+  type NoEvmReceiptTrustPolicy,
   type NativeMarketOrderBookStreamPayload,
   type NativeReceiptResponse,
   type NativeReceiptFee,
@@ -2000,6 +2001,8 @@ type NoEvmArchiveTrustResolution =
   | { kind: "unconfigured"; reason: string }
   | { kind: "invalid"; reason: string };
 
+const NO_EVM_RECEIPT_TRUST_REGISTRY_NETWORK = "testnet-69420";
+
 const NO_EVM_FINALITY_TRUST_ENV = {
   chainId: ["VITE_MONOSCAN_CHAIN_ID", "VITE_MONO_CHAIN_ID"],
   clusterPublicKey: [
@@ -2197,6 +2200,21 @@ function normalizeNoEvmArchiveTrustOptions(
   };
 }
 
+function noEvmReceiptTrustPolicyFromBundledRegistry(): NoEvmReceiptTrustPolicy | null {
+  return CoreSdk.getNoEvmReceiptTrustPolicy(NO_EVM_RECEIPT_TRUST_REGISTRY_NETWORK);
+}
+
+function isWithinOptionalTrustBounds(
+  value: number | bigint,
+  validFrom: number | bigint | undefined,
+  validTo: number | bigint | undefined,
+): boolean {
+  const checked = BigInt(value);
+  if (validFrom != null && checked < BigInt(validFrom)) return false;
+  if (validTo != null && checked > BigInt(validTo)) return false;
+  return true;
+}
+
 function noEvmFinalityTrustOptionsFromEnv(): NoEvmFinalityTrustResolution {
   const chainId = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.chainId);
   const clusterPublicKey = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.clusterPublicKey);
@@ -2231,6 +2249,86 @@ function noEvmFinalityTrustOptionsFromEnv(): NoEvmFinalityTrustResolution {
   });
 }
 
+function noEvmFinalityTrustOptionsFromRegistry(
+  transcript: NoEvmReceiptProofMaterial,
+): NoEvmFinalityTrustResolution {
+  let policy: NoEvmReceiptTrustPolicy | null;
+  try {
+    policy = noEvmReceiptTrustPolicyFromBundledRegistry();
+  } catch (error) {
+    return {
+      kind: "invalid",
+      reason: error instanceof Error
+        ? `registry BLS finality trust policy invalid: ${error.message}`
+        : "registry BLS finality trust policy invalid",
+    };
+  }
+
+  const finalityPolicy = policy?.finality ?? null;
+  if (finalityPolicy === null) {
+    return {
+      kind: "unconfigured",
+      reason: "trusted BLS finality key not configured",
+    };
+  }
+  if (finalityPolicy.mode !== "cluster") {
+    return {
+      kind: "invalid",
+      reason: "registry BLS finality trust policy mode multisig is not supported by Monoscan threshold-cluster verification",
+    };
+  }
+
+  const finalityEvidence = transcript.finalityEvidence ?? null;
+  if (
+    finalityEvidence
+    && !isWithinOptionalTrustBounds(
+      finalityEvidence.round,
+      finalityPolicy.validFromRound,
+      finalityPolicy.validToRound,
+    )
+  ) {
+    return {
+      kind: "invalid",
+      reason: `registry BLS finality trust policy is not valid at round ${finalityEvidence.round}`,
+    };
+  }
+
+  const chainId = finalityPolicy.chainId ?? policy?.chainId;
+  if (chainId == null) {
+    return {
+      kind: "invalid",
+      reason: "registry BLS finality trust policy requires a chain id",
+    };
+  }
+
+  return normalizeNoEvmFinalityTrustOptions({
+    chainId,
+    clusterPublicKey: finalityPolicy.clusterPublicKey,
+    committeeSize: finalityPolicy.committeeSize,
+    threshold: finalityPolicy.threshold,
+  });
+}
+
+function resolveNoEvmFinalityTrustOptions(
+  transcript: NoEvmReceiptProofMaterial,
+  trustOptions?: NoEvmFinalityVerificationTrustOptions | null,
+): NoEvmFinalityTrustResolution {
+  if (trustOptions === null) {
+    return {
+      kind: "unconfigured",
+      reason: "trusted BLS finality key not configured",
+    };
+  }
+  if (trustOptions !== undefined) {
+    return normalizeNoEvmFinalityTrustOptions(trustOptions);
+  }
+
+  const envResolution = noEvmFinalityTrustOptionsFromEnv();
+  return envResolution.kind === "unconfigured"
+    ? noEvmFinalityTrustOptionsFromRegistry(transcript)
+    : envResolution;
+}
+
 function noEvmArchiveTrustOptionsFromEnv(): NoEvmArchiveTrustResolution {
   const publicKeys = viteEnvString(NO_EVM_ARCHIVE_TRUST_ENV.publicKeys);
   const threshold = viteEnvString(NO_EVM_ARCHIVE_TRUST_ENV.threshold);
@@ -2257,6 +2355,67 @@ function noEvmArchiveTrustOptionsFromEnv(): NoEvmArchiveTrustResolution {
     publicKeys: publicKeys as string,
     threshold: threshold as string,
   });
+}
+
+function noEvmArchiveTrustOptionsFromRegistry(
+  transcript: NoEvmReceiptProofMaterial,
+): NoEvmArchiveTrustResolution {
+  let policy: NoEvmReceiptTrustPolicy | null;
+  try {
+    policy = noEvmReceiptTrustPolicyFromBundledRegistry();
+  } catch (error) {
+    return {
+      kind: "invalid",
+      reason: error instanceof Error
+        ? `registry archive signer trust policy invalid: ${error.message}`
+        : "registry archive signer trust policy invalid",
+    };
+  }
+
+  const archivePolicy = policy?.archive ?? null;
+  if (archivePolicy === null) {
+    return {
+      kind: "unconfigured",
+      reason: "trusted archive signer config not configured",
+    };
+  }
+
+  const blockHeight = transcript.blockHeight;
+  if (!isWithinOptionalTrustBounds(blockHeight, archivePolicy.validFromHeight, archivePolicy.validToHeight)) {
+    return {
+      kind: "invalid",
+      reason: `registry archive signer trust policy is not valid at block height ${blockHeight}`,
+    };
+  }
+
+  const activeSigners = archivePolicy.trustedSigners.filter((signer) =>
+    isWithinOptionalTrustBounds(blockHeight, signer.validFromHeight, signer.validToHeight),
+  );
+
+  return normalizeNoEvmArchiveTrustOptions({
+    publicKeys: activeSigners.map((signer) => signer.publicKey),
+    threshold: archivePolicy.threshold,
+  });
+}
+
+function resolveNoEvmArchiveTrustOptions(
+  transcript: NoEvmReceiptProofMaterial,
+  trustOptions?: NoEvmArchiveVerificationTrustOptions | null,
+): NoEvmArchiveTrustResolution {
+  if (trustOptions === null) {
+    return {
+      kind: "unconfigured",
+      reason: "trusted archive signer config not configured",
+    };
+  }
+  if (trustOptions !== undefined) {
+    return normalizeNoEvmArchiveTrustOptions(trustOptions);
+  }
+
+  const envResolution = noEvmArchiveTrustOptionsFromEnv();
+  return envResolution.kind === "unconfigured"
+    ? noEvmArchiveTrustOptionsFromRegistry(transcript)
+    : envResolution;
 }
 
 function noEvmFinalityMismatchReason(result: NoEvmBlsFinalityVerification): string {
@@ -2308,14 +2467,7 @@ export function verifyNoEvmReceiptFinalityEvidence(
   const finalityEvidence = transcript.finalityEvidence ?? null;
   if (!finalityEvidence) return null;
 
-  const trustResolution = trustOptions === null
-    ? {
-        kind: "unconfigured",
-        reason: "trusted BLS finality key not configured",
-      } as const
-    : trustOptions === undefined
-      ? noEvmFinalityTrustOptionsFromEnv()
-      : normalizeNoEvmFinalityTrustOptions(trustOptions);
+  const trustResolution = resolveNoEvmFinalityTrustOptions(transcript, trustOptions);
 
   if (trustResolution.kind === "unconfigured") {
     return {
@@ -2362,14 +2514,7 @@ export function verifyNoEvmReceiptArchiveProofSignatures(
   if (!archiveProof) return null;
 
   const signatureSource = noEvmArchiveSignatureSource(archiveProof);
-  const trustResolution = trustOptions === null
-    ? {
-        kind: "unconfigured",
-        reason: "trusted archive signer config not configured",
-      } as const
-    : trustOptions === undefined
-      ? noEvmArchiveTrustOptionsFromEnv()
-      : normalizeNoEvmArchiveTrustOptions(trustOptions);
+  const trustResolution = resolveNoEvmArchiveTrustOptions(transcript, trustOptions);
 
   if (trustResolution.kind === "unconfigured") {
     return {
