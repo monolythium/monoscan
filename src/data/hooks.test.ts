@@ -29,6 +29,7 @@ import {
   apiBlockTransactionsToRows,
   apiReceiptToRpcReceipt,
   apiTxToRpcTx,
+  applyNativeMarketOrderBookDeltas,
   assessBridgeTrustDisclosures,
   bridgeRouteDisclosureFailureDetails,
   bridgeTrustDisclosureDisplaySlice,
@@ -41,6 +42,7 @@ import {
   fetchNativeAgentState,
   fetchNativeMarketEvents,
   fetchNativeMarketOrderBook,
+  fetchNativeMarketOrderBookReplayDeltas,
   fetchNativeMarketState,
   fetchTxNativeReceipt,
   fetchMrcMetadataForTokenBalances,
@@ -460,6 +462,187 @@ describe("live-SDK seam", () => {
     expect(apiSpy).toHaveBeenCalledWith(marketId, 5);
     expect(rpcSpy).toHaveBeenCalledWith(marketId, 5);
     expect(result).toBe(response);
+  });
+
+  it("replays validated native market order-book deltas onto snapshots", async () => {
+    const marketId = `0x${"86".repeat(32)}`;
+    const placedOrder = `0x${"01".repeat(32)}`;
+    const cancelledOrder = `0x${"02".repeat(32)}`;
+    const snapshot = {
+      schemaVersion: 1,
+      marketId,
+      levels: 5,
+      bids: [{ price: "900", size: "10" }],
+      asks: [{ price: "1100", size: "5" }],
+    };
+    vi
+      .spyOn(ApiClient.prototype, "marketOrderBook")
+      .mockResolvedValue(apiEnvelope(snapshot) as any);
+    const replaySpy = vi
+      .spyOn(ApiClient.prototype, "get")
+      .mockResolvedValue(apiEnvelope({
+        schemaVersion: 1,
+        replay: true,
+        streamTopic: "nativeMarketOrderBook",
+        fromBlock: 101,
+        toBlock: 103,
+        limit: 10,
+        cursor: null,
+        nextCursor: null,
+        deltas: [
+          {
+            marketId,
+            orderId: placedOrder,
+            eventName: "market.spot.order_placed",
+            action: "upsert",
+            side: "bid",
+            price: "950",
+            quantity: "7",
+            remaining: "7",
+            status: "open",
+            blockHeight: 101,
+            txIndex: 0,
+            logIndex: 0,
+          },
+          {
+            marketId,
+            orderId: cancelledOrder,
+            eventName: "market.spot.order_cancelled",
+            action: "remove",
+            side: "ask",
+            price: "1100",
+            quantity: "2",
+            remaining: "0",
+            status: "cancelled",
+            blockHeight: 102,
+            txIndex: 0,
+            logIndex: 1,
+          },
+        ],
+      }) as any);
+
+    const result = await fetchNativeMarketOrderBook(marketId, 5, { toBlock: 103, replayLimit: 10 });
+
+    expect(replaySpy).toHaveBeenCalledWith("/native-market-orderbook-deltas", {
+      marketId,
+      fromBlock: 101,
+      toBlock: 103,
+      cursor: null,
+      limit: 10,
+    });
+    expect(result?.bids).toEqual([
+      { price: "950", size: "7" },
+      { price: "900", size: "10" },
+    ]);
+    expect(result?.asks).toEqual([{ price: "1100", size: "3" }]);
+  });
+
+  it("rejects malformed native market order-book replay payloads and keeps the snapshot fallback", async () => {
+    const marketId = `0x${"84".repeat(32)}`;
+    const snapshot = {
+      schemaVersion: 1,
+      marketId,
+      levels: 5,
+      bids: [{ price: "900", size: "10" }],
+      asks: [],
+    };
+    vi
+      .spyOn(ApiClient.prototype, "marketOrderBook")
+      .mockResolvedValue(apiEnvelope(snapshot) as any);
+    const malformedReplay = apiEnvelope({
+      schemaVersion: 1,
+      replay: true,
+      streamTopic: "nativeMarketOrderBook",
+      deltas: [{
+        marketId,
+        orderId: `0x${"03".repeat(32)}`,
+        eventName: "market.spot.order_placed",
+        action: "replace",
+        blockHeight: 101,
+        txIndex: 0,
+        logIndex: 0,
+      }],
+    });
+    vi
+      .spyOn(ApiClient.prototype, "get")
+      .mockResolvedValue(malformedReplay as any);
+
+    await expect(fetchNativeMarketOrderBookReplayDeltas({
+      marketId,
+      fromBlock: 101,
+      toBlock: 101,
+      limit: 10,
+    })).rejects.toThrow(/malformed/);
+    await expect(fetchNativeMarketOrderBook(marketId, 5, { toBlock: 101 })).resolves.toBe(snapshot);
+  });
+
+  it("applies replay rows without inventing levels when valid deltas omit book fields", () => {
+    const marketId = `0x${"83".repeat(32)}`;
+    const snapshot = {
+      schemaVersion: 1,
+      marketId,
+      levels: 5,
+      bids: [{ price: "900", size: "10" }],
+      asks: [],
+    };
+
+    const result = applyNativeMarketOrderBookDeltas(snapshot, [{
+      marketId,
+      orderId: `0x${"04".repeat(32)}`,
+      eventName: "market.spot.order_placed",
+      action: "upsert",
+      blockHeight: 101,
+      txIndex: 0,
+      logIndex: 0,
+    }], 5);
+
+    expect(result.bids).toEqual(snapshot.bids);
+    expect(result.asks).toEqual([]);
+  });
+
+  it("removes replay-added native order-book liquidity by order id", () => {
+    const marketId = `0x${"82".repeat(32)}`;
+    const orderId = `0x${"05".repeat(32)}`;
+    const snapshot = {
+      schemaVersion: 1,
+      marketId,
+      levels: 5,
+      bids: [{ price: "900", size: "10" }],
+      asks: [],
+    };
+
+    const result = applyNativeMarketOrderBookDeltas(snapshot, [
+      {
+        marketId,
+        orderId,
+        eventName: "market.spot.order_placed",
+        action: "upsert",
+        side: "bid",
+        price: "950",
+        quantity: "7",
+        remaining: "7",
+        status: "open",
+        blockHeight: 101,
+        txIndex: 0,
+        logIndex: 0,
+      },
+      {
+        marketId,
+        orderId,
+        eventName: "market.spot.order_settled",
+        action: "remove",
+        side: "bid",
+        price: "950",
+        quantity: "7",
+        remaining: "0",
+        status: "filled",
+        blockHeight: 102,
+        txIndex: 0,
+        logIndex: 1,
+      },
+    ], 5);
+
+    expect(result.bids).toEqual(snapshot.bids);
   });
 
   it("accepts only SDK-valid nativeMarketOrderBook stream deltas and bounds rows", () => {
