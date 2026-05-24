@@ -9,6 +9,7 @@ import {
   MrvNativeEvidenceCard,
   NativeAgentActionsCard,
   NativeAgentStateCard,
+  adr0039FeeDetailText,
   mrcPolicyAllowedAssetsSummary,
   mrcPolicyBodySummary,
   redemptionTicketStatusText,
@@ -331,6 +332,18 @@ describe("transactionFeeValueLabel", () => {
   it("falls back to fixture fee text only when no structured fee display exists", () => {
     expect(transactionFeeValueLabel(null, 0.012345, "LYTH")).toBe("0.0123 LYTH");
     expect(transactionFeeValueLabel(null, null)).toBe("—");
+  });
+});
+
+describe("adr0039FeeDetailText", () => {
+  it("relabels inherited fee terms before rendering explorer fee details", () => {
+    expect(adr0039FeeDetailText("gas price 10 gwei · gas used 42 · gas limit 100 · base fee per gas · total 1 wei"))
+      .toBe("execution unit price 10 lythoshi · execution units used 42 · execution unit limit 100 · base fee per execution unit · total 1 lythoshi");
+  });
+
+  it("keeps ADR-0039-native fee detail text unchanged", () => {
+    expect(adr0039FeeDetailText("cycles 42, state I/O 8, total 50000 lythoshi"))
+      .toBe("cycles 42, state I/O 8, total 50000 lythoshi");
   });
 });
 
