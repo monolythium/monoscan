@@ -79,7 +79,9 @@ import {
   queryClient,
   structuredNativeReceiptFee,
   txFeedToRows,
+  verifyNoEvmReceiptFinalityEvidence,
   verifyNoEvmReceiptProofConsistency,
+  type NoEvmFinalityVerificationTrustOptions,
   type NoEvmCompactReceiptProofTranscript,
   type NoEvmReceiptFinalityEvidence,
   type NoEvmReceiptProofTranscript,
@@ -207,6 +209,32 @@ function blsFinalityEvidence(round = 57): NoEvmReceiptFinalityEvidence {
       signersBitmap: "0xabcd",
       signerIndices: [1, 3],
       signerCount: 2,
+    },
+  };
+}
+
+const verifiedBlsClusterPublicKey =
+  "0xb77f27a88bfe18988cfcf68ba7462d188a0e655bdd68318c706a3b51887a61fa7d7a9c8843e26f91c91446819925db97";
+const verifiedBlsFinalitySignature =
+  "0xb52a7567f736afbda5e09d5af4bd8da36cff89c3e8d09ca4c98f8bffe5fbdca7af2437f1fbf92e4f52df8a54ed1c2de71954d1134637a675734db73acb4c0c545f4b3cd39577b4985e8a26b767a68d825c48f0a90e606d8ccbbd8885ef27fcd7";
+const verifiedBlsTrustOptions: NoEvmFinalityVerificationTrustOptions = {
+  chainId: 69_420,
+  clusterPublicKey: verifiedBlsClusterPublicKey,
+  committeeSize: 7,
+  threshold: 1,
+};
+
+function verifiedBlsFinalityEvidence(): NoEvmReceiptFinalityEvidence {
+  return {
+    schema: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA,
+    source: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE,
+    round: 58,
+    certificate: {
+      round: 58,
+      signature: verifiedBlsFinalitySignature,
+      signersBitmap: "0x08",
+      signerIndices: [3],
+      signerCount: 1,
     },
   };
 }
@@ -2957,9 +2985,113 @@ describe("API execution-unit transformations", () => {
       ],
     });
     expect(evidence?.proof?.validationErrors).toEqual([]);
+    expect(evidence?.proof?.finalityVerification).toMatchObject({
+      state: "unverified",
+      result: null,
+      reason: "trusted BLS finality key not configured",
+    });
     expect(evidence?.blockers).not.toContain(
       "native-receipt.noEvmProof must return a bounded receipts transcript or compact receipt inclusion proof before Monoscan can render no-EVM receipt proof evidence.",
     );
+  });
+
+  it("verifies BLS finality evidence when a trusted cluster key policy is supplied", () => {
+    const finalityEvidence = verifiedBlsFinalityEvidence();
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      txHash: `0x${"7f".repeat(32)}`,
+      blockHash: `0x${"39".repeat(32)}`,
+      blockHeight: 130,
+      finalityEvidence,
+    });
+
+    const verification = verifyNoEvmReceiptFinalityEvidence(noEvmProof, verifiedBlsTrustOptions);
+    expect(verification).toMatchObject({
+      state: "verified",
+      reason: null,
+      result: {
+        verified: true,
+        signatureValid: true,
+        acceptedSignatureCount: 1,
+        requiredSignatureCount: 1,
+      },
+    });
+
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"7f".repeat(32)}`,
+      blockNumber: 130n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"7f".repeat(32)}`,
+        blockHash: `0x${"39".repeat(32)}`,
+        blockHeight: 130,
+        txIndex: 0,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof,
+      }),
+    } as any, verifiedBlsTrustOptions);
+
+    expect(evidence?.proof?.finalityVerification).toMatchObject({
+      state: "verified",
+      reason: null,
+      result: {
+        verified: true,
+        signerCountMatches: true,
+        signerBitmapMatchesIndices: true,
+        signerIndicesInRange: true,
+        thresholdMet: true,
+        signatureValid: true,
+      },
+    });
+  });
+
+  it("marks configured BLS finality evidence mismatched for the wrong chain id", () => {
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      txHash: `0x${"70".repeat(32)}`,
+      blockHash: `0x${"3a".repeat(32)}`,
+      blockHeight: 131,
+      finalityEvidence: verifiedBlsFinalityEvidence(),
+    });
+
+    const verification = verifyNoEvmReceiptFinalityEvidence(noEvmProof, {
+      ...verifiedBlsTrustOptions,
+      chainId: 69_421,
+    });
+
+    expect(verification).toMatchObject({
+      state: "mismatch",
+      result: {
+        verified: false,
+        signatureValid: false,
+      },
+      reason: "BLS signature invalid",
+    });
+  });
+
+  it("fails closed when configured BLS finality trust policy is malformed", () => {
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      txHash: `0x${"71".repeat(32)}`,
+      blockHash: `0x${"3b".repeat(32)}`,
+      blockHeight: 132,
+      finalityEvidence: verifiedBlsFinalityEvidence(),
+    });
+
+    const verification = verifyNoEvmReceiptFinalityEvidence(noEvmProof, {
+      ...verifiedBlsTrustOptions,
+      clusterPublicKey: "0x12",
+    });
+
+    expect(verification).toMatchObject({
+      state: "mismatch",
+      result: null,
+      reason: "trusted BLS finality config invalid: trusted BLS cluster public key must be 48 bytes",
+    });
   });
 
   it("recomputes no-EVM receipt transcript hashes with the runtime receipts root algorithm", () => {
