@@ -2405,6 +2405,16 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
       ? `present · ${archiveSignatureCount.toLocaleString()} archive signature${archiveSignatureCount === 1 ? "" : "s"} · validator finality not asserted`
       : "absent · validator finality not asserted"
     : null;
+  const finalityEvidence = proofTranscript?.finalityEvidence ?? null;
+  const finalityEvidenceValue = proofTranscript
+    ? finalityEvidence
+      ? `present · BLS round certificate material · round ${finalityEvidence.round.toLocaleString()} · cert round ${finalityEvidence.certificate.round.toLocaleString()} · signers ${finalityEvidence.certificate.signerCount.toLocaleString()} · signature ${_short(finalityEvidence.certificate.signature, 18)} · bitmap ${_short(finalityEvidence.certificate.signersBitmap, 18)} · not a full seven-node live finality proof`
+      : "absent · BLS round certificate not returned; no live finality proof asserted"
+    : null;
+  const missingProofMaterial = proofTranscript?.missingProofMaterial ?? [];
+  const missingProofMaterialValue = missingProofMaterial.length > 0
+    ? missingProofMaterial.join("; ")
+    : null;
   const proofConsistencyValue = proofConsistency
     ? proofConsistency.state === "verified"
       ? compactProofTranscript
@@ -2438,6 +2448,8 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
         {compactTargetValue && <KV label="Target receipt" value={compactTargetValue} mono/>}
         {archiveBindingValue && <KV label="Archive binding" value={archiveBindingValue} mono/>}
         {archiveSignaturesValue && <KV label="Archive signatures" value={archiveSignaturesValue} mono/>}
+        {finalityEvidenceValue && <KV label="Finality evidence" value={finalityEvidenceValue} mono/>}
+        {missingProofMaterialValue && <KV label="Missing proof material" value={missingProofMaterialValue} mono/>}
         {proofTranscriptValue && <KV label="Receipt transcript" value={proofTranscriptValue} mono/>}
       </div>
       {evidence.blockers.length > 0 && (
