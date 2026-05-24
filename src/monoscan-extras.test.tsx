@@ -42,6 +42,7 @@ import {
   type MrcMetadataResponse,
   type NativeAgentStateDisplayRows,
   type NativeAgentStateDisplayRow,
+  type NoEvmFinalityVerificationTrustOptions,
   type NoEvmCompactReceiptProofTranscript,
   type NoEvmReceiptFinalityEvidence,
   type NoEvmReceiptProofTranscript,
@@ -149,6 +150,32 @@ function blsFinalityEvidence(round = 57): NoEvmReceiptFinalityEvidence {
       signersBitmap: "0xabcd",
       signerIndices: [1, 3],
       signerCount: 2,
+    },
+  };
+}
+
+const verifiedBlsClusterPublicKey =
+  "0xb77f27a88bfe18988cfcf68ba7462d188a0e655bdd68318c706a3b51887a61fa7d7a9c8843e26f91c91446819925db97";
+const verifiedBlsFinalitySignature =
+  "0xb52a7567f736afbda5e09d5af4bd8da36cff89c3e8d09ca4c98f8bffe5fbdca7af2437f1fbf92e4f52df8a54ed1c2de71954d1134637a675734db73acb4c0c545f4b3cd39577b4985e8a26b767a68d825c48f0a90e606d8ccbbd8885ef27fcd7";
+const verifiedBlsTrustOptions: NoEvmFinalityVerificationTrustOptions = {
+  chainId: 69_420,
+  clusterPublicKey: verifiedBlsClusterPublicKey,
+  committeeSize: 7,
+  threshold: 1,
+};
+
+function verifiedBlsFinalityEvidence(): NoEvmReceiptFinalityEvidence {
+  return {
+    schema: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA,
+    source: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE,
+    round: 58,
+    certificate: {
+      round: 58,
+      signature: verifiedBlsFinalitySignature,
+      signersBitmap: "0x08",
+      signerIndices: [3],
+      signerCount: 1,
     },
   };
 }
@@ -835,10 +862,62 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain("present · BLS round certificate material · round 57 · cert round 57 · signers 2");
     expect(html).toContain("signature 0x1234");
     expect(html).toContain("bitmap 0xabcd");
-    expect(html).toContain("not a full seven-node live finality proof");
+    expect(html).toContain("unverified · trusted BLS finality key not configured");
     expect(html).toContain("Archive signatures");
     expect(html).toContain("absent · validator finality not asserted");
     expect(html).not.toContain("Finality proof");
+  });
+
+  it("renders verified BLS round certificate finality evidence only with configured trust", () => {
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      finalityEvidence: verifiedBlsFinalityEvidence(),
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"ae".repeat(32)}`,
+      blockNumber: 322n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      txHash: `0x${"ae".repeat(32)}`,
+      blockHash: `0x${"ce".repeat(32)}`,
+      blockHeight: 322,
+      txIndex: 0,
+      schema: "riscv.receipt.v1",
+      txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+      artifactHash: `0x${"ef".repeat(32)}`,
+      receiptCommitment: `0x${"1a".repeat(32)}`,
+      noEvmProof,
+      counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
+      fee: {
+        total_lythoshi: "12",
+        total_lyth: "0.00000012",
+        cycles_used: 12,
+        base_price_per_cycle_lythoshi: "1",
+        state_io_units: 1,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "0",
+      },
+      reverted: false,
+      nativeDeltaCount: 1,
+      eventCount: 2,
+      events: [],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    } as any, verifiedBlsTrustOptions);
+
+    const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
+
+    expect(html).toContain("present · BLS round certificate material · round 58 · cert round 58 · signers 1");
+    expect(html).toContain("verified · configured trusted BLS cluster key · accepted 1/1 signatures");
+    expect(html).not.toContain("trusted BLS finality key not configured");
   });
 
   it("renders compact mismatch details for a well-formed no-EVM receipt transcript", () => {

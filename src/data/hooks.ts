@@ -77,6 +77,7 @@ import {
   type NativeAgentStateResponse,
   type NativeEventsFilter,
   type NativeEventsResponse,
+  type NoEvmBlsFinalityVerification,
   type NativeMarketOrderBookStreamPayload,
   type NativeReceiptResponse,
   type NativeReceiptFee,
@@ -852,6 +853,21 @@ export interface NoEvmReceiptProofConsistency {
   mismatches: string[];
 }
 
+export type NoEvmFinalityVerificationState = "verified" | "unverified" | "mismatch";
+
+export interface NoEvmFinalityVerificationTrustOptions {
+  chainId: number | bigint | string;
+  clusterPublicKey: string | Uint8Array | readonly number[];
+  committeeSize: number | bigint | string;
+  threshold: number | bigint | string;
+}
+
+export interface NoEvmReceiptFinalityVerification {
+  state: NoEvmFinalityVerificationState;
+  result: NoEvmBlsFinalityVerification | null;
+  reason: string | null;
+}
+
 export interface MrvNativeProofEvidence {
   source: string;
   summary: string;
@@ -861,6 +877,7 @@ export interface MrvNativeProofEvidence {
   raw: unknown;
   transcript: NoEvmReceiptProofMaterial | null;
   consistency: NoEvmReceiptProofConsistency | null;
+  finalityVerification: NoEvmReceiptFinalityVerification | null;
   validationErrors: string[];
 }
 
@@ -1845,6 +1862,234 @@ function bytesToHex(bytes: Uint8Array): string {
     .join("")}`;
 }
 
+interface NormalizedNoEvmFinalityTrustOptions {
+  chainId: number | bigint;
+  clusterPublicKey: Uint8Array;
+  committeeSize: number;
+  threshold: number;
+}
+
+type NoEvmFinalityTrustResolution =
+  | { kind: "configured"; options: NormalizedNoEvmFinalityTrustOptions }
+  | { kind: "unconfigured"; reason: string }
+  | { kind: "invalid"; reason: string };
+
+const NO_EVM_FINALITY_TRUST_ENV = {
+  chainId: ["VITE_MONOSCAN_CHAIN_ID", "VITE_MONO_CHAIN_ID"],
+  clusterPublicKey: [
+    "VITE_MONOSCAN_TRUSTED_BLS_CLUSTER_PUBKEY",
+    "VITE_MONO_TRUSTED_BLS_CLUSTER_PUBKEY",
+  ],
+  committeeSize: [
+    "VITE_MONOSCAN_TRUSTED_BLS_COMMITTEE_SIZE",
+    "VITE_MONO_TRUSTED_BLS_COMMITTEE_SIZE",
+  ],
+  threshold: [
+    "VITE_MONOSCAN_TRUSTED_BLS_THRESHOLD",
+    "VITE_MONO_TRUSTED_BLS_THRESHOLD",
+  ],
+} as const;
+
+function viteEnvString(keys: readonly string[]): string | null {
+  const env = import.meta.env as Record<string, unknown>;
+  for (const key of keys) {
+    const value = env[key];
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+  }
+  return null;
+}
+
+function parseNonNegativeU64Input(
+  value: number | bigint | string,
+  label: string,
+  errors: string[],
+): number | bigint | null {
+  try {
+    const parsed = typeof value === "bigint"
+      ? value
+      : typeof value === "number"
+        ? BigInt(value)
+        : BigInt(value.trim());
+    if (parsed < 0n) {
+      errors.push(`${label} must be a non-negative integer`);
+      return null;
+    }
+    return parsed <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(parsed) : parsed;
+  } catch {
+    errors.push(`${label} must be a non-negative integer`);
+    return null;
+  }
+}
+
+function parsePositiveSafeIntegerInput(
+  value: number | bigint | string,
+  label: string,
+  errors: string[],
+): number | null {
+  try {
+    const parsed = typeof value === "bigint"
+      ? value
+      : typeof value === "number"
+        ? BigInt(value)
+        : BigInt(value.trim());
+    if (parsed <= 0n || parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+      errors.push(`${label} must be a positive safe integer`);
+      return null;
+    }
+    return Number(parsed);
+  } catch {
+    errors.push(`${label} must be a positive safe integer`);
+    return null;
+  }
+}
+
+function normalizeFinalityClusterPublicKey(
+  value: string | Uint8Array | readonly number[],
+  errors: string[],
+): Uint8Array | null {
+  const bytes = typeof value === "string"
+    ? hexBytesToUint8Array(value)
+    : new Uint8Array(value);
+  if (!bytes || bytes.length !== 48) {
+    errors.push("trusted BLS cluster public key must be 48 bytes");
+    return null;
+  }
+  return bytes;
+}
+
+function normalizeNoEvmFinalityTrustOptions(
+  options: NoEvmFinalityVerificationTrustOptions,
+): NoEvmFinalityTrustResolution {
+  const errors: string[] = [];
+  const chainId = parseNonNegativeU64Input(options.chainId, "trusted BLS chain id", errors);
+  const clusterPublicKey = normalizeFinalityClusterPublicKey(options.clusterPublicKey, errors);
+  const committeeSize = parsePositiveSafeIntegerInput(
+    options.committeeSize,
+    "trusted BLS committee size",
+    errors,
+  );
+  const threshold = parsePositiveSafeIntegerInput(
+    options.threshold,
+    "trusted BLS threshold",
+    errors,
+  );
+
+  if (committeeSize !== null && threshold !== null && threshold > committeeSize) {
+    errors.push("trusted BLS threshold cannot exceed committee size");
+  }
+
+  if (errors.length > 0 || chainId === null || clusterPublicKey === null || committeeSize === null || threshold === null) {
+    return { kind: "invalid", reason: `trusted BLS finality config invalid: ${errors.join("; ")}` };
+  }
+
+  return {
+    kind: "configured",
+    options: {
+      chainId,
+      clusterPublicKey,
+      committeeSize,
+      threshold,
+    },
+  };
+}
+
+function noEvmFinalityTrustOptionsFromEnv(): NoEvmFinalityTrustResolution {
+  const chainId = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.chainId);
+  const clusterPublicKey = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.clusterPublicKey);
+  const committeeSize = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.committeeSize);
+  const threshold = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.threshold);
+  const values = [chainId, clusterPublicKey, committeeSize, threshold];
+
+  if (values.every((value) => value === null)) {
+    return {
+      kind: "unconfigured",
+      reason: "trusted BLS finality key not configured",
+    };
+  }
+
+  const missing: string[] = [];
+  if (chainId === null) missing.push(NO_EVM_FINALITY_TRUST_ENV.chainId[0]);
+  if (clusterPublicKey === null) missing.push(NO_EVM_FINALITY_TRUST_ENV.clusterPublicKey[0]);
+  if (committeeSize === null) missing.push(NO_EVM_FINALITY_TRUST_ENV.committeeSize[0]);
+  if (threshold === null) missing.push(NO_EVM_FINALITY_TRUST_ENV.threshold[0]);
+  if (missing.length > 0) {
+    return {
+      kind: "invalid",
+      reason: `trusted BLS finality config incomplete: missing ${missing.join(", ")}`,
+    };
+  }
+
+  return normalizeNoEvmFinalityTrustOptions({
+    chainId: chainId as string,
+    clusterPublicKey: clusterPublicKey as string,
+    committeeSize: committeeSize as string,
+    threshold: threshold as string,
+  });
+}
+
+function noEvmFinalityMismatchReason(result: NoEvmBlsFinalityVerification): string {
+  const issues: string[] = [];
+  if (!result.signerCountMatches) issues.push("signer count mismatch");
+  if (!result.signerBitmapMatchesIndices) issues.push("signer bitmap/index mismatch");
+  if (!result.signerIndicesInRange) issues.push("signer index outside configured committee");
+  if (!result.allSignersTrusted) issues.push("untrusted signer index");
+  if (!result.thresholdMet) issues.push("threshold not met");
+  if (!result.signatureValid) issues.push("BLS signature invalid");
+  return issues.join("; ") || "BLS finality evidence did not satisfy configured trust policy";
+}
+
+export function verifyNoEvmReceiptFinalityEvidence(
+  transcript: NoEvmReceiptProofMaterial,
+  trustOptions?: NoEvmFinalityVerificationTrustOptions | null,
+): NoEvmReceiptFinalityVerification | null {
+  const finalityEvidence = transcript.finalityEvidence ?? null;
+  if (!finalityEvidence) return null;
+
+  const trustResolution = trustOptions === null
+    ? {
+        kind: "unconfigured",
+        reason: "trusted BLS finality key not configured",
+      } as const
+    : trustOptions === undefined
+      ? noEvmFinalityTrustOptionsFromEnv()
+      : normalizeNoEvmFinalityTrustOptions(trustOptions);
+
+  if (trustResolution.kind === "unconfigured") {
+    return {
+      state: "unverified",
+      result: null,
+      reason: trustResolution.reason,
+    };
+  }
+  if (trustResolution.kind === "invalid") {
+    return {
+      state: "mismatch",
+      result: null,
+      reason: trustResolution.reason,
+    };
+  }
+
+  try {
+    const result = CoreSdk.verifyNoEvmFinalityEvidenceThreshold(
+      finalityEvidence as Parameters<typeof CoreSdk.verifyNoEvmFinalityEvidenceThreshold>[0],
+      trustResolution.options,
+    );
+    return {
+      state: result.verified ? "verified" : "mismatch",
+      result,
+      reason: result.verified ? null : noEvmFinalityMismatchReason(result),
+    };
+  } catch (error) {
+    return {
+      state: "mismatch",
+      result: null,
+      reason: error instanceof Error
+        ? error.message
+        : "BLS finality evidence verification failed",
+    };
+  }
+}
+
 function concatUint8Arrays(parts: Uint8Array[]): Uint8Array {
   const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
   const combined = new Uint8Array(totalLength);
@@ -2271,15 +2516,23 @@ function proofEvidenceBlockerLabel(proofKind: NoEvmReceiptProofKind | null): str
   return proofKind === "compactInclusion" ? "compact receipt inclusion proof" : "bounded receipts transcript";
 }
 
-function noEvmReceiptProofEvidence(source: string, value: unknown): MrvNativeProofEvidence {
+function noEvmReceiptProofEvidence(
+  source: string,
+  value: unknown,
+  finalityTrustOptions?: NoEvmFinalityVerificationTrustOptions | null,
+): MrvNativeProofEvidence {
   const { transcript, errors } = validateNoEvmReceiptProofTranscript(value);
   const consistency = transcript ? verifyNoEvmReceiptProofConsistency(transcript) : null;
   const proofKind = transcript ? noEvmReceiptProofKind(transcript) : detectNoEvmReceiptProofKind(value);
+  const finalityVerification = transcript
+    ? verifyNoEvmReceiptFinalityEvidence(transcript, finalityTrustOptions)
+    : null;
   return {
     source,
     raw: value,
     transcript,
     consistency,
+    finalityVerification,
     proofKind,
     historySource: transcript ? noEvmReceiptProofHistorySource(transcript) : null,
     materialLabel: transcript ? noEvmReceiptProofMaterialLabel(transcript) : null,
@@ -2323,6 +2576,7 @@ function pqCheckpointSummary(decoded: unknown): string | null {
 export function mrvNativeTransactionEvidence(
   decoded: DecodeTxResponse | Record<string, unknown> | null | undefined,
   nativeReceipt: NativeReceiptResponse<unknown> | Record<string, unknown> | null | undefined,
+  finalityTrustOptions?: NoEvmFinalityVerificationTrustOptions | null,
 ): MrvNativeTransactionEvidence | null {
   const extension = findMrvNativeExtension(decoded);
   const receiptTxType = readNumberField(nativeReceipt, ["txType", "tx_type"]);
@@ -2342,7 +2596,7 @@ export function mrvNativeTransactionEvidence(
     ?? readNumberField(nativeReceipt, ["blockHeight", "blockNumber", "block_height", "block_number"]);
   const proofField = readNativeNoEvmProofField(nativeReceipt);
   const proof = proofField.state === "present"
-    ? noEvmReceiptProofEvidence(proofField.source, proofField.value)
+    ? noEvmReceiptProofEvidence(proofField.source, proofField.value, finalityTrustOptions)
     : null;
   const submittedState: MrvNativeEvidenceState = extension
     ? (extension.validMrvV1 ? "present" : "invalid")

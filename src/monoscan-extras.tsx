@@ -2409,9 +2409,15 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
       : "absent · validator finality not asserted"
     : null;
   const finalityEvidence = proofTranscript?.finalityEvidence ?? null;
+  const finalityVerification = evidence.proof?.finalityVerification ?? null;
+  const finalityVerificationValue = finalityVerification
+    ? finalityVerification.state === "verified"
+      ? `verified · configured trusted BLS cluster key · accepted ${finalityVerification.result?.acceptedSignatureCount.toLocaleString() ?? "—"}/${finalityVerification.result?.requiredSignatureCount.toLocaleString() ?? "—"} signatures`
+      : `${finalityVerification.state} · ${finalityVerification.reason ?? "trusted BLS finality verification unavailable"}`
+    : null;
   const finalityEvidenceValue = proofTranscript
     ? finalityEvidence
-      ? `present · BLS round certificate material · round ${finalityEvidence.round.toLocaleString()} · cert round ${finalityEvidence.certificate.round.toLocaleString()} · signers ${finalityEvidence.certificate.signerCount.toLocaleString()} · signature ${_short(finalityEvidence.certificate.signature, 18)} · bitmap ${_short(finalityEvidence.certificate.signersBitmap, 18)} · not a full seven-node live finality proof`
+      ? `present · BLS round certificate material · round ${finalityEvidence.round.toLocaleString()} · cert round ${finalityEvidence.certificate.round.toLocaleString()} · signers ${finalityEvidence.certificate.signerCount.toLocaleString()} · signature ${_short(finalityEvidence.certificate.signature, 18)} · bitmap ${_short(finalityEvidence.certificate.signersBitmap, 18)}${finalityVerificationValue ? ` · ${finalityVerificationValue}` : " · trusted BLS finality key not configured"}`
       : "absent · BLS round certificate not returned; no live finality proof asserted"
     : null;
   const missingProofMaterial = proofTranscript?.missingProofMaterial ?? [];
