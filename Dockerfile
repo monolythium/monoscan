@@ -12,7 +12,7 @@ ARG MONO_CORE_SDK_REPO=https://github.com/monolythium/mono-core-sdk.git
 # Pin the SDK commit used by Monoscan's API-client integration. Docker build
 # cache cannot see when a remote branch moves, so a floating `master` ref can
 # keep serving stale dist files until the cache is manually busted.
-ARG MONO_CORE_SDK_REF=ffeb897e4b710b4ee993a0c78bdde3f505009ae6
+ARG MONO_CORE_SDK_REF=59fd6aae22556553aa6dd4d75977da1fea9c2c1e
 RUN git clone "${MONO_CORE_SDK_REPO}" /mono-core-sdk \
   && cd /mono-core-sdk \
   && git checkout "${MONO_CORE_SDK_REF}" \
