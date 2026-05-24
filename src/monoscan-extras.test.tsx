@@ -33,6 +33,8 @@ import {
   NO_EVM_RECEIPT_CODEC,
   NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
   NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+  NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA,
+  NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE,
   NO_EVM_RECEIPT_PROOF_SCHEMA,
   NO_EVM_RECEIPT_PROOF_TYPE,
   mrvNativeTransactionEvidence,
@@ -41,6 +43,7 @@ import {
   type NativeAgentStateDisplayRows,
   type NativeAgentStateDisplayRow,
   type NoEvmCompactReceiptProofTranscript,
+  type NoEvmReceiptFinalityEvidence,
   type NoEvmReceiptProofTranscript,
 } from "./data/hooks";
 
@@ -135,6 +138,21 @@ function compactReceiptLeafHash(receipt: Uint8Array, txIndex: number): string {
   ]));
 }
 
+function blsFinalityEvidence(round = 57): NoEvmReceiptFinalityEvidence {
+  return {
+    schema: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA,
+    source: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE,
+    round,
+    certificate: {
+      round,
+      signature: "0x1234",
+      signersBitmap: "0xabcd",
+      signerIndices: [1, 3],
+      signerCount: 2,
+    },
+  };
+}
+
 function compactNoEvmReceiptProofTranscript(
   overrides: Partial<NoEvmCompactReceiptProofTranscript> = {},
 ): NoEvmCompactReceiptProofTranscript {
@@ -172,9 +190,11 @@ function compactNoEvmReceiptProofTranscript(
       contentHash: `0x${"55".repeat(32)}`,
       signatures: [],
     },
+    finalityEvidence: null,
     targetReceiptBytes,
     missingProofMaterial: [
       "signed archive or snapshot manifest binding receipt bytes to blockHash and receiptsRoot",
+      "BLS aggregate finality certificate for block round",
     ],
     ...overrides,
   };
@@ -615,7 +635,71 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain("content 0x5555555555555555");
     expect(html).toContain("Archive signatures");
     expect(html).toContain("absent · validator finality not asserted");
+    expect(html).toContain("Finality evidence");
+    expect(html).toContain("absent · BLS round certificate not returned; no live finality proof asserted");
+    expect(html).toContain("Missing proof material");
+    expect(html).toContain("BLS aggregate finality certificate for block round");
     expect(html).not.toContain("live block cache");
+    expect(html).not.toContain("Finality proof");
+  });
+
+  it("renders BLS round certificate finality evidence without claiming full live finality", () => {
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      finalityEvidence: blsFinalityEvidence(57),
+      missingProofMaterial: [
+        "signed archive or snapshot manifest binding receipt bytes to blockHash and receiptsRoot",
+      ],
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"ab".repeat(32)}`,
+      blockNumber: 321n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      txHash: `0x${"ab".repeat(32)}`,
+      blockHash: `0x${"cd".repeat(32)}`,
+      blockHeight: 321,
+      txIndex: 0,
+      schema: "riscv.receipt.v1",
+      txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+      artifactHash: `0x${"ef".repeat(32)}`,
+      receiptCommitment: `0x${"19".repeat(32)}`,
+      noEvmProof,
+      counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
+      fee: {
+        total_lythoshi: "12",
+        total_lyth: "0.00000012",
+        cycles_used: 12,
+        base_price_per_cycle_lythoshi: "1",
+        state_io_units: 1,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "0",
+      },
+      reverted: false,
+      nativeDeltaCount: 1,
+      eventCount: 2,
+      events: [],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    } as any);
+
+    const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
+
+    expect(html).toContain("Finality evidence");
+    expect(html).toContain("present · BLS round certificate material · round 57 · cert round 57 · signers 2");
+    expect(html).toContain("signature 0x1234");
+    expect(html).toContain("bitmap 0xabcd");
+    expect(html).toContain("not a full seven-node live finality proof");
+    expect(html).toContain("Archive signatures");
+    expect(html).toContain("absent · validator finality not asserted");
     expect(html).not.toContain("Finality proof");
   });
 

@@ -737,6 +737,8 @@ export const NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA = "mono.no_evm_receipt_compac
 export const NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM = "binary-keccak-receipt-tree";
 export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA = "mono.no_evm_receipt_archive_binding.v1";
 export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE = "indexerReceiptArchiveContentDigest";
+export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA = "mono.no_evm_receipt_finality.v1";
+export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE = "blsRoundCertificate";
 
 const HEX_BYTES_RE = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HASH32_RE = /^0x[0-9a-fA-F]{64}$/;
@@ -760,6 +762,7 @@ export interface NoEvmReceiptProofTranscript {
   proofType: typeof NO_EVM_RECEIPT_PROOF_TYPE;
   historySource?: "legacyUnspecified" | "liveBlockCache";
   archiveProof?: null;
+  finalityEvidence?: NoEvmReceiptFinalityEvidence | null;
   rootAlgorithm: string;
   receiptCodec: string;
   blockHash: string;
@@ -770,6 +773,7 @@ export interface NoEvmReceiptProofTranscript {
   txIndex: number;
   receiptCount: number;
   receiptTranscript: string[];
+  missingProofMaterial?: string[];
 }
 
 export interface NoEvmCompactInclusionProof {
@@ -789,6 +793,21 @@ export interface NoEvmReceiptArchiveProofBinding {
   signatures: unknown[];
 }
 
+export interface NoEvmReceiptBlsCertificate {
+  round: number;
+  signature: string;
+  signersBitmap: string;
+  signerIndices: number[];
+  signerCount: number;
+}
+
+export interface NoEvmReceiptFinalityEvidence {
+  schema: typeof NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA;
+  source: typeof NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE;
+  round: number;
+  certificate: NoEvmReceiptBlsCertificate;
+}
+
 export interface NoEvmCompactReceiptProofTranscript {
   schema: typeof NO_EVM_RECEIPT_PROOF_SCHEMA;
   proofKind: "compactInclusion";
@@ -805,6 +824,7 @@ export interface NoEvmCompactReceiptProofTranscript {
   receiptCount: number;
   compactInclusionProof: NoEvmCompactInclusionProof;
   archiveProof?: NoEvmReceiptArchiveProofBinding | null;
+  finalityEvidence?: NoEvmReceiptFinalityEvidence | null;
   targetReceiptBytes: string;
   receiptTranscript?: string[];
   missingProofMaterial?: string[];
@@ -1632,6 +1652,112 @@ function readArchiveProofBinding(
   };
 }
 
+function readBlsCertificate(
+  value: unknown,
+  errors: string[],
+): NoEvmReceiptBlsCertificate | null {
+  const row = unknownRecord(value);
+  if (!row) {
+    errors.push("finalityEvidence.certificate must be an object");
+    return null;
+  }
+
+  const startErrorCount = errors.length;
+  const round = readTranscriptNumber(row, "round", errors, "finalityEvidence.certificate.round");
+  const signature = readTranscriptString(row, "signature", errors, "finalityEvidence.certificate.signature");
+  const signersBitmap = readTranscriptString(row, "signersBitmap", errors, "finalityEvidence.certificate.signersBitmap");
+  const signerCount = readTranscriptNumber(row, "signerCount", errors, "finalityEvidence.certificate.signerCount");
+  const signerIndicesValue = row.signerIndices;
+  const signerIndices: number[] = [];
+
+  if (signature !== null && !HEX_BYTES_RE.test(signature)) {
+    errors.push("finalityEvidence.certificate.signature must be a 0x byte blob");
+  }
+  if (signersBitmap !== null && !HEX_BYTES_RE.test(signersBitmap)) {
+    errors.push("finalityEvidence.certificate.signersBitmap must be a 0x byte blob");
+  }
+  if (!Array.isArray(signerIndicesValue)) {
+    errors.push("finalityEvidence.certificate.signerIndices must be an array");
+  } else {
+    signerIndicesValue.forEach((item, index) => {
+      const value = typeof item === "bigint"
+        ? bigToNum(item)
+        : typeof item === "string" && item.trim() !== ""
+          ? Number(item)
+          : item;
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+        errors.push(`finalityEvidence.certificate.signerIndices[${index}] must be a non-negative integer`);
+      } else {
+        signerIndices.push(value);
+      }
+    });
+  }
+
+  if (
+    errors.length > startErrorCount
+    || round === null
+    || signature === null
+    || signersBitmap === null
+    || signerCount === null
+  ) {
+    return null;
+  }
+
+  return {
+    round,
+    signature,
+    signersBitmap,
+    signerIndices,
+    signerCount,
+  };
+}
+
+function readFinalityEvidence(
+  value: unknown,
+  errors: string[],
+): NoEvmReceiptFinalityEvidence | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const row = unknownRecord(value);
+  if (!row) {
+    errors.push("finalityEvidence must be an object");
+    return undefined;
+  }
+
+  const startErrorCount = errors.length;
+  const schema = readTranscriptString(row, "schema", errors, "finalityEvidence.schema");
+  const source = readTranscriptString(row, "source", errors, "finalityEvidence.source");
+  const round = readTranscriptNumber(row, "round", errors, "finalityEvidence.round");
+  const certificate = readBlsCertificate(row.certificate, errors);
+
+  if (schema !== null && schema !== NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA) {
+    errors.push(`finalityEvidence.schema must be ${NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA}`);
+  }
+  if (source !== null && source !== NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE) {
+    errors.push(`finalityEvidence.source must be ${NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE}`);
+  }
+  if (round !== null && certificate !== null && round !== certificate.round) {
+    errors.push("finalityEvidence.round must match finalityEvidence.certificate.round");
+  }
+
+  if (
+    errors.length > startErrorCount
+    || schema !== NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA
+    || source !== NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE
+    || round === null
+    || certificate === null
+  ) {
+    return undefined;
+  }
+
+  return {
+    schema,
+    source,
+    round,
+    certificate,
+  };
+}
+
 function u32Le(value: number): Uint8Array {
   const bytes = new Uint8Array(4);
   bytes[0] = value & 0xff;
@@ -1901,6 +2027,8 @@ export function validateNoEvmReceiptProofTranscript(
   const blockHeight = readTranscriptNumber(row, "blockHeight", errors);
   const txIndex = readTranscriptNumber(row, "txIndex", errors);
   const receiptCount = readTranscriptNumber(row, "receiptCount", errors);
+  const finalityEvidence = readFinalityEvidence(row.finalityEvidence, errors);
+  const missingProofMaterial = readOptionalStringArray(row, "missingProofMaterial", errors);
 
   if (schema !== null && schema !== NO_EVM_RECEIPT_PROOF_SCHEMA) {
     errors.push(`schema must be ${NO_EVM_RECEIPT_PROOF_SCHEMA}`);
@@ -1919,7 +2047,6 @@ export function validateNoEvmReceiptProofTranscript(
     const compactInclusionProof = readCompactInclusionProof(row.compactInclusionProof, errors);
     const archiveProof = readArchiveProofBinding(row.archiveProof, errors);
     const targetReceiptBytes = readTranscriptString(row, "targetReceiptBytes", errors);
-    const missingProofMaterial = readOptionalStringArray(row, "missingProofMaterial", errors);
     if (proofType !== null && proofType !== NO_EVM_COMPACT_RECEIPT_PROOF_TYPE) {
       errors.push(`proofType must be ${NO_EVM_COMPACT_RECEIPT_PROOF_TYPE}`);
     }
@@ -1979,6 +2106,7 @@ export function validateNoEvmReceiptProofTranscript(
         receiptCount,
         compactInclusionProof,
         ...(archiveProof !== undefined ? { archiveProof } : {}),
+        ...(finalityEvidence !== undefined ? { finalityEvidence } : {}),
         targetReceiptBytes,
         ...(missingProofMaterial ? { missingProofMaterial } : {}),
       },
@@ -2033,6 +2161,8 @@ export function validateNoEvmReceiptProofTranscript(
     txIndex,
     receiptCount,
     receiptTranscript,
+    ...(finalityEvidence !== undefined ? { finalityEvidence } : {}),
+    ...(missingProofMaterial ? { missingProofMaterial } : {}),
   };
   if (Object.prototype.hasOwnProperty.call(row, "proofKind")) {
     transcript.proofKind = "boundedCacheTranscript";

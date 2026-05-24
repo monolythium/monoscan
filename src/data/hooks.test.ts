@@ -60,6 +60,8 @@ import {
   NO_EVM_RECEIPT_CODEC,
   NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
   NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+  NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA,
+  NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE,
   NO_EVM_RECEIPT_PROOF_SCHEMA,
   NO_EVM_RECEIPT_PROOF_TYPE,
   mrvNativeTransactionEvidence,
@@ -79,6 +81,7 @@ import {
   txFeedToRows,
   verifyNoEvmReceiptProofConsistency,
   type NoEvmCompactReceiptProofTranscript,
+  type NoEvmReceiptFinalityEvidence,
   type NoEvmReceiptProofTranscript,
 } from "./hooks";
 import { isWebSocketEnabled, resetRpcClient } from "../sdk/client";
@@ -193,6 +196,21 @@ function compactReceiptLeafHash(receipt: Uint8Array, txIndex: number): string {
   ]));
 }
 
+function blsFinalityEvidence(round = 57): NoEvmReceiptFinalityEvidence {
+  return {
+    schema: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA,
+    source: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE,
+    round,
+    certificate: {
+      round,
+      signature: "0x1234",
+      signersBitmap: "0xabcd",
+      signerIndices: [1, 3],
+      signerCount: 2,
+    },
+  };
+}
+
 function compactNoEvmReceiptProofTranscript(
   overrides: Partial<NoEvmCompactReceiptProofTranscript> = {},
 ): NoEvmCompactReceiptProofTranscript {
@@ -230,9 +248,11 @@ function compactNoEvmReceiptProofTranscript(
       contentHash: `0x${"55".repeat(32)}`,
       signatures: [],
     },
+    finalityEvidence: null,
     targetReceiptBytes,
     missingProofMaterial: [
       "signed archive or snapshot manifest binding receipt bytes to blockHash and receiptsRoot",
+      "BLS aggregate finality certificate for block round",
     ],
     ...overrides,
   };
@@ -2674,6 +2694,55 @@ describe("API execution-unit transformations", () => {
     );
   });
 
+  it("accepts BLS finality evidence on compact no-EVM receipt proofs as certificate material", () => {
+    const finalityEvidence = blsFinalityEvidence(57);
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      txHash: `0x${"79".repeat(32)}`,
+      blockHash: `0x${"36".repeat(32)}`,
+      blockHeight: 124,
+      finalityEvidence,
+      missingProofMaterial: [
+        "signed archive or snapshot manifest binding receipt bytes to blockHash and receiptsRoot",
+      ],
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"79".repeat(32)}`,
+      blockNumber: 124n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"79".repeat(32)}`,
+        blockHash: `0x${"36".repeat(32)}`,
+        blockHeight: 124,
+        txIndex: 0,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof,
+      }),
+    } as any);
+
+    expect(evidence).toMatchObject({
+      proofState: "present",
+      proofFieldSource: "native-receipt.noEvmProof",
+      proofFieldState: "present",
+    });
+    expect(evidence?.proof?.transcript).toMatchObject({
+      finalityEvidence,
+      missingProofMaterial: [
+        "signed archive or snapshot manifest binding receipt bytes to blockHash and receiptsRoot",
+      ],
+    });
+    expect(evidence?.proof?.validationErrors).toEqual([]);
+    expect(evidence?.blockers).not.toContain(
+      "native-receipt.noEvmProof must return a bounded receipts transcript or compact receipt inclusion proof before Monoscan can render no-EVM receipt proof evidence.",
+    );
+  });
+
   it("recomputes no-EVM receipt transcript hashes with the runtime receipts root algorithm", () => {
     const noEvmProof = noEvmReceiptProofTranscript();
     const consistency = verifyNoEvmReceiptProofConsistency(noEvmProof);
@@ -2775,6 +2844,48 @@ describe("API execution-unit transformations", () => {
     expect(evidence?.proof?.validationErrors).toContain("txIndex must be less than receiptCount");
     expect(evidence?.blockers).toContain(
       `native-receipt.noEvmProof returned an invalid bounded receipts transcript: schema must be ${NO_EVM_RECEIPT_PROOF_SCHEMA}; txIndex must be less than receiptCount; receiptTranscript[1] must be a 0x byte blob.`,
+    );
+  });
+
+  it("marks malformed no-EVM finality evidence invalid without treating the proof as missing", () => {
+    const malformedFinalityEvidence = {
+      ...blsFinalityEvidence(58),
+      source: "sevenNodeLiveFinalityProof",
+    };
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"7a".repeat(32)}`,
+      blockNumber: 125n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"7a".repeat(32)}`,
+        blockHeight: 125,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof: compactNoEvmReceiptProofTranscript({
+          txHash: `0x${"7a".repeat(32)}`,
+          blockHeight: 125,
+          finalityEvidence: malformedFinalityEvidence as NoEvmReceiptFinalityEvidence,
+        }),
+      }),
+    } as any);
+
+    expect(evidence).toMatchObject({
+      proofState: "invalid",
+      proofFieldSource: "native-receipt.noEvmProof",
+      proofFieldState: "present",
+    });
+    expect(evidence?.proof?.transcript).toBeNull();
+    expect(evidence?.proof?.validationErrors).toContain(
+      `finalityEvidence.source must be ${NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE}`,
+    );
+    expect(evidence?.blockers).toContain(
+      `native-receipt.noEvmProof returned an invalid compact receipt inclusion proof: finalityEvidence.source must be ${NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE}.`,
     );
   });
 
