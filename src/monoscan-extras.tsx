@@ -2400,6 +2400,9 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
       ? "absent · archive binding not returned"
       : null;
   const archiveSignatureCount = archiveProof?.signatures.length ?? 0;
+  const archiveSignatureDigestValue = archiveProof?.signatureDigest
+    ? `${_short(archiveProof.signatureDigest, 18)} · snapshot archive signature digest material · not validator finality or verified cryptographic proof`
+    : null;
   const archiveSignaturesValue = compactProofTranscript?.historySource === "indexerReceiptArchive"
     ? archiveSignatureCount > 0
       ? `present · ${archiveSignatureCount.toLocaleString()} archive signature${archiveSignatureCount === 1 ? "" : "s"} · validator finality not asserted`
@@ -2447,6 +2450,7 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
         {compactInclusionValue && <KV label="Compact inclusion" value={compactInclusionValue} mono/>}
         {compactTargetValue && <KV label="Target receipt" value={compactTargetValue} mono/>}
         {archiveBindingValue && <KV label="Archive binding" value={archiveBindingValue} mono/>}
+        {archiveSignatureDigestValue && <KV label="Archive signature digest" value={archiveSignatureDigestValue} mono/>}
         {archiveSignaturesValue && <KV label="Archive signatures" value={archiveSignaturesValue} mono/>}
         {finalityEvidenceValue && <KV label="Finality evidence" value={finalityEvidenceValue} mono/>}
         {missingProofMaterialValue && <KV label="Missing proof material" value={missingProofMaterialValue} mono/>}

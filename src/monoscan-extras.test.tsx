@@ -200,6 +200,8 @@ function compactNoEvmReceiptProofTranscript(
   };
 }
 
+const validArchiveSignatureDigest = `0x${"66".repeat(32)}`;
+
 describe("redemptionTicketStatusText", () => {
   it("separates cooldown maturity from payout availability", () => {
     expect(redemptionTicketStatusText(true)).toBe("Cooldown complete · payout unavailable");
@@ -577,7 +579,16 @@ describe("MrvNativeEvidenceCard", () => {
   });
 
   it("renders compact indexer archive receipt proof material without implying validator finality", () => {
-    const noEvmProof = compactNoEvmReceiptProofTranscript();
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: validArchiveSignatureDigest,
+        signatures: [],
+      },
+    });
     const evidence = mrvNativeTransactionEvidence({
       txHash: `0x${"ab".repeat(32)}`,
       blockNumber: 321n,
@@ -633,6 +644,10 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain("indexerReceiptArchiveContentDigest");
     expect(html).toContain("manifest 0x4444444444444444");
     expect(html).toContain("content 0x5555555555555555");
+    expect(html).toContain("Archive signature digest");
+    expect(html).toContain("0x6666666666666666");
+    expect(html).toContain("snapshot archive signature digest material");
+    expect(html).toContain("not validator finality or verified cryptographic proof");
     expect(html).toContain("Archive signatures");
     expect(html).toContain("absent · validator finality not asserted");
     expect(html).toContain("Finality evidence");
@@ -641,6 +656,129 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain("BLS aggregate finality certificate for block round");
     expect(html).not.toContain("live block cache");
     expect(html).not.toContain("Finality proof");
+  });
+
+  it.each([
+    { name: "absent", archiveProofPatch: {} },
+    { name: "null", archiveProofPatch: { signatureDigest: null } },
+  ])("omits archive signature digest row when signatureDigest is $name", ({ archiveProofPatch }) => {
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatures: [],
+        ...archiveProofPatch,
+      } as any,
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"ab".repeat(32)}`,
+      blockNumber: 321n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      txHash: `0x${"ab".repeat(32)}`,
+      blockHash: `0x${"cd".repeat(32)}`,
+      blockHeight: 321,
+      txIndex: 0,
+      schema: "riscv.receipt.v1",
+      txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+      artifactHash: `0x${"ef".repeat(32)}`,
+      receiptCommitment: `0x${"19".repeat(32)}`,
+      noEvmProof,
+      counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
+      fee: {
+        total_lythoshi: "12",
+        total_lyth: "0.00000012",
+        cycles_used: 12,
+        base_price_per_cycle_lythoshi: "1",
+        state_io_units: 1,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "0",
+      },
+      reverted: false,
+      nativeDeltaCount: 1,
+      eventCount: 2,
+      events: [],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    } as any);
+
+    const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
+
+    expect(html).toContain("Archive binding");
+    expect(html).not.toContain("Archive signature digest");
+    expect(html).toContain("Archive signatures");
+    expect(html).toContain("absent · validator finality not asserted");
+  });
+
+  it("renders malformed archive signatureDigest as invalid proof evidence", () => {
+    const error = "archiveProof.signatureDigest must be a 32-byte 0x hex value";
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: `0x${"66".repeat(31)}`,
+        signatures: [],
+      } as any,
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"ab".repeat(32)}`,
+      blockNumber: 321n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      txHash: `0x${"ab".repeat(32)}`,
+      blockHash: `0x${"cd".repeat(32)}`,
+      blockHeight: 321,
+      txIndex: 0,
+      schema: "riscv.receipt.v1",
+      txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+      artifactHash: `0x${"ef".repeat(32)}`,
+      receiptCommitment: `0x${"19".repeat(32)}`,
+      noEvmProof,
+      counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
+      fee: {
+        total_lythoshi: "12",
+        total_lyth: "0.00000012",
+        cycles_used: 12,
+        base_price_per_cycle_lythoshi: "1",
+        state_io_units: 1,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "0",
+      },
+      reverted: false,
+      nativeDeltaCount: 1,
+      eventCount: 2,
+      events: [],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    } as any);
+
+    const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
+
+    expect(html).toContain("proof evidence invalid");
+    expect(html).toContain(error);
+    expect(html).not.toContain("Archive signature digest");
   });
 
   it("renders BLS round certificate finality evidence without claiming full live finality", () => {

@@ -213,6 +213,7 @@ function blsFinalityEvidence(round = 57): NoEvmReceiptFinalityEvidence {
 
 const validArchiveProofSignature =
   `mono.snapshot.sig.v1:0x${"ab".repeat(20)}:0x${"12".repeat(64)}`;
+const validArchiveSignatureDigest = `0x${"66".repeat(32)}`;
 
 function compactNoEvmReceiptProofTranscript(
   overrides: Partial<NoEvmCompactReceiptProofTranscript> = {},
@@ -2707,6 +2708,7 @@ describe("API execution-unit transformations", () => {
         source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
         manifestHash: `0x${"44".repeat(32)}`,
         contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: validArchiveSignatureDigest,
         signatures: [validArchiveProofSignature],
       },
     });
@@ -2736,8 +2738,106 @@ describe("API execution-unit transformations", () => {
       proofFieldSource: "native-receipt.noEvmProof",
     });
     expect(evidence?.proof?.validationErrors).toEqual([]);
-    expect((evidence?.proof?.transcript as NoEvmCompactReceiptProofTranscript | null)?.archiveProof?.signatures)
-      .toEqual([validArchiveProofSignature]);
+    expect((evidence?.proof?.transcript as NoEvmCompactReceiptProofTranscript | null)?.archiveProof)
+      .toMatchObject({
+        signatureDigest: validArchiveSignatureDigest,
+        signatures: [validArchiveProofSignature],
+      });
+  });
+
+  it.each([
+    { name: "absent", archiveProofPatch: {} },
+    { name: "null", archiveProofPatch: { signatureDigest: null } },
+  ])("accepts $name archive proof signatureDigest without preserving a digest", ({ archiveProofPatch }) => {
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      txHash: `0x${"7d".repeat(32)}`,
+      blockHash: `0x${"38".repeat(32)}`,
+      blockHeight: 128,
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatures: [],
+        ...archiveProofPatch,
+      } as any,
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"7d".repeat(32)}`,
+      blockNumber: 128n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"7d".repeat(32)}`,
+        blockHash: `0x${"38".repeat(32)}`,
+        blockHeight: 128,
+        txIndex: 0,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof,
+      }),
+    } as any);
+
+    expect(evidence).toMatchObject({
+      proofState: "present",
+      proofFieldSource: "native-receipt.noEvmProof",
+    });
+    expect(evidence?.proof?.validationErrors).toEqual([]);
+    expect((evidence?.proof?.transcript as NoEvmCompactReceiptProofTranscript | null)?.archiveProof)
+      .not.toHaveProperty("signatureDigest");
+  });
+
+  it.each([
+    { name: "wrong length", signatureDigest: `0x${"66".repeat(31)}` },
+    { name: "non-hex", signatureDigest: `0x${"66".repeat(31)}zz` },
+    { name: "non-string", signatureDigest: 66 },
+  ])("fails closed for $name archive proof signatureDigest", ({ signatureDigest }) => {
+    const error = "archiveProof.signatureDigest must be a 32-byte 0x hex value";
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"7e".repeat(32)}`,
+      blockNumber: 129n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"7e".repeat(32)}`,
+        blockHeight: 129,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof: compactNoEvmReceiptProofTranscript({
+          txHash: `0x${"7e".repeat(32)}`,
+          blockHeight: 129,
+          archiveProof: {
+            schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+            source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+            manifestHash: `0x${"44".repeat(32)}`,
+            contentHash: `0x${"55".repeat(32)}`,
+            signatureDigest,
+            signatures: [],
+          } as any,
+        }),
+      }),
+    } as any);
+
+    expect(evidence).toMatchObject({
+      proofState: "invalid",
+      proofFieldSource: "native-receipt.noEvmProof",
+      proofFieldState: "present",
+    });
+    expect(evidence?.proof?.transcript).toBeNull();
+    expect(evidence?.proof?.validationErrors).toContain(error);
+    expect(evidence?.blockers).toContain(
+      `native-receipt.noEvmProof returned an invalid compact receipt inclusion proof: ${error}.`,
+    );
   });
 
   it.each([

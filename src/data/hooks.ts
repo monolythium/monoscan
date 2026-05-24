@@ -793,6 +793,7 @@ export interface NoEvmReceiptArchiveProofBinding {
   source: typeof NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE;
   manifestHash: string;
   contentHash: string;
+  signatureDigest?: string;
   signatures: string[];
 }
 
@@ -1449,6 +1450,26 @@ function readTranscriptHash32(
   return value;
 }
 
+function readOptionalTranscriptHash32(
+  row: Record<string, unknown>,
+  key: string,
+  errors: string[],
+  label = key,
+): string | undefined {
+  const value = row[key];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    errors.push(`${label} must be a 32-byte 0x hex value`);
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!HASH32_RE.test(trimmed)) {
+    errors.push(`${label} must be a 32-byte 0x hex value`);
+    return undefined;
+  }
+  return trimmed;
+}
+
 function readTranscriptNumber(
   row: Record<string, unknown>,
   key: string,
@@ -1663,6 +1684,7 @@ function readArchiveProofBinding(
   const source = readTranscriptString(row, "source", errors, "archiveProof.source");
   const manifestHash = readTranscriptHash32(row, "manifestHash", errors, "archiveProof.manifestHash");
   const contentHash = readTranscriptHash32(row, "contentHash", errors, "archiveProof.contentHash");
+  const signatureDigest = readOptionalTranscriptHash32(row, "signatureDigest", errors, "archiveProof.signatureDigest");
   const signatures = readArchiveProofSignatures(row.signatures, errors);
 
   if (schema !== null && schema !== NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA) {
@@ -1687,6 +1709,7 @@ function readArchiveProofBinding(
     source,
     manifestHash,
     contentHash,
+    ...(signatureDigest !== undefined ? { signatureDigest } : {}),
     signatures,
   };
 }
