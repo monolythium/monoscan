@@ -2330,6 +2330,17 @@ const mrvEvidencePillClass = (evidence: MrvNativeTransactionEvidence) => (
 
 const receiptBlobCountLabel = (count: number) => `${count.toLocaleString()} receipt blob${count === 1 ? "" : "s"}`;
 
+const archiveSignatureSourceLabel = (source: "exactHeight" | "coveringSnapshot" | "none") => {
+  switch (source) {
+    case "exactHeight":
+      return "exact-height archive digest";
+    case "coveringSnapshot":
+      return "covering snapshot fallback";
+    case "none":
+      return "no archive signature material";
+  }
+};
+
 export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransactionEvidence | null }) => {
   if (!evidence) return null;
 
@@ -2395,6 +2406,19 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
     : null;
   const archiveProof = compactProofTranscript?.archiveProof ?? null;
   const archiveCoveringSnapshot = archiveProof?.coveringSnapshot ?? null;
+  const archiveVerification = evidence.proof?.archiveVerification ?? null;
+  const archiveVerificationSource = archiveVerification
+    ? archiveSignatureSourceLabel(archiveVerification.signatureSource)
+    : "no archive signature material";
+  const archiveVerificationValue = archiveProof
+    ? archiveVerification
+      ? archiveVerification.state === "verified"
+        ? `verified · configured trusted archive signers · ${archiveVerificationSource} · accepted ${archiveVerification.result?.validSigners.length.toLocaleString() ?? "—"}/${archiveVerification.result?.threshold.toLocaleString() ?? "—"} signatures · not validator finality or availability proof`
+        : archiveVerification.state === "unconfigured"
+          ? `unconfigured · ${archiveVerification.reason ?? "trusted archive signer config not configured"}; parsed only · not validator finality or availability proof`
+          : `${archiveVerification.state} · configured trusted archive signers · ${archiveVerificationSource} · ${archiveVerification.reason ?? "trusted archive verification unavailable"} · not validator finality or availability proof`
+      : "unconfigured · trusted archive signer config not configured; parsed only · not validator finality or availability proof"
+    : null;
   const archiveBindingValue = archiveProof
     ? `${archiveProof.source} · manifest ${_short(archiveProof.manifestHash, 18)} · content ${_short(archiveProof.contentHash, 18)}`
     : compactProofTranscript?.historySource === "indexerReceiptArchive"
@@ -2402,21 +2426,30 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
       : null;
   const archiveSignatureCount = archiveProof?.signatures.length ?? 0;
   const archiveSignatureDigestValue = archiveProof?.signatureDigest
-    ? `${_short(archiveProof.signatureDigest, 18)} · snapshot archive signature digest material · not validator finality or verified cryptographic proof`
+    ? `${_short(archiveProof.signatureDigest, 18)} · snapshot archive signature digest material · not validator finality or availability proof`
     : null;
   const archiveSignaturesValue = compactProofTranscript?.historySource === "indexerReceiptArchive"
     ? archiveSignatureCount > 0
       ? `present · ${archiveSignatureCount.toLocaleString()} archive signature${archiveSignatureCount === 1 ? "" : "s"} · validator finality not asserted`
       : "absent · validator finality not asserted"
     : null;
+  const archiveCoveringSnapshotVerification = archiveVerification?.signatureSource === "coveringSnapshot"
+    ? archiveVerification.state === "verified"
+      ? "trusted archive signature verified"
+      : archiveVerification.state === "unconfigured"
+        ? "explorer verification not configured"
+        : `trusted archive signature ${archiveVerification.state}`
+    : archiveVerification?.signatureSource === "exactHeight"
+      ? "exact-height signatures selected"
+      : "explorer verification not configured";
   const archiveCoveringSnapshotValue = archiveCoveringSnapshot
-    ? `parsed · snapshot ${archiveCoveringSnapshot.snapshotHeight.toLocaleString()} covers blocks ${archiveCoveringSnapshot.checkpointFrom.toLocaleString()}-${archiveCoveringSnapshot.checkpointTo.toLocaleString()} · explorer verification not configured`
+    ? `parsed · snapshot ${archiveCoveringSnapshot.snapshotHeight.toLocaleString()} covers blocks ${archiveCoveringSnapshot.checkpointFrom.toLocaleString()}-${archiveCoveringSnapshot.checkpointTo.toLocaleString()} · ${archiveCoveringSnapshotVerification}`
     : null;
   const archiveCoveringSnapshotHashesValue = archiveCoveringSnapshot
     ? `manifest ${_short(archiveCoveringSnapshot.manifestHash, 18)} · content ${_short(archiveCoveringSnapshot.contentHash, 18)} · checkpoint content ${_short(archiveCoveringSnapshot.checkpointContentHash, 18)} · digest ${_short(archiveCoveringSnapshot.signatureDigest, 18)}`
     : null;
   const archiveCoveringSnapshotSignaturesValue = archiveCoveringSnapshot
-    ? `parsed · ${archiveCoveringSnapshot.signatures.length.toLocaleString()} covering snapshot signature${archiveCoveringSnapshot.signatures.length === 1 ? "" : "s"} · not validator finality or explorer verified`
+    ? `parsed · ${archiveCoveringSnapshot.signatures.length.toLocaleString()} covering snapshot signature${archiveCoveringSnapshot.signatures.length === 1 ? "" : "s"} · not validator finality or availability proof`
     : null;
   const finalityEvidence = proofTranscript?.finalityEvidence ?? null;
   const finalityVerification = evidence.proof?.finalityVerification ?? null;
@@ -2466,6 +2499,7 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
         {compactInclusionValue && <KV label="Compact inclusion" value={compactInclusionValue} mono/>}
         {compactTargetValue && <KV label="Target receipt" value={compactTargetValue} mono/>}
         {archiveBindingValue && <KV label="Archive binding" value={archiveBindingValue} mono/>}
+        {archiveVerificationValue && <KV label="Archive signature verification" value={archiveVerificationValue} mono/>}
         {archiveSignatureDigestValue && <KV label="Archive signature digest" value={archiveSignatureDigestValue} mono/>}
         {archiveSignaturesValue && <KV label="Archive signatures" value={archiveSignaturesValue} mono/>}
         {archiveCoveringSnapshotValue && <KV label="Archive covering snapshot" value={archiveCoveringSnapshotValue} mono/>}

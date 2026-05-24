@@ -77,6 +77,8 @@ import {
   type NativeAgentStateResponse,
   type NativeEventsFilter,
   type NativeEventsResponse,
+  type NoEvmArchiveSignatureVerification,
+  type NoEvmArchiveTrustedSigner,
   type NoEvmBlsFinalityVerification,
   type NativeMarketOrderBookStreamPayload,
   type NativeReceiptResponse,
@@ -874,10 +876,27 @@ export interface NoEvmFinalityVerificationTrustOptions {
   threshold: number | bigint | string;
 }
 
+export type NoEvmArchiveVerificationKeyInput = string | Uint8Array | readonly number[];
+
+export interface NoEvmArchiveVerificationTrustOptions {
+  publicKeys: string | readonly NoEvmArchiveVerificationKeyInput[];
+  threshold: number | bigint | string;
+}
+
 export interface NoEvmReceiptFinalityVerification {
   state: NoEvmFinalityVerificationState;
   result: NoEvmBlsFinalityVerification | null;
   reason: string | null;
+}
+
+export type NoEvmArchiveVerificationState = "verified" | "unconfigured" | "mismatch" | "malformed";
+export type NoEvmArchiveSignatureSource = "exactHeight" | "coveringSnapshot" | "none";
+
+export interface NoEvmReceiptArchiveVerification {
+  state: NoEvmArchiveVerificationState;
+  result: NoEvmArchiveSignatureVerification | null;
+  reason: string | null;
+  signatureSource: NoEvmArchiveSignatureSource;
 }
 
 export interface MrvNativeProofEvidence {
@@ -889,6 +908,7 @@ export interface MrvNativeProofEvidence {
   raw: unknown;
   transcript: NoEvmReceiptProofMaterial | null;
   consistency: NoEvmReceiptProofConsistency | null;
+  archiveVerification: NoEvmReceiptArchiveVerification | null;
   finalityVerification: NoEvmReceiptFinalityVerification | null;
   validationErrors: string[];
 }
@@ -1965,8 +1985,18 @@ interface NormalizedNoEvmFinalityTrustOptions {
   threshold: number;
 }
 
+interface NormalizedNoEvmArchiveTrustOptions {
+  trustedSigners: NoEvmArchiveTrustedSigner[];
+  threshold: number;
+}
+
 type NoEvmFinalityTrustResolution =
   | { kind: "configured"; options: NormalizedNoEvmFinalityTrustOptions }
+  | { kind: "unconfigured"; reason: string }
+  | { kind: "invalid"; reason: string };
+
+type NoEvmArchiveTrustResolution =
+  | { kind: "configured"; options: NormalizedNoEvmArchiveTrustOptions }
   | { kind: "unconfigured"; reason: string }
   | { kind: "invalid"; reason: string };
 
@@ -1983,6 +2013,17 @@ const NO_EVM_FINALITY_TRUST_ENV = {
   threshold: [
     "VITE_MONOSCAN_TRUSTED_BLS_THRESHOLD",
     "VITE_MONO_TRUSTED_BLS_THRESHOLD",
+  ],
+} as const;
+
+const NO_EVM_ARCHIVE_TRUST_ENV = {
+  publicKeys: [
+    "VITE_MONOSCAN_TRUSTED_ARCHIVE_PUBKEYS",
+    "VITE_MONO_TRUSTED_ARCHIVE_PUBKEYS",
+  ],
+  threshold: [
+    "VITE_MONOSCAN_TRUSTED_ARCHIVE_THRESHOLD",
+    "VITE_MONO_TRUSTED_ARCHIVE_THRESHOLD",
   ],
 } as const;
 
@@ -2039,6 +2080,34 @@ function parsePositiveSafeIntegerInput(
   }
 }
 
+function archivePublicKeyInputs(
+  value: string | readonly NoEvmArchiveVerificationKeyInput[],
+  errors: string[],
+): NoEvmArchiveVerificationKeyInput[] {
+  const values = typeof value === "string"
+    ? value.split(",").map((item) => item.trim()).filter((item) => item !== "")
+    : Array.from(value);
+  if (values.length === 0) {
+    errors.push("trusted archive public keys must be non-empty");
+  }
+  return values;
+}
+
+function normalizeArchivePublicKey(
+  value: NoEvmArchiveVerificationKeyInput,
+  label: string,
+  errors: string[],
+): Uint8Array | null {
+  const bytes = typeof value === "string"
+    ? hexBytesToUint8Array(value)
+    : new Uint8Array(value);
+  if (!bytes || bytes.length !== CoreSdk.ML_DSA_65_PUBLIC_KEY_LEN) {
+    errors.push(`${label} must be ${CoreSdk.ML_DSA_65_PUBLIC_KEY_LEN} bytes`);
+    return null;
+  }
+  return bytes;
+}
+
 function normalizeFinalityClusterPublicKey(
   value: string | Uint8Array | readonly number[],
   errors: string[],
@@ -2089,6 +2158,45 @@ function normalizeNoEvmFinalityTrustOptions(
   };
 }
 
+function normalizeNoEvmArchiveTrustOptions(
+  options: NoEvmArchiveVerificationTrustOptions,
+): NoEvmArchiveTrustResolution {
+  const errors: string[] = [];
+  const publicKeyInputs = archivePublicKeyInputs(options.publicKeys, errors);
+  const trustedSigners: NoEvmArchiveTrustedSigner[] = [];
+  publicKeyInputs.forEach((publicKey, index) => {
+    const normalized = normalizeArchivePublicKey(
+      publicKey,
+      `trusted archive public key ${index + 1}`,
+      errors,
+    );
+    if (normalized) {
+      trustedSigners.push({ publicKey: normalized });
+    }
+  });
+  const threshold = parsePositiveSafeIntegerInput(
+    options.threshold,
+    "trusted archive threshold",
+    errors,
+  );
+
+  if (threshold !== null && publicKeyInputs.length > 0 && threshold > publicKeyInputs.length) {
+    errors.push("trusted archive threshold cannot exceed trusted public key count");
+  }
+
+  if (errors.length > 0 || trustedSigners.length !== publicKeyInputs.length || threshold === null) {
+    return { kind: "invalid", reason: `trusted archive signer config invalid: ${errors.join("; ")}` };
+  }
+
+  return {
+    kind: "configured",
+    options: {
+      trustedSigners,
+      threshold,
+    },
+  };
+}
+
 function noEvmFinalityTrustOptionsFromEnv(): NoEvmFinalityTrustResolution {
   const chainId = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.chainId);
   const clusterPublicKey = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.clusterPublicKey);
@@ -2123,6 +2231,34 @@ function noEvmFinalityTrustOptionsFromEnv(): NoEvmFinalityTrustResolution {
   });
 }
 
+function noEvmArchiveTrustOptionsFromEnv(): NoEvmArchiveTrustResolution {
+  const publicKeys = viteEnvString(NO_EVM_ARCHIVE_TRUST_ENV.publicKeys);
+  const threshold = viteEnvString(NO_EVM_ARCHIVE_TRUST_ENV.threshold);
+  const values = [publicKeys, threshold];
+
+  if (values.every((value) => value === null)) {
+    return {
+      kind: "unconfigured",
+      reason: "trusted archive signer config not configured",
+    };
+  }
+
+  const missing: string[] = [];
+  if (publicKeys === null) missing.push(NO_EVM_ARCHIVE_TRUST_ENV.publicKeys[0]);
+  if (threshold === null) missing.push(NO_EVM_ARCHIVE_TRUST_ENV.threshold[0]);
+  if (missing.length > 0) {
+    return {
+      kind: "invalid",
+      reason: `trusted archive signer config incomplete: missing ${missing.join(", ")}`,
+    };
+  }
+
+  return normalizeNoEvmArchiveTrustOptions({
+    publicKeys: publicKeys as string,
+    threshold: threshold as string,
+  });
+}
+
 function noEvmFinalityMismatchReason(result: NoEvmBlsFinalityVerification): string {
   const issues: string[] = [];
   if (!result.signerCountMatches) issues.push("signer count mismatch");
@@ -2132,6 +2268,37 @@ function noEvmFinalityMismatchReason(result: NoEvmBlsFinalityVerification): stri
   if (!result.thresholdMet) issues.push("threshold not met");
   if (!result.signatureValid) issues.push("BLS signature invalid");
   return issues.join("; ") || "BLS finality evidence did not satisfy configured trust policy";
+}
+
+function noEvmArchiveSignatureSource(
+  archiveProof: NoEvmReceiptArchiveProofBinding,
+): NoEvmArchiveSignatureSource {
+  if (archiveProof.signatureDigest != null || archiveProof.signatures.length > 0) {
+    return "exactHeight";
+  }
+  if (archiveProof.coveringSnapshot) {
+    return "coveringSnapshot";
+  }
+  return "none";
+}
+
+function noEvmArchiveMismatchReason(result: NoEvmArchiveSignatureVerification): string {
+  return result.issues.map((issue) => issue.message).join("; ")
+    || "archive snapshot signatures did not satisfy configured trust policy";
+}
+
+function archiveProofForSignatureVerification(
+  archiveProof: NoEvmReceiptArchiveProofBinding,
+  signatureSource: NoEvmArchiveSignatureSource,
+): NoEvmReceiptArchiveProofBinding {
+  if (signatureSource !== "coveringSnapshot" || !archiveProof.coveringSnapshot) {
+    return archiveProof;
+  }
+  return {
+    ...archiveProof,
+    signatureDigest: archiveProof.coveringSnapshot.signatureDigest,
+    signatures: archiveProof.coveringSnapshot.signatures,
+  };
 }
 
 export function verifyNoEvmReceiptFinalityEvidence(
@@ -2182,6 +2349,78 @@ export function verifyNoEvmReceiptFinalityEvidence(
       reason: error instanceof Error
         ? error.message
         : "BLS finality evidence verification failed",
+    };
+  }
+}
+
+export function verifyNoEvmReceiptArchiveProofSignatures(
+  transcript: NoEvmReceiptProofMaterial,
+  trustOptions?: NoEvmArchiveVerificationTrustOptions | null,
+): NoEvmReceiptArchiveVerification | null {
+  if (noEvmReceiptProofKind(transcript) !== "compactInclusion") return null;
+  const archiveProof = (transcript as NoEvmCompactReceiptProofTranscript).archiveProof ?? null;
+  if (!archiveProof) return null;
+
+  const signatureSource = noEvmArchiveSignatureSource(archiveProof);
+  const trustResolution = trustOptions === null
+    ? {
+        kind: "unconfigured",
+        reason: "trusted archive signer config not configured",
+      } as const
+    : trustOptions === undefined
+      ? noEvmArchiveTrustOptionsFromEnv()
+      : normalizeNoEvmArchiveTrustOptions(trustOptions);
+
+  if (trustResolution.kind === "unconfigured") {
+    return {
+      state: "unconfigured",
+      result: null,
+      reason: trustResolution.reason,
+      signatureSource,
+    };
+  }
+  if (trustResolution.kind === "invalid") {
+    return {
+      state: "malformed",
+      result: null,
+      reason: trustResolution.reason,
+      signatureSource,
+    };
+  }
+
+  const verifyArchiveSignatures = CoreSdk.verifyNoEvmArchiveProofSignatures as
+    | typeof CoreSdk.verifyNoEvmArchiveProofSignatures
+    | undefined;
+  if (typeof verifyArchiveSignatures !== "function") {
+    return {
+      state: "malformed",
+      result: null,
+      reason: "trusted archive signature verifier unavailable in @monolythium/core-sdk",
+      signatureSource,
+    };
+  }
+
+  try {
+    const archiveProofMaterial = archiveProofForSignatureVerification(archiveProof, signatureSource);
+    const result = verifyArchiveSignatures(
+      archiveProofMaterial as Parameters<typeof CoreSdk.verifyNoEvmArchiveProofSignatures>[0],
+      trustResolution.options.trustedSigners,
+      trustResolution.options.threshold,
+    );
+    return {
+      state: result.verified ? "verified" : "mismatch",
+      result,
+      reason: result.verified ? null : noEvmArchiveMismatchReason(result),
+      signatureSource,
+    };
+  } catch (error) {
+    return {
+      state: "malformed",
+      result: null,
+      reason: error instanceof Error
+        ? error.message
+        : "archive snapshot signature verification failed",
+      signatureSource,
     };
   }
 }
@@ -2616,10 +2855,14 @@ function noEvmReceiptProofEvidence(
   source: string,
   value: unknown,
   finalityTrustOptions?: NoEvmFinalityVerificationTrustOptions | null,
+  archiveTrustOptions?: NoEvmArchiveVerificationTrustOptions | null,
 ): MrvNativeProofEvidence {
   const { transcript, errors } = validateNoEvmReceiptProofTranscript(value);
   const consistency = transcript ? verifyNoEvmReceiptProofConsistency(transcript) : null;
   const proofKind = transcript ? noEvmReceiptProofKind(transcript) : detectNoEvmReceiptProofKind(value);
+  const archiveVerification = transcript
+    ? verifyNoEvmReceiptArchiveProofSignatures(transcript, archiveTrustOptions)
+    : null;
   const finalityVerification = transcript
     ? verifyNoEvmReceiptFinalityEvidence(transcript, finalityTrustOptions)
     : null;
@@ -2628,6 +2871,7 @@ function noEvmReceiptProofEvidence(
     raw: value,
     transcript,
     consistency,
+    archiveVerification,
     finalityVerification,
     proofKind,
     historySource: transcript ? noEvmReceiptProofHistorySource(transcript) : null,
@@ -2673,6 +2917,7 @@ export function mrvNativeTransactionEvidence(
   decoded: DecodeTxResponse | Record<string, unknown> | null | undefined,
   nativeReceipt: NativeReceiptResponse<unknown> | Record<string, unknown> | null | undefined,
   finalityTrustOptions?: NoEvmFinalityVerificationTrustOptions | null,
+  archiveTrustOptions?: NoEvmArchiveVerificationTrustOptions | null,
 ): MrvNativeTransactionEvidence | null {
   const extension = findMrvNativeExtension(decoded);
   const receiptTxType = readNumberField(nativeReceipt, ["txType", "tx_type"]);
@@ -2692,7 +2937,7 @@ export function mrvNativeTransactionEvidence(
     ?? readNumberField(nativeReceipt, ["blockHeight", "blockNumber", "block_height", "block_number"]);
   const proofField = readNativeNoEvmProofField(nativeReceipt);
   const proof = proofField.state === "present"
-    ? noEvmReceiptProofEvidence(proofField.source, proofField.value, finalityTrustOptions)
+    ? noEvmReceiptProofEvidence(proofField.source, proofField.value, finalityTrustOptions, archiveTrustOptions)
     : null;
   const submittedState: MrvNativeEvidenceState = extension
     ? (extension.validMrvV1 ? "present" : "invalid")

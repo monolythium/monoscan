@@ -24,6 +24,7 @@ import {
   type AgentReputationResponse,
   type NativeReceiptResponse,
 } from "@monolythium/core-sdk";
+import { MlDsa65Backend, bytesToHex as sdkBytesToHex } from "@monolythium/core-sdk/crypto";
 import {
   HEAD_POLL_MS,
   apiBlockToRpcHeader,
@@ -79,8 +80,10 @@ import {
   queryClient,
   structuredNativeReceiptFee,
   txFeedToRows,
+  verifyNoEvmReceiptArchiveProofSignatures,
   verifyNoEvmReceiptFinalityEvidence,
   verifyNoEvmReceiptProofConsistency,
+  type NoEvmArchiveVerificationTrustOptions,
   type NoEvmFinalityVerificationTrustOptions,
   type NoEvmArchiveCoveringSnapshot,
   type NoEvmCompactReceiptProofTranscript,
@@ -243,6 +246,18 @@ function verifiedBlsFinalityEvidence(): NoEvmReceiptFinalityEvidence {
 const validArchiveProofSignature =
   `mono.snapshot.sig.v1:0x${"ab".repeat(20)}:0x${"12".repeat(64)}`;
 const validArchiveSignatureDigest = `0x${"66".repeat(32)}`;
+const verifiedArchiveSigner = MlDsa65Backend.fromSeed(new Uint8Array(32).fill(12));
+const verifiedArchiveTrustOptions: NoEvmArchiveVerificationTrustOptions = {
+  publicKeys: [verifiedArchiveSigner.publicKey()],
+  threshold: 1,
+};
+
+function signedArchiveProofSignature(
+  signer: MlDsa65Backend,
+  signatureDigest: string,
+): string {
+  return `mono.snapshot.sig.v1:${signer.getAddress()}:${sdkBytesToHex(signer.sign(hexToBytes(signatureDigest)))}`;
+}
 
 function validArchiveCoveringSnapshot(
   overrides: Partial<NoEvmArchiveCoveringSnapshot> = {},
@@ -2840,6 +2855,150 @@ describe("API execution-unit transformations", () => {
       });
     expect((evidence?.proof?.transcript as NoEvmCompactReceiptProofTranscript | null)?.archiveProof)
       .not.toHaveProperty("signatureDigest");
+  });
+
+  it("marks parsed archive signatures unconfigured when trusted archive signers are absent", () => {
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: validArchiveSignatureDigest,
+        signatures: [validArchiveProofSignature],
+      },
+    });
+
+    const verification = verifyNoEvmReceiptArchiveProofSignatures(noEvmProof, null);
+
+    expect(verification).toMatchObject({
+      state: "unconfigured",
+      result: null,
+      reason: "trusted archive signer config not configured",
+      signatureSource: "exactHeight",
+    });
+  });
+
+  it("verifies exact-height archive signatures with configured trusted ML-DSA signers", () => {
+    const signature = signedArchiveProofSignature(verifiedArchiveSigner, validArchiveSignatureDigest);
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      txHash: `0x${"81".repeat(32)}`,
+      blockHash: `0x${"3d".repeat(32)}`,
+      blockHeight: 133,
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: validArchiveSignatureDigest,
+        signatures: [signature],
+      },
+    });
+
+    const verification = verifyNoEvmReceiptArchiveProofSignatures(noEvmProof, verifiedArchiveTrustOptions);
+    expect(verification).toMatchObject({
+      state: "verified",
+      reason: null,
+      signatureSource: "exactHeight",
+      result: {
+        verified: true,
+        threshold: 1,
+        validSigners: [verifiedArchiveSigner.getAddress()],
+        checkedSignatures: 1,
+        issues: [],
+      },
+    });
+
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"81".repeat(32)}`,
+      blockNumber: 133n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"81".repeat(32)}`,
+        blockHash: `0x${"3d".repeat(32)}`,
+        blockHeight: 133,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof,
+      }),
+    } as any, null, verifiedArchiveTrustOptions);
+
+    expect(evidence?.proof?.archiveVerification).toMatchObject({
+      state: "verified",
+      reason: null,
+      signatureSource: "exactHeight",
+    });
+  });
+
+  it("verifies covering snapshot archive signatures when exact-height signatures are absent", () => {
+    const signatureDigest = `0x${"62".repeat(32)}`;
+    const signature = signedArchiveProofSignature(verifiedArchiveSigner, signatureDigest);
+    const coveringSnapshot = validArchiveCoveringSnapshot({
+      signatureDigest,
+      signatures: [signature],
+    });
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      blockHeight: 126,
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: null,
+        signatures: [],
+        coveringSnapshot,
+      } as any,
+    });
+
+    const verification = verifyNoEvmReceiptArchiveProofSignatures(noEvmProof, verifiedArchiveTrustOptions);
+
+    expect(verification).toMatchObject({
+      state: "verified",
+      reason: null,
+      signatureSource: "coveringSnapshot",
+      result: {
+        verified: true,
+        validSigners: [verifiedArchiveSigner.getAddress()],
+        checkedSignatures: 1,
+      },
+    });
+  });
+
+  it("reports archive signature mismatch and malformed trusted archive config distinctly", () => {
+    const wrongDigestSignature = signedArchiveProofSignature(verifiedArchiveSigner, `0x${"67".repeat(32)}`);
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: validArchiveSignatureDigest,
+        signatures: [wrongDigestSignature],
+      },
+    });
+
+    expect(verifyNoEvmReceiptArchiveProofSignatures(noEvmProof, verifiedArchiveTrustOptions))
+      .toMatchObject({
+        state: "mismatch",
+        signatureSource: "exactHeight",
+        result: {
+          verified: false,
+        },
+      });
+    expect(verifyNoEvmReceiptArchiveProofSignatures(noEvmProof, {
+      ...verifiedArchiveTrustOptions,
+      threshold: 2,
+    })).toMatchObject({
+      state: "malformed",
+      result: null,
+      reason: "trusted archive signer config invalid: trusted archive threshold cannot exceed trusted public key count",
+    });
   });
 
   it.each([

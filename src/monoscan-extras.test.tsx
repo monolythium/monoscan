@@ -19,6 +19,7 @@ import {
   type IndexedTokenBalanceRow,
 } from "./monoscan-extras";
 import type { AgentReputationResponse } from "@monolythium/core-sdk";
+import { MlDsa65Backend, bytesToHex as sdkBytesToHex } from "@monolythium/core-sdk/crypto";
 import {
   bridgeTrustDisclosuresFromAddressData,
   MRV_NATIVE_RECEIPT_TX_TYPE,
@@ -39,6 +40,7 @@ import {
   NO_EVM_RECEIPT_PROOF_TYPE,
   mrvNativeTransactionEvidence,
   verifyNoEvmReceiptProofConsistency,
+  type NoEvmArchiveVerificationTrustOptions,
   type MrcMetadataResponse,
   type NativeAgentStateDisplayRows,
   type NativeAgentStateDisplayRow,
@@ -231,6 +233,18 @@ function compactNoEvmReceiptProofTranscript(
 const validArchiveSignatureDigest = `0x${"66".repeat(32)}`;
 const validArchiveProofSignature =
   `mono.snapshot.sig.v1:0x${"ab".repeat(20)}:0x${"12".repeat(64)}`;
+const verifiedArchiveSigner = MlDsa65Backend.fromSeed(new Uint8Array(32).fill(12));
+const verifiedArchiveTrustOptions: NoEvmArchiveVerificationTrustOptions = {
+  publicKeys: [verifiedArchiveSigner.publicKey()],
+  threshold: 1,
+};
+
+function signedArchiveProofSignature(
+  signer: MlDsa65Backend,
+  signatureDigest: string,
+): string {
+  return `mono.snapshot.sig.v1:${signer.getAddress()}:${sdkBytesToHex(signer.sign(hexToBytes(signatureDigest)))}`;
+}
 
 function validArchiveCoveringSnapshot(
   overrides: Partial<NoEvmArchiveCoveringSnapshot> = {},
@@ -246,6 +260,54 @@ function validArchiveCoveringSnapshot(
     signatures: [validArchiveProofSignature],
     ...overrides,
   };
+}
+
+function renderMrvArchiveEvidenceHtml(
+  noEvmProof: NoEvmCompactReceiptProofTranscript,
+  archiveTrustOptions?: NoEvmArchiveVerificationTrustOptions | null,
+): string {
+  const evidence = mrvNativeTransactionEvidence({
+    txHash: noEvmProof.txHash,
+    blockNumber: BigInt(noEvmProof.blockHeight),
+    decodedCalldata: {
+      kind: "mrv_call",
+      extensions: [{
+        kind: MRV_NATIVE_TX_EXTENSION_KIND,
+        bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+      }],
+    },
+  } as any, {
+    txHash: noEvmProof.txHash,
+    blockHash: noEvmProof.blockHash,
+    blockHeight: noEvmProof.blockHeight,
+    txIndex: noEvmProof.txIndex,
+    schema: "riscv.receipt.v1",
+    txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+    artifactHash: `0x${"ef".repeat(32)}`,
+    receiptCommitment: `0x${"19".repeat(32)}`,
+    noEvmProof,
+    counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
+    fee: {
+      total_lythoshi: "12",
+      total_lyth: "0.00000012",
+      cycles_used: 12,
+      base_price_per_cycle_lythoshi: "1",
+      state_io_units: 1,
+      state_io_price_per_unit_lythoshi: "0",
+      priority_tip_lythoshi: "0",
+    },
+    reverted: false,
+    nativeDeltaCount: 1,
+    eventCount: 2,
+    events: [],
+    source: {
+      chainProvider: "mock_chain",
+      indexerProvider: "native_events",
+      metadataLogIndex: 0xffff_ffff,
+    },
+  } as any, null, archiveTrustOptions);
+
+  return renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
 }
 
 describe("redemptionTicketStatusText", () => {
@@ -690,10 +752,12 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain("indexerReceiptArchiveContentDigest");
     expect(html).toContain("manifest 0x4444444444444444");
     expect(html).toContain("content 0x5555555555555555");
+    expect(html).toContain("Archive signature verification");
+    expect(html).toContain("unconfigured · trusted archive signer config not configured; parsed only · not validator finality or availability proof");
     expect(html).toContain("Archive signature digest");
     expect(html).toContain("0x6666666666666666");
     expect(html).toContain("snapshot archive signature digest material");
-    expect(html).toContain("not validator finality or verified cryptographic proof");
+    expect(html).toContain("not validator finality or availability proof");
     expect(html).toContain("Archive signatures");
     expect(html).toContain("absent · validator finality not asserted");
     expect(html).toContain("Finality evidence");
@@ -759,6 +823,8 @@ describe("MrvNativeEvidenceCard", () => {
 
     const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
 
+    expect(html).toContain("Archive signature verification");
+    expect(html).toContain("unconfigured · trusted archive signer config not configured; parsed only · not validator finality or availability proof");
     expect(html).toContain("Archive covering snapshot");
     expect(html).toContain("parsed · snapshot 330 covers blocks 0-321 · explorer verification not configured");
     expect(html).toContain("Covering snapshot hashes");
@@ -767,8 +833,80 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain("checkpoint content 0x5555555555555555");
     expect(html).toContain("digest 0x6262626262626262");
     expect(html).toContain("Covering snapshot signatures");
-    expect(html).toContain("parsed · 1 covering snapshot signature · not validator finality or explorer verified");
+    expect(html).toContain("parsed · 1 covering snapshot signature · not validator finality or availability proof");
     expect(html).not.toContain("verified · configured trusted archive signer");
+  });
+
+  it("renders verified trusted archive signatures for exact-height archive proofs", () => {
+    const signature = signedArchiveProofSignature(verifiedArchiveSigner, validArchiveSignatureDigest);
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: validArchiveSignatureDigest,
+        signatures: [signature],
+      },
+    });
+
+    const html = renderMrvArchiveEvidenceHtml(noEvmProof, verifiedArchiveTrustOptions);
+
+    expect(html).toContain("Archive signature verification");
+    expect(html).toContain("verified · configured trusted archive signers · exact-height archive digest · accepted 1/1 signatures · not validator finality or availability proof");
+    expect(html).toContain("Archive signatures");
+    expect(html).toContain("present · 1 archive signature · validator finality not asserted");
+    expect(html).not.toContain("trusted archive signer config not configured");
+  });
+
+  it("renders verified trusted archive signatures from the covering snapshot fallback", () => {
+    const signatureDigest = `0x${"62".repeat(32)}`;
+    const signature = signedArchiveProofSignature(verifiedArchiveSigner, signatureDigest);
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: null,
+        signatures: [],
+        coveringSnapshot: validArchiveCoveringSnapshot({
+          signatureDigest,
+          signatures: [signature],
+        }),
+      } as any,
+    });
+
+    const html = renderMrvArchiveEvidenceHtml(noEvmProof, verifiedArchiveTrustOptions);
+
+    expect(html).toContain("verified · configured trusted archive signers · covering snapshot fallback · accepted 1/1 signatures · not validator finality or availability proof");
+    expect(html).toContain("parsed · snapshot 330 covers blocks 0-321 · trusted archive signature verified");
+    expect(html).toContain("parsed · 1 covering snapshot signature · not validator finality or availability proof");
+  });
+
+  it("renders trusted archive signature mismatch and config-invalid status", () => {
+    const wrongDigestSignature = signedArchiveProofSignature(verifiedArchiveSigner, `0x${"67".repeat(32)}`);
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: validArchiveSignatureDigest,
+        signatures: [wrongDigestSignature],
+      },
+    });
+
+    const mismatchHtml = renderMrvArchiveEvidenceHtml(noEvmProof, verifiedArchiveTrustOptions);
+    expect(mismatchHtml).toContain("mismatch · configured trusted archive signers · exact-height archive digest");
+    expect(mismatchHtml).toContain(`archive proof signature from ${verifiedArchiveSigner.getAddress()} is invalid`);
+
+    const malformedHtml = renderMrvArchiveEvidenceHtml(noEvmProof, {
+      ...verifiedArchiveTrustOptions,
+      threshold: 2,
+    });
+    expect(malformedHtml).toContain("malformed · configured trusted archive signers · exact-height archive digest");
+    expect(malformedHtml).toContain("trusted archive signer config invalid: trusted archive threshold cannot exceed trusted public key count");
   });
 
   it.each([
