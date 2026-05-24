@@ -742,6 +742,9 @@ export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE = "blsRoundCertificate";
 
 const HEX_BYTES_RE = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HASH32_RE = /^0x[0-9a-fA-F]{64}$/;
+const ARCHIVE_PROOF_SIGNATURE_PREFIX = "mono.snapshot.sig.v1";
+const ARCHIVE_PROOF_SIGNER_ID_RE = /^0x[0-9a-fA-F]{40}$/;
+const ARCHIVE_PROOF_SIGNATURE_PAYLOAD_RE = /^0x(?:[0-9a-fA-F]{2})+$/;
 const U32_MAX = 0xffff_ffff;
 const textEncoder = new TextEncoder();
 
@@ -790,7 +793,7 @@ export interface NoEvmReceiptArchiveProofBinding {
   source: typeof NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE;
   manifestHash: string;
   contentHash: string;
-  signatures: unknown[];
+  signatures: string[];
 }
 
 export interface NoEvmReceiptBlsCertificate {
@@ -1603,6 +1606,46 @@ function readCompactInclusionProof(
   };
 }
 
+function readArchiveProofSignatures(value: unknown, errors: string[]): string[] {
+  if (!Array.isArray(value)) {
+    errors.push("archiveProof.signatures must be an array");
+    return [];
+  }
+
+  const signatures: string[] = [];
+  value.forEach((signature, index) => {
+    if (typeof signature !== "string" || signature.trim() === "") {
+      errors.push(`archiveProof.signatures[${index}] must be a non-empty string`);
+      return;
+    }
+
+    const trimmed = signature.trim();
+    const fields = trimmed.split(":");
+    if (fields.length !== 3) {
+      errors.push(`archiveProof.signatures[${index}] must have 3 colon-separated fields`);
+      return;
+    }
+
+    const [prefix, signerId, payload] = fields;
+    if (prefix !== ARCHIVE_PROOF_SIGNATURE_PREFIX) {
+      errors.push(`archiveProof.signatures[${index}] prefix must be ${ARCHIVE_PROOF_SIGNATURE_PREFIX}`);
+      return;
+    }
+    if (!ARCHIVE_PROOF_SIGNER_ID_RE.test(signerId)) {
+      errors.push(`archiveProof.signatures[${index}] signer id must be a 20-byte 0x hex value`);
+      return;
+    }
+    if (!ARCHIVE_PROOF_SIGNATURE_PAYLOAD_RE.test(payload)) {
+      errors.push(`archiveProof.signatures[${index}] payload must be a non-empty 0x hex byte blob`);
+      return;
+    }
+
+    signatures.push(trimmed);
+  });
+
+  return signatures;
+}
+
 function readArchiveProofBinding(
   value: unknown,
   errors: string[],
@@ -1620,17 +1663,13 @@ function readArchiveProofBinding(
   const source = readTranscriptString(row, "source", errors, "archiveProof.source");
   const manifestHash = readTranscriptHash32(row, "manifestHash", errors, "archiveProof.manifestHash");
   const contentHash = readTranscriptHash32(row, "contentHash", errors, "archiveProof.contentHash");
-  const signaturesValue = row.signatures;
-  const signatures = Array.isArray(signaturesValue) ? signaturesValue : [];
+  const signatures = readArchiveProofSignatures(row.signatures, errors);
 
   if (schema !== null && schema !== NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA) {
     errors.push(`archiveProof.schema must be ${NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA}`);
   }
   if (source !== null && source !== NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE) {
     errors.push(`archiveProof.source must be ${NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE}`);
-  }
-  if (!Array.isArray(signaturesValue)) {
-    errors.push("archiveProof.signatures must be an array");
   }
 
   if (
