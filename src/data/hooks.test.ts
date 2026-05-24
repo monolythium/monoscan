@@ -82,6 +82,7 @@ import {
   verifyNoEvmReceiptFinalityEvidence,
   verifyNoEvmReceiptProofConsistency,
   type NoEvmFinalityVerificationTrustOptions,
+  type NoEvmArchiveCoveringSnapshot,
   type NoEvmCompactReceiptProofTranscript,
   type NoEvmReceiptFinalityEvidence,
   type NoEvmReceiptProofTranscript,
@@ -242,6 +243,22 @@ function verifiedBlsFinalityEvidence(): NoEvmReceiptFinalityEvidence {
 const validArchiveProofSignature =
   `mono.snapshot.sig.v1:0x${"ab".repeat(20)}:0x${"12".repeat(64)}`;
 const validArchiveSignatureDigest = `0x${"66".repeat(32)}`;
+
+function validArchiveCoveringSnapshot(
+  overrides: Partial<NoEvmArchiveCoveringSnapshot> = {},
+): NoEvmArchiveCoveringSnapshot {
+  return {
+    snapshotHeight: 130,
+    manifestHash: `0x${"61".repeat(32)}`,
+    signatureDigest: `0x${"62".repeat(32)}`,
+    contentHash: `0x${"63".repeat(32)}`,
+    checkpointContentHash: `0x${"55".repeat(32)}`,
+    checkpointFrom: 0,
+    checkpointTo: 126,
+    signatures: [validArchiveProofSignature],
+    ...overrides,
+  };
+}
 
 function compactNoEvmReceiptProofTranscript(
   overrides: Partial<NoEvmCompactReceiptProofTranscript> = {},
@@ -2771,6 +2788,154 @@ describe("API execution-unit transformations", () => {
         signatureDigest: validArchiveSignatureDigest,
         signatures: [validArchiveProofSignature],
       });
+  });
+
+  it("accepts and preserves archive covering snapshot evidence", () => {
+    const coveringSnapshot = validArchiveCoveringSnapshot();
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      txHash: `0x${"7f".repeat(32)}`,
+      blockHash: `0x${"3c".repeat(32)}`,
+      blockHeight: 126,
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: null,
+        signatures: [],
+        coveringSnapshot,
+      } as any,
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"7f".repeat(32)}`,
+      blockNumber: 126n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"7f".repeat(32)}`,
+        blockHash: `0x${"3c".repeat(32)}`,
+        blockHeight: 126,
+        txIndex: 0,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof,
+      }),
+    } as any);
+
+    expect(evidence).toMatchObject({
+      proofState: "present",
+      proofFieldSource: "native-receipt.noEvmProof",
+    });
+    expect(evidence?.proof?.validationErrors).toEqual([]);
+    expect((evidence?.proof?.transcript as NoEvmCompactReceiptProofTranscript | null)?.archiveProof)
+      .toMatchObject({
+        contentHash: `0x${"55".repeat(32)}`,
+        signatures: [],
+        coveringSnapshot,
+      });
+    expect((evidence?.proof?.transcript as NoEvmCompactReceiptProofTranscript | null)?.archiveProof)
+      .not.toHaveProperty("signatureDigest");
+  });
+
+  it.each([
+    {
+      name: "manifest hash",
+      patch: { manifestHash: `0x${"61".repeat(31)}` },
+      error: "archiveProof.coveringSnapshot.manifestHash must be a 32-byte 0x hex value",
+    },
+    {
+      name: "signature digest",
+      patch: { signatureDigest: `0x${"62".repeat(31)}` },
+      error: "archiveProof.coveringSnapshot.signatureDigest must be a 32-byte 0x hex value",
+    },
+    {
+      name: "content hash",
+      patch: { contentHash: `0x${"63".repeat(31)}` },
+      error: "archiveProof.coveringSnapshot.contentHash must be a 32-byte 0x hex value",
+    },
+    {
+      name: "checkpoint content hash",
+      patch: { checkpointContentHash: `0x${"64".repeat(31)}` },
+      error: "archiveProof.coveringSnapshot.checkpointContentHash must be a 32-byte 0x hex value",
+    },
+    {
+      name: "checkpoint from",
+      patch: { checkpointFrom: 1 },
+      error: "archiveProof.coveringSnapshot.checkpointFrom must be 0",
+    },
+    {
+      name: "checkpoint range",
+      patch: { checkpointTo: 131 },
+      error: "archiveProof.coveringSnapshot.checkpointTo must be <= snapshotHeight",
+    },
+    {
+      name: "checkpoint height",
+      patch: { checkpointTo: 125 },
+      error: "archiveProof.coveringSnapshot.checkpointTo must match blockHeight",
+    },
+    {
+      name: "checkpoint content mismatch",
+      patch: { checkpointContentHash: `0x${"56".repeat(32)}` },
+      error: "archiveProof.coveringSnapshot.checkpointContentHash must match archiveProof.contentHash",
+    },
+    {
+      name: "empty signatures",
+      patch: { signatures: [] },
+      error: "archiveProof.coveringSnapshot.signatures must be non-empty",
+    },
+    {
+      name: "malformed signature",
+      patch: { signatures: [`mono.snapshot.sig.v1:0x${"ab".repeat(19)}:0x1234`] },
+      error: "archiveProof.coveringSnapshot.signatures[0] signer id must be a 20-byte 0x hex value",
+    },
+  ])("fails closed for malformed archive covering snapshot $name", ({ patch, error }) => {
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"80".repeat(32)}`,
+      blockNumber: 126n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      ...nativeReceiptFixture({
+        txHash: `0x${"80".repeat(32)}`,
+        blockHeight: 126,
+        txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+        noEvmProof: compactNoEvmReceiptProofTranscript({
+          txHash: `0x${"80".repeat(32)}`,
+          blockHeight: 126,
+          archiveProof: {
+            schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+            source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+            manifestHash: `0x${"44".repeat(32)}`,
+            contentHash: `0x${"55".repeat(32)}`,
+            signatureDigest: null,
+            signatures: [],
+            coveringSnapshot: {
+              ...validArchiveCoveringSnapshot(),
+              ...patch,
+            },
+          } as any,
+        }),
+      }),
+    } as any);
+
+    expect(evidence).toMatchObject({
+      proofState: "invalid",
+      proofFieldSource: "native-receipt.noEvmProof",
+      proofFieldState: "present",
+    });
+    expect(evidence?.proof?.transcript).toBeNull();
+    expect(evidence?.proof?.validationErrors).toContain(error);
+    expect(evidence?.blockers.some((blocker) => blocker.includes(error))).toBe(true);
   });
 
   it.each([

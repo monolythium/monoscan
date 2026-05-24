@@ -789,6 +789,17 @@ export interface NoEvmCompactInclusionProof {
   pathSides: boolean[];
 }
 
+export interface NoEvmArchiveCoveringSnapshot {
+  snapshotHeight: number;
+  manifestHash: string;
+  signatureDigest: string;
+  contentHash: string;
+  checkpointContentHash: string;
+  checkpointFrom: number;
+  checkpointTo: number;
+  signatures: string[];
+}
+
 export interface NoEvmReceiptArchiveProofBinding {
   schema: typeof NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA;
   source: typeof NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE;
@@ -796,6 +807,7 @@ export interface NoEvmReceiptArchiveProofBinding {
   contentHash: string;
   signatureDigest?: string;
   signatures: string[];
+  coveringSnapshot?: NoEvmArchiveCoveringSnapshot;
 }
 
 export interface NoEvmReceiptBlsCertificate {
@@ -1644,37 +1656,41 @@ function readCompactInclusionProof(
   };
 }
 
-function readArchiveProofSignatures(value: unknown, errors: string[]): string[] {
+function readArchiveProofSignatures(
+  value: unknown,
+  errors: string[],
+  label = "archiveProof.signatures",
+): string[] {
   if (!Array.isArray(value)) {
-    errors.push("archiveProof.signatures must be an array");
+    errors.push(`${label} must be an array`);
     return [];
   }
 
   const signatures: string[] = [];
   value.forEach((signature, index) => {
     if (typeof signature !== "string" || signature.trim() === "") {
-      errors.push(`archiveProof.signatures[${index}] must be a non-empty string`);
+      errors.push(`${label}[${index}] must be a non-empty string`);
       return;
     }
 
     const trimmed = signature.trim();
     const fields = trimmed.split(":");
     if (fields.length !== 3) {
-      errors.push(`archiveProof.signatures[${index}] must have 3 colon-separated fields`);
+      errors.push(`${label}[${index}] must have 3 colon-separated fields`);
       return;
     }
 
     const [prefix, signerId, payload] = fields;
     if (prefix !== ARCHIVE_PROOF_SIGNATURE_PREFIX) {
-      errors.push(`archiveProof.signatures[${index}] prefix must be ${ARCHIVE_PROOF_SIGNATURE_PREFIX}`);
+      errors.push(`${label}[${index}] prefix must be ${ARCHIVE_PROOF_SIGNATURE_PREFIX}`);
       return;
     }
     if (!ARCHIVE_PROOF_SIGNER_ID_RE.test(signerId)) {
-      errors.push(`archiveProof.signatures[${index}] signer id must be a 20-byte 0x hex value`);
+      errors.push(`${label}[${index}] signer id must be a 20-byte 0x hex value`);
       return;
     }
     if (!ARCHIVE_PROOF_SIGNATURE_PAYLOAD_RE.test(payload)) {
-      errors.push(`archiveProof.signatures[${index}] payload must be a non-empty 0x hex byte blob`);
+      errors.push(`${label}[${index}] payload must be a non-empty 0x hex byte blob`);
       return;
     }
 
@@ -1684,9 +1700,82 @@ function readArchiveProofSignatures(value: unknown, errors: string[]): string[] 
   return signatures;
 }
 
+function readArchiveCoveringSnapshot(
+  value: unknown,
+  errors: string[],
+  archiveContentHash: string | null,
+  proofBlockHeight: number | null,
+): NoEvmArchiveCoveringSnapshot | undefined {
+  if (value === undefined || value === null) return undefined;
+  const row = unknownRecord(value);
+  if (!row) {
+    errors.push("archiveProof.coveringSnapshot must be an object");
+    return undefined;
+  }
+
+  const startErrorCount = errors.length;
+  const snapshotHeight = readTranscriptNumber(row, "snapshotHeight", errors, "archiveProof.coveringSnapshot.snapshotHeight");
+  const manifestHash = readTranscriptHash32(row, "manifestHash", errors, "archiveProof.coveringSnapshot.manifestHash");
+  const signatureDigest = readTranscriptHash32(row, "signatureDigest", errors, "archiveProof.coveringSnapshot.signatureDigest");
+  const contentHash = readTranscriptHash32(row, "contentHash", errors, "archiveProof.coveringSnapshot.contentHash");
+  const checkpointContentHash = readTranscriptHash32(row, "checkpointContentHash", errors, "archiveProof.coveringSnapshot.checkpointContentHash");
+  const checkpointFrom = readTranscriptNumber(row, "checkpointFrom", errors, "archiveProof.coveringSnapshot.checkpointFrom");
+  const checkpointTo = readTranscriptNumber(row, "checkpointTo", errors, "archiveProof.coveringSnapshot.checkpointTo");
+  const signatures = readArchiveProofSignatures(
+    row.signatures,
+    errors,
+    "archiveProof.coveringSnapshot.signatures",
+  );
+
+  if (checkpointFrom !== null && checkpointFrom !== 0) {
+    errors.push("archiveProof.coveringSnapshot.checkpointFrom must be 0");
+  }
+  if (checkpointTo !== null && snapshotHeight !== null && checkpointTo > snapshotHeight) {
+    errors.push("archiveProof.coveringSnapshot.checkpointTo must be <= snapshotHeight");
+  }
+  if (checkpointTo !== null && proofBlockHeight !== null && checkpointTo !== proofBlockHeight) {
+    errors.push("archiveProof.coveringSnapshot.checkpointTo must match blockHeight");
+  }
+  if (
+    checkpointContentHash !== null
+    && archiveContentHash !== null
+    && checkpointContentHash.toLowerCase() !== archiveContentHash.toLowerCase()
+  ) {
+    errors.push("archiveProof.coveringSnapshot.checkpointContentHash must match archiveProof.contentHash");
+  }
+  if (Array.isArray(row.signatures) && signatures.length === 0) {
+    errors.push("archiveProof.coveringSnapshot.signatures must be non-empty");
+  }
+
+  if (
+    errors.length > startErrorCount
+    || snapshotHeight === null
+    || manifestHash === null
+    || signatureDigest === null
+    || contentHash === null
+    || checkpointContentHash === null
+    || checkpointFrom === null
+    || checkpointTo === null
+  ) {
+    return undefined;
+  }
+
+  return {
+    snapshotHeight,
+    manifestHash,
+    signatureDigest,
+    contentHash,
+    checkpointContentHash,
+    checkpointFrom,
+    checkpointTo,
+    signatures,
+  };
+}
+
 function readArchiveProofBinding(
   value: unknown,
   errors: string[],
+  proofBlockHeight: number | null,
 ): NoEvmReceiptArchiveProofBinding | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -1703,6 +1792,12 @@ function readArchiveProofBinding(
   const contentHash = readTranscriptHash32(row, "contentHash", errors, "archiveProof.contentHash");
   const signatureDigest = readOptionalTranscriptHash32(row, "signatureDigest", errors, "archiveProof.signatureDigest");
   const signatures = readArchiveProofSignatures(row.signatures, errors);
+  const coveringSnapshot = readArchiveCoveringSnapshot(
+    row.coveringSnapshot,
+    errors,
+    contentHash,
+    proofBlockHeight,
+  );
 
   if (schema !== null && schema !== NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA) {
     errors.push(`archiveProof.schema must be ${NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA}`);
@@ -1728,6 +1823,7 @@ function readArchiveProofBinding(
     contentHash,
     ...(signatureDigest !== undefined ? { signatureDigest } : {}),
     signatures,
+    ...(coveringSnapshot !== undefined ? { coveringSnapshot } : {}),
   };
 }
 
@@ -2352,7 +2448,7 @@ export function validateNoEvmReceiptProofTranscript(
 
   if (proofKind === "compactInclusion") {
     const compactInclusionProof = readCompactInclusionProof(row.compactInclusionProof, errors);
-    const archiveProof = readArchiveProofBinding(row.archiveProof, errors);
+    const archiveProof = readArchiveProofBinding(row.archiveProof, errors, blockHeight);
     const targetReceiptBytes = readTranscriptString(row, "targetReceiptBytes", errors);
     if (proofType !== null && proofType !== NO_EVM_COMPACT_RECEIPT_PROOF_TYPE) {
       errors.push(`proofType must be ${NO_EVM_COMPACT_RECEIPT_PROOF_TYPE}`);

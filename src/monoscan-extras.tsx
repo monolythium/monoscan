@@ -2394,6 +2394,7 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
     ? `${_short(compactProofTranscript.targetReceiptBytes, 18)} · target hash ${_short(compactProofTranscript.targetReceiptHash, 18)}`
     : null;
   const archiveProof = compactProofTranscript?.archiveProof ?? null;
+  const archiveCoveringSnapshot = archiveProof?.coveringSnapshot ?? null;
   const archiveBindingValue = archiveProof
     ? `${archiveProof.source} · manifest ${_short(archiveProof.manifestHash, 18)} · content ${_short(archiveProof.contentHash, 18)}`
     : compactProofTranscript?.historySource === "indexerReceiptArchive"
@@ -2407,6 +2408,15 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
     ? archiveSignatureCount > 0
       ? `present · ${archiveSignatureCount.toLocaleString()} archive signature${archiveSignatureCount === 1 ? "" : "s"} · validator finality not asserted`
       : "absent · validator finality not asserted"
+    : null;
+  const archiveCoveringSnapshotValue = archiveCoveringSnapshot
+    ? `parsed · snapshot ${archiveCoveringSnapshot.snapshotHeight.toLocaleString()} covers blocks ${archiveCoveringSnapshot.checkpointFrom.toLocaleString()}-${archiveCoveringSnapshot.checkpointTo.toLocaleString()} · explorer verification not configured`
+    : null;
+  const archiveCoveringSnapshotHashesValue = archiveCoveringSnapshot
+    ? `manifest ${_short(archiveCoveringSnapshot.manifestHash, 18)} · content ${_short(archiveCoveringSnapshot.contentHash, 18)} · checkpoint content ${_short(archiveCoveringSnapshot.checkpointContentHash, 18)} · digest ${_short(archiveCoveringSnapshot.signatureDigest, 18)}`
+    : null;
+  const archiveCoveringSnapshotSignaturesValue = archiveCoveringSnapshot
+    ? `parsed · ${archiveCoveringSnapshot.signatures.length.toLocaleString()} covering snapshot signature${archiveCoveringSnapshot.signatures.length === 1 ? "" : "s"} · not validator finality or explorer verified`
     : null;
   const finalityEvidence = proofTranscript?.finalityEvidence ?? null;
   const finalityVerification = evidence.proof?.finalityVerification ?? null;
@@ -2458,6 +2468,9 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
         {archiveBindingValue && <KV label="Archive binding" value={archiveBindingValue} mono/>}
         {archiveSignatureDigestValue && <KV label="Archive signature digest" value={archiveSignatureDigestValue} mono/>}
         {archiveSignaturesValue && <KV label="Archive signatures" value={archiveSignaturesValue} mono/>}
+        {archiveCoveringSnapshotValue && <KV label="Archive covering snapshot" value={archiveCoveringSnapshotValue} mono/>}
+        {archiveCoveringSnapshotHashesValue && <KV label="Covering snapshot hashes" value={archiveCoveringSnapshotHashesValue} mono/>}
+        {archiveCoveringSnapshotSignaturesValue && <KV label="Covering snapshot signatures" value={archiveCoveringSnapshotSignaturesValue} mono/>}
         {finalityEvidenceValue && <KV label="Finality evidence" value={finalityEvidenceValue} mono/>}
         {missingProofMaterialValue && <KV label="Missing proof material" value={missingProofMaterialValue} mono/>}
         {proofTranscriptValue && <KV label="Receipt transcript" value={proofTranscriptValue} mono/>}
