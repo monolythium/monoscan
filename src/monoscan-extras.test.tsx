@@ -43,6 +43,7 @@ import {
   type NativeAgentStateDisplayRows,
   type NativeAgentStateDisplayRow,
   type NoEvmFinalityVerificationTrustOptions,
+  type NoEvmArchiveCoveringSnapshot,
   type NoEvmCompactReceiptProofTranscript,
   type NoEvmReceiptFinalityEvidence,
   type NoEvmReceiptProofTranscript,
@@ -228,6 +229,24 @@ function compactNoEvmReceiptProofTranscript(
 }
 
 const validArchiveSignatureDigest = `0x${"66".repeat(32)}`;
+const validArchiveProofSignature =
+  `mono.snapshot.sig.v1:0x${"ab".repeat(20)}:0x${"12".repeat(64)}`;
+
+function validArchiveCoveringSnapshot(
+  overrides: Partial<NoEvmArchiveCoveringSnapshot> = {},
+): NoEvmArchiveCoveringSnapshot {
+  return {
+    snapshotHeight: 330,
+    manifestHash: `0x${"61".repeat(32)}`,
+    signatureDigest: `0x${"62".repeat(32)}`,
+    contentHash: `0x${"63".repeat(32)}`,
+    checkpointContentHash: `0x${"55".repeat(32)}`,
+    checkpointFrom: 0,
+    checkpointTo: 321,
+    signatures: [validArchiveProofSignature],
+    ...overrides,
+  };
+}
 
 describe("redemptionTicketStatusText", () => {
   it("separates cooldown maturity from payout availability", () => {
@@ -683,6 +702,73 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain("BLS aggregate finality certificate for block round");
     expect(html).not.toContain("live block cache");
     expect(html).not.toContain("Finality proof");
+  });
+
+  it("renders archive covering snapshot evidence as parsed but not explorer verified", () => {
+    const noEvmProof = compactNoEvmReceiptProofTranscript({
+      archiveProof: {
+        schema: NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA,
+        source: NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE,
+        manifestHash: `0x${"44".repeat(32)}`,
+        contentHash: `0x${"55".repeat(32)}`,
+        signatureDigest: null,
+        signatures: [],
+        coveringSnapshot: validArchiveCoveringSnapshot(),
+      } as any,
+    });
+    const evidence = mrvNativeTransactionEvidence({
+      txHash: `0x${"ab".repeat(32)}`,
+      blockNumber: 321n,
+      decodedCalldata: {
+        kind: "mrv_call",
+        extensions: [{
+          kind: MRV_NATIVE_TX_EXTENSION_KIND,
+          bodyHex: MRV_NATIVE_TX_EXTENSION_BODY_HEX,
+        }],
+      },
+    } as any, {
+      txHash: `0x${"ab".repeat(32)}`,
+      blockHash: `0x${"cd".repeat(32)}`,
+      blockHeight: 321,
+      txIndex: 0,
+      schema: "riscv.receipt.v1",
+      txType: MRV_NATIVE_RECEIPT_TX_TYPE,
+      artifactHash: `0x${"ef".repeat(32)}`,
+      receiptCommitment: `0x${"19".repeat(32)}`,
+      noEvmProof,
+      counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
+      fee: {
+        total_lythoshi: "12",
+        total_lyth: "0.00000012",
+        cycles_used: 12,
+        base_price_per_cycle_lythoshi: "1",
+        state_io_units: 1,
+        state_io_price_per_unit_lythoshi: "0",
+        priority_tip_lythoshi: "0",
+      },
+      reverted: false,
+      nativeDeltaCount: 1,
+      eventCount: 2,
+      events: [],
+      source: {
+        chainProvider: "mock_chain",
+        indexerProvider: "native_events",
+        metadataLogIndex: 0xffff_ffff,
+      },
+    } as any);
+
+    const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
+
+    expect(html).toContain("Archive covering snapshot");
+    expect(html).toContain("parsed · snapshot 330 covers blocks 0-321 · explorer verification not configured");
+    expect(html).toContain("Covering snapshot hashes");
+    expect(html).toContain("manifest 0x6161616161616161");
+    expect(html).toContain("content 0x6363636363636363");
+    expect(html).toContain("checkpoint content 0x5555555555555555");
+    expect(html).toContain("digest 0x6262626262626262");
+    expect(html).toContain("Covering snapshot signatures");
+    expect(html).toContain("parsed · 1 covering snapshot signature · not validator finality or explorer verified");
+    expect(html).not.toContain("verified · configured trusted archive signer");
   });
 
   it.each([
