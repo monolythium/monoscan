@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactElement } from "react";
 import {
+  AgentReputationCard,
   BridgeTrustDisclosuresCard,
   MrvNativeEvidenceCard,
   NativeAgentActionsCard,
@@ -16,6 +17,7 @@ import {
   transactionFeeValueLabel,
   type IndexedTokenBalanceRow,
 } from "./monoscan-extras";
+import type { AgentReputationResponse } from "@monolythium/core-sdk";
 import {
   bridgeTrustDisclosuresFromAddressData,
   MRV_NATIVE_RECEIPT_TX_TYPE,
@@ -222,6 +224,77 @@ describe("NativeAgentStateCard", () => {
     );
 
     expect(html).toContain("No native agent state rows reported for this account.");
+  });
+});
+
+describe("AgentReputationCard", () => {
+  const provider = "mono1zg69v7y6hn00qyfzxdz92enh3zv64w7vajvdc4";
+
+  it("renders category reputation evidence from the typed aggregate", () => {
+    const reputation: AgentReputationResponse = {
+      schemaVersion: 1,
+      provider,
+      categoryId: 7,
+      categoryScope: "category",
+      record: {
+        provider,
+        categoryId: 7,
+        blockHeight: 123,
+        speedSumX10: 460,
+        qualitySumX10: 450,
+        communicationSumX10: 440,
+        accuracySumX10: 430,
+        sampleCount: 5,
+        avgSpeedX10: 92,
+        avgQualityX10: 90,
+        avgCommunicationX10: 88,
+        avgAccuracyX10: 86,
+      },
+    };
+
+    const html = renderToStaticMarkup(<AgentReputationCard reputation={reputation}/>);
+
+    expect(html).toContain("Agent reputation");
+    expect(html).toContain("lyth_agentReputation");
+    expect(html).toContain("Category 7");
+    expect(html).toContain("5");
+    expect(html).toContain("123");
+    expect(html).toContain("Speed");
+    expect(html).toContain("9.2 / 10");
+    expect(html).toContain("Accuracy");
+    expect(html).toContain("8.6 / 10");
+  });
+
+  it("renders a no-record state when the aggregate is present without samples", () => {
+    const reputation: AgentReputationResponse = {
+      schemaVersion: 1,
+      provider,
+      categoryId: 0,
+      categoryScope: "global",
+      record: null,
+    };
+
+    const html = renderToStaticMarkup(<AgentReputationCard reputation={reputation}/>);
+
+    expect(html).toContain("Global");
+    expect(html).toContain("No reputation records reported for this provider category.");
+    expect(html).not.toContain("Reputation unavailable");
+  });
+
+  it("renders an explicit unavailable state when no aggregate is returned", () => {
+    const html = renderToStaticMarkup(
+      <AgentReputationCard
+        reputation={null}
+        provider={provider}
+        categoryId={12}
+        checked
+      />,
+    );
+
+    expect(html).toContain("Category 12");
+    expect(html).toContain("Reputation unavailable");
+    expect(html).toContain("No lyth_agentReputation aggregate returned for this provider category.");
+    expect(html).toContain("mono1zg69v7y6hn00q…vdc4");
   });
 });
 
