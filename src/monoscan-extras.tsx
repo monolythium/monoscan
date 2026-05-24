@@ -289,9 +289,30 @@ export function redemptionTicketStatusText(mature: boolean | null | undefined): 
   return "Cooldown state pending";
 }
 
-const AgentReputationCard = ({ reputation }: { reputation: AgentReputationResponse }) => {
-  const record: AgentReputationRecord | null = reputation.record ?? null;
+export const AgentReputationCard = ({
+  reputation,
+  provider,
+  categoryId = 0,
+  loading = false,
+  checked = true,
+}: {
+  reputation: AgentReputationResponse | null;
+  provider?: string | null;
+  categoryId?: number;
+  loading?: boolean;
+  checked?: boolean;
+}) => {
+  if (!reputation && !loading && !checked) return null;
+
+  const record: AgentReputationRecord | null = reputation?.record ?? null;
   const hasSamples = Boolean(record && record.sampleCount > 0);
+  const normalizedCategoryId = Number.isFinite(categoryId) && categoryId >= 0 ? Math.trunc(categoryId) : 0;
+  const categoryLabel = reputation
+    ? reputationScopeLabel(reputation)
+    : normalizedCategoryId > 0
+      ? `Category ${normalizedCategoryId}`
+      : "Global";
+  const providerLabel = reputation?.provider ?? provider ?? null;
   const ratings = record
     ? [
         ["Speed", record.avgSpeedX10],
@@ -307,12 +328,16 @@ const AgentReputationCard = ({ reputation }: { reputation: AgentReputationRespon
       right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>lyth_agentReputation</span>}
     >
       <div className="tx-kv">
-        <KV label="Category scope" value={reputationScopeLabel(reputation)} mono/>
-        <KV label="Samples" value={hasSamples && record ? record.sampleCount.toLocaleString() : "0"} mono/>
-        <KV label="Provider" value={_short(reputation.provider, 18)} mono/>
+        <KV label="Category scope" value={categoryLabel} mono/>
+        <KV label="Samples" value={hasSamples && record ? record.sampleCount.toLocaleString() : reputation ? "0" : "—"} mono/>
+        <KV label="Provider" value={providerLabel ? _short(providerLabel, 18) : "—"} mono/>
         <KV label="Block height" value={record ? Number(record.blockHeight).toLocaleString() : "—"} mono/>
       </div>
-      {hasSamples ? (
+      {loading ? (
+        <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"12px 16px 0"}}>
+          Reading /api/v1/agents/{providerLabel ? encodeURIComponent(providerLabel) : "provider"}/reputation...
+        </p>
+      ) : hasSamples ? (
         <table className="ms-table ms-table--tight">
           <thead><tr><th>Rating</th><th style={{textAlign:"right"}}>Average</th></tr></thead>
           <tbody>
@@ -324,10 +349,17 @@ const AgentReputationCard = ({ reputation }: { reputation: AgentReputationRespon
             ))}
           </tbody>
         </table>
-      ) : (
+      ) : reputation ? (
         <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"12px 16px 0"}}>
           No reputation records reported for this provider category.
         </p>
+      ) : (
+        <div style={{display:"grid",gap:8,margin:"12px 16px 0"}}>
+          <span className="pill err" style={{width:"fit-content"}}>Reputation unavailable</span>
+          <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:0}}>
+            No lyth_agentReputation aggregate returned for this provider category.
+          </p>
+        </div>
       )}
     </Card>
   );
@@ -1218,6 +1250,8 @@ const WalletPage = ({ addr, go }: any) => {
   const bridgeTrustDisclosureChecked = profile.isFetched && tokenBalances.isFetched && bridgeRouteDiscovery.isFetched;
   const liveLabel = profile.data?.label ?? addressLabel.data ?? null;
   const liveAgentReputation = agentReputation.data ?? null;
+  const agentReputationChecked = agentReputation.isFetched && !agentReputation.isLoading;
+  const showAgentReputation = Boolean(liveAgentReputation) || agentReputation.isLoading || agentReputationChecked;
   const liveNativeAgentRows = nativeAgentStateRows(nativeAgentState.data);
   const hasLiveNativeAgentState =
     nativeAgentStateDisplayRowsAll(liveNativeAgentRows).length > 0
@@ -1269,7 +1303,7 @@ const WalletPage = ({ addr, go }: any) => {
         </div>
       </section>
 
-      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || liveRedemptionQueue || codeValue !== null || profileAccount || liveAgentReputation || hasLiveNativeAgentState || liveMrcAccount) && (
+      {(livePolicy || liveActivityKind || liveDelegations.length > 0 || livePendingRewards || liveRedemptionQueue || codeValue !== null || profileAccount || showAgentReputation || hasLiveNativeAgentState || liveMrcAccount) && (
         <section className="tx-split">
           <Card title="Live account">
             <div className="tx-kv">
@@ -1408,7 +1442,15 @@ const WalletPage = ({ addr, go }: any) => {
               )}
             </Card>
           )}
-          {liveAgentReputation && <AgentReputationCard reputation={liveAgentReputation}/>}
+          {showAgentReputation && (
+            <AgentReputationCard
+              reputation={liveAgentReputation}
+              provider={addr}
+              categoryId={0}
+              loading={agentReputation.isLoading}
+              checked={agentReputationChecked}
+            />
+          )}
           {hasLiveNativeAgentState && <NativeAgentStateCard rows={liveNativeAgentRows} loading={nativeAgentState.isLoading}/>}
         </section>
       )}
