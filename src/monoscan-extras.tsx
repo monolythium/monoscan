@@ -71,6 +71,7 @@ import {
   mrvNativeTransactionEvidence,
   nativeReceiptEventRows,
   nativeReceiptMarketEventRows,
+  structuredNativeReceiptFee,
 } from "./data/hooks";
 import { getLythTokenId } from "./sdk/client";
 import { getNativeAgentForwarderAddress } from "./sdk/client";
@@ -84,7 +85,7 @@ import {
   type NativeAgentActionField,
   type NativeAgentActionKind,
 } from "./monoscan-agent-actions";
-import type { AgentReputationRecord, AgentReputationResponse, CapabilitiesResponse } from "@monolythium/core-sdk";
+import type { AgentReputationRecord, AgentReputationResponse, CapabilitiesResponse, NativeReceiptFeeDisplay } from "@monolythium/core-sdk";
 
 /* Light helpers — keep local so this file is self-contained */
 const _fmt  = (n: any) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -152,6 +153,16 @@ const _rawToLythNumber = (value: string | bigint | number | null | undefined) =>
     return Number.isFinite(n) ? n : 0;
   }
 };
+export function transactionFeeValueLabel(
+  feeDisplay: NativeReceiptFeeDisplay | null | undefined,
+  fixtureFee: number | null | undefined,
+  fixtureDenom = "LYTH",
+): string {
+  if (feeDisplay) return `${feeDisplay.totalLyth} LYTH`;
+  return typeof fixtureFee === "number" && Number.isFinite(fixtureFee)
+    ? `${fixtureFee.toFixed(4)} ${fixtureDenom}`
+    : "—";
+}
 type MrcTokenBalanceIdentity = {
   standard?: string | null;
   assetId?: string | null;
@@ -1690,6 +1701,7 @@ const TransactionsPage = ({ go }: any) => {
         from: tx.from,
         to: tx.to,
         valueLabel: `${_fmt(tx.amount)} ${tx.denom}`,
+        feeLabel: transactionFeeValueLabel(null, tx.fee, tx.feeDenom ?? "LYTH"),
         executionLabel: tx.gasUsed ? _fmt(tx.gasUsed) : "—",
         methodLabel: tx.kindLabel ?? tx.kind ?? "transaction",
         status: tx.status ?? "ok",
@@ -1707,6 +1719,7 @@ const TransactionsPage = ({ go }: any) => {
       from: tx.from,
       to: tx.to ?? "contract creation",
       valueLabel: `${_fmtRawToken(tx.value)} LYTH`,
+      feeLabel: transactionFeeValueLabel(tx.feeDisplay ?? null, null),
       executionLabel: _fmt(tx.executionUnitLimit ?? tx.gasLimit ?? 0),
       methodLabel: input && input !== "0x" ? `${input.slice(0, 10)} call` : "transfer",
       status: "ok",
@@ -1809,6 +1822,7 @@ const TransactionsPage = ({ go }: any) => {
                 <th>From</th>
                 <th>To</th>
                 <th style={{textAlign:"right"}}>Value</th>
+                <th style={{textAlign:"right"}}>Fee</th>
                 <th style={{textAlign:"right"}}>Execution limit</th>
                 <th style={{textAlign:"right"}}>Age</th>
               </tr>
@@ -1841,6 +1855,7 @@ const TransactionsPage = ({ go }: any) => {
                     </a>
                   </td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)"}}>{tx.valueLabel}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>{tx.feeLabel}</td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>{tx.executionLabel}</td>
                   <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>{tx.when}</td>
                 </tr>
@@ -1868,6 +1883,9 @@ const TxPage = ({ hash, go }: any) => {
   const liveReceipt = live.data?.receipt ?? null;
   const liveDecoded: any = live.data?.decoded ?? null;
   const liveNativeReceipt = nativeReceipt.data ?? null;
+  const liveNativeFee = liveNativeReceipt
+    ? structuredNativeReceiptFee(liveNativeReceipt.fee, { label: "native receipt fee" })
+    : null;
   const nativeEventRows = nativeReceiptEventRows(liveNativeReceipt);
   const nativeMarketEventRows = nativeReceiptMarketEventRows(liveNativeReceipt);
   const mrvEvidence = mrvNativeTransactionEvidence(liveDecoded, liveNativeReceipt);
@@ -1936,7 +1954,14 @@ const TxPage = ({ hash, go }: any) => {
         from: liveTx?.from ?? fixture?.from ?? "—",
         to: liveTx?.to ?? fixture?.to ?? "—",
         amount: liveTx?.value ? _rawToLythNumber(liveTx.value) : (fixture?.amount ?? 0),
-        fee: liveNativeReceipt ? _rawToLythNumber(liveNativeReceipt.fee.total_lythoshi) : (fixture?.fee ?? 0),
+        fee: fixture?.fee ?? 0,
+        feeDenom: fixture?.feeDenom ?? "LYTH",
+        feeLabel: liveNativeReceipt
+          ? liveNativeFee
+            ? transactionFeeValueLabel(liveNativeFee.display, null)
+            : "invalid ADR-0039 fee object"
+          : transactionFeeValueLabel(null, fixture?.fee ?? 0, fixture?.feeDenom ?? "LYTH"),
+        feeDetailTexts: liveNativeFee?.display.detailTexts ?? [],
         gasLimit: liveTx?.gas ? Number(BigInt(liveTx.gas)) : (fixture?.gasLimit ?? 0),
         nonce: liveTx?.nonce ? Number(BigInt(liveTx.nonce)) : (fixture?.nonce ?? 0),
         kindLabel: decodedMethod ?? fixture?.kindLabel ?? "Transfer",
@@ -2068,10 +2093,13 @@ const TxPage = ({ hash, go }: any) => {
         </Card>
         <Card title="Fees & execution">
           <div className="tx-kv">
-            <KV label="Fee" value={`${tx.fee.toFixed(4)} ${tx.feeDenom}`} mono/>
+            <KV label="Fee" value={tx.feeLabel ?? transactionFeeValueLabel(null, tx.fee, tx.feeDenom)} mono/>
+            {(tx.feeDetailTexts ?? []).map((detail: string, index: number) => (
+              <KV key={`${index}-${detail}`} label={index === 0 ? "Fee detail" : "Fee rates"} value={detail} mono/>
+            ))}
             <KV label="Execution units" value={`${_fmt(tx.gasUsed)} / ${_fmt(tx.gasLimit)}`}/>
             <KV label="Execution utilization" value={tx.gasLimit > 0 ? `${((tx.gasUsed/tx.gasLimit)*100).toFixed(1)}%` : "—"}/>
-            <KV label="Effective rate" value={tx.amount > 0 ? `${((tx.fee/tx.amount)*10000).toFixed(2)} bp` : "—"} />
+            <KV label="Effective rate" value={liveNativeFee ? "—" : tx.amount > 0 ? `${((tx.fee/tx.amount)*10000).toFixed(2)} bp` : "—"} />
             {liveDecoded?.errorCode && <KV label="Error code" value={liveDecoded.errorCode} mono/>}
           </div>
         </Card>
@@ -2116,9 +2144,16 @@ const TxPage = ({ hash, go }: any) => {
               <KV label="Cycles" value={_fmt(liveNativeReceipt.counters.cycles)} mono/>
               <KV label="Syscall units" value={_fmt(liveNativeReceipt.counters.syscallUnits)} mono/>
               <KV label="State I/O units" value={_fmt(liveNativeReceipt.counters.stateIoUnits)} mono/>
-              <KV label="Total fee" value={`${liveNativeReceipt.fee.total_lyth} LYTH`} mono/>
-              <KV label="Total fee lythoshi" value={liveNativeReceipt.fee.total_lythoshi} mono/>
-              <KV label="Priority tip" value={liveNativeReceipt.fee.priority_tip_lythoshi} mono/>
+              {liveNativeFee ? (
+                <>
+                  <KV label="Total fee" value={transactionFeeValueLabel(liveNativeFee.display, null)} mono/>
+                  <KV label="Total fee lythoshi" value={liveNativeFee.display.totalLythoshi} mono/>
+                  <KV label="Fee detail" value={liveNativeFee.display.detailTexts[0]} mono/>
+                  <KV label="Fee rates" value={liveNativeFee.display.detailTexts[1]} mono/>
+                </>
+              ) : (
+                <KV label="Fee" value="invalid ADR-0039 fee object" mono/>
+              )}
             </div>
           </Card>
         </section>

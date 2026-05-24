@@ -40,6 +40,7 @@ import {
   fetchMrcHoldersForTokenBalances,
   fetchNativeAgentState,
   fetchNativeMarketEvents,
+  fetchNativeMarketOrderBook,
   fetchNativeMarketState,
   fetchTxNativeReceipt,
   fetchMrcMetadataForTokenBalances,
@@ -58,10 +59,12 @@ import {
   normalizeRedemptionQueueResponse,
   nativeReceiptEventRows,
   nativeAgentStateRows,
+  nativeMarketOrderBookDeltaRows,
   nativeMarketEventRows,
   nativeMarketStateRows,
   nativeReceiptMarketEventRows,
   queryClient,
+  structuredNativeReceiptFee,
   txFeedToRows,
   verifyNoEvmReceiptProofConsistency,
   type NoEvmReceiptProofTranscript,
@@ -155,6 +158,19 @@ function apiEnvelope<T>(data: T) {
   };
 }
 
+function nativeFee(overrides: Record<string, unknown> = {}) {
+  return {
+    total_lythoshi: "7700000000",
+    total_lyth: "77",
+    cycles_used: 42,
+    base_price_per_cycle_lythoshi: "100000000",
+    state_io_units: 7,
+    state_io_price_per_unit_lythoshi: "100000000",
+    priority_tip_lythoshi: "0",
+    ...overrides,
+  };
+}
+
 describe("live-SDK seam", () => {
   it("polls the chain head every 2 seconds", () => {
     expect(HEAD_POLL_MS).toBe(2_000);
@@ -192,6 +208,11 @@ describe("live-SDK seam", () => {
     expect(typeof apiProto.marketTrades).toBe("function");
     expect(typeof apiProto.marketOhlc).toBe("function");
     expect(typeof apiProto.marketOrderBook).toBe("function");
+    expect(sdk.NATIVE_MARKET_ORDER_BOOK_STREAM_TOPIC).toBe("nativeMarketOrderBook");
+    expect(sdk.API_STREAM_TOPICS).toContain("nativeMarketOrderBook");
+    expect(typeof sdk.isNativeMarketOrderBookStreamPayload).toBe("function");
+    expect(typeof sdk.assertNativeMarketOrderBookStreamPayload).toBe("function");
+    expect(typeof sdk.assertMrvStructuredFeeConformance).toBe("function");
     expect(typeof proto.lythCurrentRound).toBe("function");
     expect(typeof proto.lythClusterDirectory).toBe("function");
     expect(typeof proto.lythClusterStatus).toBe("function");
@@ -397,6 +418,86 @@ describe("live-SDK seam", () => {
     expect(result).toBe(response);
   });
 
+  it("reads bounded native market order-book snapshots through the SDK/API seam", async () => {
+    const marketId = `0x${"88".repeat(32)}`;
+    const response = {
+      schemaVersion: 1,
+      marketId,
+      levels: 32,
+      bids: [{ price: "900", size: "12" }],
+      asks: [{ price: "1000", size: "3" }],
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "marketOrderBook")
+      .mockResolvedValue(apiEnvelope(response) as any);
+    const rpcSpy = vi.spyOn(RpcClient.prototype, "lythClobOrderBook");
+
+    const result = await fetchNativeMarketOrderBook(marketId, 99);
+
+    expect(apiSpy).toHaveBeenCalledWith(marketId, 32);
+    expect(rpcSpy).not.toHaveBeenCalled();
+    expect(result).toBe(response);
+  });
+
+  it("falls back to lyth_clobOrderBook for native order-book snapshots", async () => {
+    const marketId = `0x${"87".repeat(32)}`;
+    const response = {
+      schemaVersion: 1,
+      marketId,
+      levels: 5,
+      bids: [],
+      asks: [],
+    };
+    const apiSpy = vi
+      .spyOn(ApiClient.prototype, "marketOrderBook")
+      .mockRejectedValue(new Error("api unavailable"));
+    const rpcSpy = vi
+      .spyOn(RpcClient.prototype, "lythClobOrderBook")
+      .mockResolvedValue(response);
+
+    const result = await fetchNativeMarketOrderBook(marketId, 5);
+
+    expect(apiSpy).toHaveBeenCalledWith(marketId, 5);
+    expect(rpcSpy).toHaveBeenCalledWith(marketId, 5);
+    expect(result).toBe(response);
+  });
+
+  it("accepts only SDK-valid nativeMarketOrderBook stream deltas and bounds rows", () => {
+    const marketId = `0x${"86".repeat(32)}`;
+    const otherMarketId = `0x${"85".repeat(32)}`;
+    const base = {
+      marketId,
+      orderId: `0x${"01".repeat(32)}`,
+      eventName: "market.order.placed",
+      action: "upsert",
+      side: "bid",
+      price: "900",
+      quantity: "12",
+      remaining: "12",
+      status: "open",
+      blockHeight: 100,
+      txIndex: 0,
+      logIndex: 0,
+    };
+
+    const rows = nativeMarketOrderBookDeltaRows([
+      { ...base, orderId: `0x${"02".repeat(32)}`, blockHeight: 99 },
+      { ...base, orderId: `0x${"03".repeat(32)}`, relatedOrderId: `0x${"04".repeat(32)}`, action: "remove", remaining: "0" },
+      { ...base, marketId: otherMarketId, orderId: `0x${"05".repeat(32)}` },
+      { ...base, orderId: `0x${"06".repeat(32)}`, action: "replace" },
+      null,
+    ], { marketId, limit: 1 });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      topic: "nativeMarketOrderBook",
+      marketId,
+      orderId: `0x${"03".repeat(32)}`,
+      action: "remove",
+      relatedOrderId: `0x${"04".repeat(32)}`,
+    });
+  });
+
   it("reads native market current state from the dedicated API path", async () => {
     const marketId = `0x${"88".repeat(32)}`;
     const response = {
@@ -526,7 +627,7 @@ describe("live-SDK seam", () => {
         issuerId,
         issuer: provider,
         subject: owner,
-        nonce: "2",
+        nonce: 2,
         schemaHash: `0x${"17".repeat(32)}`,
         payloadHash: null,
         active: true,
@@ -545,7 +646,7 @@ describe("live-SDK seam", () => {
       services: [{
         serviceId,
         provider,
-        nonce: "4",
+        nonce: 4,
         categoryHash: `0x${"18".repeat(32)}`,
         metadataHash: null,
         active: true,
@@ -582,7 +683,7 @@ describe("live-SDK seam", () => {
         policyId,
         owner,
         controller: "mono1agentcontroller",
-        nonce: "6",
+        nonce: 6,
         assetId: `0x${"cc".repeat(32)}`,
         enabled: true,
         perActionLimit: "100",
@@ -1913,7 +2014,7 @@ describe("API execution-unit transformations", () => {
   });
 
   it("normalizes recent transaction rows from API pages and tx feeds", () => {
-    const fee = { total_lythoshi: "77" };
+    const fee = nativeFee();
     const pageRows = apiBlockTransactionsToRows({
       block: { timestamp: 1_700_000_000 },
       transactions: [{
@@ -1946,7 +2047,33 @@ describe("API execution-unit transformations", () => {
     } as any);
 
     expect(pageRows[0]).toMatchObject({ value: "1234", executionUnitLimit: 42_000, fee });
+    expect(pageRows[0]?.feeDisplay?.totalLythoshi).toBe("7700000000");
     expect(feedRows[0]).toMatchObject({ value: "999", executionUnitLimit: 21_000, fee });
+    expect(feedRows[0]?.feeDisplay?.defaultFeeText).toBe("Network fee: 77 LYTH");
+  });
+
+  it("does not accept legacy embedded fee keys as valid ADR-0039 fees", () => {
+    const legacyFee = nativeFee({ gasUsed: "21000" });
+    const fee = structuredNativeReceiptFee(legacyFee);
+    const feedRows = txFeedToRows({
+      transactions: [{
+        txHash: "0xfeed",
+        blockHash: "0xblock",
+        blockNumber: 43,
+        blockTimestamp: null,
+        txIndex: 0,
+        from: "0xfrom",
+        to: null,
+        value: "999",
+        executionUnitLimit: 21_000,
+        fee: legacyFee,
+        input: "0x",
+      }],
+    } as any);
+
+    expect(fee).toBeNull();
+    expect(feedRows[0]?.fee).toBeNull();
+    expect(feedRows[0]?.feeDisplay).toBeNull();
   });
 
   it("maps native RISC-V receipt events into transaction-detail display rows", () => {

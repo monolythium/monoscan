@@ -318,6 +318,8 @@ export const QK = {
     ] as const,
   clobOrderBook: (marketId: string, levels: number | null = null) =>
     ["mono", "markets", "clob", marketId, "order-book", levels ?? "default"] as const,
+  nativeMarketOrderBook: (marketId: string, levels: number | null = null) =>
+    ["mono", "markets", "native", marketId, "order-book", levels ?? "default"] as const,
   nativeMarketEvents: (
     fromBlock: number | string,
     toBlock: number | string,
