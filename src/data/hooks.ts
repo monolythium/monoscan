@@ -25,6 +25,10 @@ import { QueryClient, useQuery } from "@tanstack/react-query";
 import * as CoreSdk from "@monolythium/core-sdk";
 import { keccak256 } from "ethers/crypto";
 import {
+  NATIVE_MARKET_ORDER_BOOK_STREAM_TOPIC,
+  assertMrvStructuredFeeConformance,
+  formatNativeReceiptFeeDisplay,
+  isNativeMarketOrderBookStreamPayload,
   parseQuantityBig,
   type AccountPolicy,
   type AccountProofResponse,
@@ -72,7 +76,10 @@ import {
   type NativeAgentStateResponse,
   type NativeEventsFilter,
   type NativeEventsResponse,
+  type NativeMarketOrderBookStreamPayload,
   type NativeReceiptResponse,
+  type NativeReceiptFee,
+  type NativeReceiptFeeDisplay,
   type OperatorCapabilitiesResponse,
   type OperatorAuthorityResponse,
   type OperatorInfoResponse,
@@ -442,6 +449,29 @@ function readObjectField(value: unknown, keys: string[]): unknown | null {
     if (row[key] !== undefined) return row[key];
   }
   return null;
+}
+
+export interface StructuredNativeReceiptFee {
+  fee: NativeReceiptFee;
+  display: NativeReceiptFeeDisplay;
+}
+
+export function structuredNativeReceiptFee(
+  value: unknown,
+  options: { expectedTotalLythoshi?: string | number | bigint; label?: string } = {},
+): StructuredNativeReceiptFee | null {
+  try {
+    assertMrvStructuredFeeConformance(value, {
+      expectedTotalLythoshi: options.expectedTotalLythoshi,
+      label: options.label ?? "native receipt fee",
+    });
+    return {
+      fee: value,
+      display: formatNativeReceiptFeeDisplay(value),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function unknownRecord(value: unknown): Record<string, unknown> | null {
@@ -1707,6 +1737,39 @@ export function nativeMarketEventRows(
   });
 }
 
+export interface NativeMarketOrderBookDeltaDisplayRow extends NativeMarketOrderBookStreamPayload {
+  topic: typeof NATIVE_MARKET_ORDER_BOOK_STREAM_TOPIC;
+}
+
+export const NATIVE_MARKET_ORDER_BOOK_DELTA_LIMIT_MAX = 200;
+
+export function nativeMarketOrderBookDeltaRows(
+  payloads: readonly unknown[] | null | undefined,
+  options: { marketId?: string | null; limit?: number } = {},
+): NativeMarketOrderBookDeltaDisplayRow[] {
+  const requestedLimit = typeof options.limit === "number" && Number.isFinite(options.limit)
+    ? Math.trunc(options.limit)
+    : NATIVE_MARKET_ORDER_BOOK_DELTA_LIMIT_MAX;
+  const rowLimit = Math.max(
+    1,
+    Math.min(
+      requestedLimit,
+      NATIVE_MARKET_ORDER_BOOK_DELTA_LIMIT_MAX,
+    ),
+  );
+  const marketId = options.marketId?.trim();
+  const rows: NativeMarketOrderBookDeltaDisplayRow[] = [];
+  for (const payload of payloads ?? []) {
+    if (!isNativeMarketOrderBookStreamPayload(payload)) continue;
+    if (marketId && payload.marketId !== marketId) continue;
+    rows.push({
+      ...payload,
+      topic: NATIVE_MARKET_ORDER_BOOK_STREAM_TOPIC,
+    });
+  }
+  return rows.slice(-rowLimit);
+}
+
 export function nativeMarketStateRows(
   response: NativeMarketStateResponse | null | undefined,
 ): {
@@ -2156,7 +2219,8 @@ export interface LatestTransactionRow {
   to: string | null;
   value: string;
   executionUnitLimit: number;
-  fee: unknown | null;
+  fee: NativeReceiptFee | null;
+  feeDisplay: NativeReceiptFeeDisplay | null;
   input: string;
 }
 
@@ -2170,35 +2234,47 @@ export interface LatestTransactionsDigest {
 }
 
 export function apiBlockTransactionsToRows(page: ApiBlockTransactionsData): LatestTransactionRow[] {
-  return page.transactions.map((tx) => ({
-    hash: tx.txHash,
-    blockNumber: tx.blockHeight,
-    blockHash: tx.blockHash,
-    blockTimestamp: page.block.timestamp ?? null,
-    txIndex: tx.txIndex,
-    from: tx.from,
-    to: tx.to,
-    value: readRequiredStringField(tx, ["valueLythoshi", "value"]),
-    executionUnitLimit: readRequiredNumberField(tx, ["executionUnitLimit", "gasLimit", "gas"]),
-    fee: readObjectField(tx, ["fee"]),
-    input: tx.input,
-  }));
+  return page.transactions.map((tx, index) => {
+    const structuredFee = structuredNativeReceiptFee(readObjectField(tx, ["fee"]), {
+      label: `block transaction[${index}].fee`,
+    });
+    return {
+      hash: tx.txHash,
+      blockNumber: tx.blockHeight,
+      blockHash: tx.blockHash,
+      blockTimestamp: page.block.timestamp ?? null,
+      txIndex: tx.txIndex,
+      from: tx.from,
+      to: tx.to,
+      value: readRequiredStringField(tx, ["valueLythoshi", "value"]),
+      executionUnitLimit: readRequiredNumberField(tx, ["executionUnitLimit", "gasLimit", "gas"]),
+      fee: structuredFee?.fee ?? null,
+      feeDisplay: structuredFee?.display ?? null,
+      input: tx.input,
+    };
+  });
 }
 
 export function txFeedToRows(feed: TxFeedResponse): LatestTransactionRow[] {
-  return feed.transactions.map((tx) => ({
-    hash: tx.txHash,
-    blockNumber: tx.blockNumber,
-    blockHash: tx.blockHash,
-    blockTimestamp: tx.blockTimestamp,
-    txIndex: tx.txIndex,
-    from: tx.from,
-    to: tx.to,
-    value: tx.value,
-    executionUnitLimit: readRequiredNumberField(tx, ["executionUnitLimit", "gasLimit", "gas"]),
-    fee: readObjectField(tx, ["fee"]),
-    input: tx.input,
-  }));
+  return feed.transactions.map((tx, index) => {
+    const structuredFee = structuredNativeReceiptFee(readObjectField(tx, ["fee"]), {
+      label: `tx feed transaction[${index}].fee`,
+    });
+    return {
+      hash: tx.txHash,
+      blockNumber: tx.blockNumber,
+      blockHash: tx.blockHash,
+      blockTimestamp: tx.blockTimestamp,
+      txIndex: tx.txIndex,
+      from: tx.from,
+      to: tx.to,
+      value: tx.value,
+      executionUnitLimit: readRequiredNumberField(tx, ["executionUnitLimit", "gasLimit", "gas"]),
+      fee: structuredFee?.fee ?? null,
+      feeDisplay: structuredFee?.display ?? null,
+      input: tx.input,
+    };
+  });
 }
 
 /**
@@ -4128,23 +4204,40 @@ export function useClobOhlc(
   });
 }
 
-export function useClobOrderBook(marketId: string | undefined, levels = 20) {
-  const depth = Math.max(1, Math.min(Math.trunc(levels), 100));
+export const NATIVE_MARKET_ORDER_BOOK_LEVELS_MAX = 32;
+
+export function boundedNativeMarketOrderBookLevels(levels = 20): number {
+  const requestedLevels = Number.isFinite(levels) ? Math.trunc(levels) : 20;
+  return Math.max(1, Math.min(requestedLevels, NATIVE_MARKET_ORDER_BOOK_LEVELS_MAX));
+}
+
+export async function fetchNativeMarketOrderBook(
+  marketId: string,
+  levels = 20,
+): Promise<ClobOrderBookResponse | null> {
+  const depth = boundedNativeMarketOrderBookLevels(levels);
+  try {
+    return await getApiClient()
+      .marketOrderBook(marketId, depth)
+      .then((response) => response.data)
+      .catch(() => getRpcClient().lythClobOrderBook(marketId, depth));
+  } catch {
+    return null;
+  }
+}
+
+export function useNativeMarketOrderBook(marketId: string | undefined, levels = 20) {
+  const depth = boundedNativeMarketOrderBookLevels(levels);
   return useQuery<ClobOrderBookResponse | null>({
-    queryKey: QK.clobOrderBook(marketId ?? "", depth),
+    queryKey: QK.nativeMarketOrderBook(marketId ?? "", depth),
     enabled: Boolean(marketId) && isRpcConfigured(),
-    queryFn: async () => {
-      try {
-        return await getApiClient()
-          .marketOrderBook(marketId as string, depth)
-          .then((response) => response.data)
-          .catch(() => getRpcClient().lythClobOrderBook(marketId as string, depth));
-      } catch {
-        return null;
-      }
-    },
+    queryFn: async () => fetchNativeMarketOrderBook(marketId as string, depth),
     staleTime: 10_000,
   });
+}
+
+export function useClobOrderBook(marketId: string | undefined, levels = 20) {
+  return useNativeMarketOrderBook(marketId, levels);
 }
 
 export const NATIVE_MARKET_EVENTS_LIMIT = 25;

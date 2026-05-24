@@ -32,10 +32,10 @@ import {
   useClobMarket,
   useClobMarkets,
   useClobOhlc,
-  useClobOrderBook,
   useClobTrades,
   useCapabilities,
   useNativeMarketEvents,
+  useNativeMarketOrderBook,
   useNativeMarketState,
 } from "./data/hooks";
 import { getMarketIdForSymbol, getNativeMarketForwarderAddress } from "./sdk/client";
@@ -1592,7 +1592,7 @@ const MarketPage = ({ sym, go }: any) => {
   const clob = useClobMarket(marketId);
   const liveTrades = useClobTrades(marketId, 50);
   const liveOhlc = useClobOhlc(marketId);
-  const liveBook = useClobOrderBook(marketId, 9);
+  const liveBook = useNativeMarketOrderBook(marketId, 9);
   const nativeMarketState = useNativeMarketState({ primaryId: marketId ?? null });
   const nativeStateRows = useMemo(() => nativeMarketStateRows(nativeMarketState.data), [nativeMarketState.data]);
   const nativeMarketEvents = useNativeMarketEvents({ latestBlock: head.data?.blockNumber ?? null, limit: 25, primaryId: marketId ?? null });

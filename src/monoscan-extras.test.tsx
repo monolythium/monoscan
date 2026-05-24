@@ -13,6 +13,7 @@ import {
   tokenBalanceMetadataLines,
   tokenBalancePrimaryWithMetadata,
   tokenBalanceStandardLabel,
+  transactionFeeValueLabel,
   type IndexedTokenBalanceRow,
 } from "./monoscan-extras";
 import {
@@ -89,6 +90,22 @@ describe("redemptionTicketStatusText", () => {
     expect(redemptionTicketStatusText(true)).toBe("Cooldown complete · payout unavailable");
     expect(redemptionTicketStatusText(false)).toBe("Cooldown active");
     expect(redemptionTicketStatusText(null)).toBe("Cooldown state pending");
+  });
+});
+
+describe("transactionFeeValueLabel", () => {
+  it("renders SDK structured fee display without converting through number", () => {
+    expect(transactionFeeValueLabel({
+      defaultFeeText: "Network fee: 123,456,789,012.34567891 LYTH",
+      detailTexts: [],
+      totalLythoshi: "12345678901234567891",
+      totalLyth: "123,456,789,012.34567891",
+    }, 0.0001)).toBe("123,456,789,012.34567891 LYTH");
+  });
+
+  it("falls back to fixture fee text only when no structured fee display exists", () => {
+    expect(transactionFeeValueLabel(null, 0.012345, "LYTH")).toBe("0.0123 LYTH");
+    expect(transactionFeeValueLabel(null, null)).toBe("—");
   });
 });
 
