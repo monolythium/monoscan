@@ -35,6 +35,7 @@ import {
   type AddressActivityEntry,
   type AddressActivityKindResponse,
   type AddressLabelRecord,
+  type ApiEnvelope,
   type ApiAddressActivityEntry,
   type ApiBlockHeader,
   type ApiBlockTransactionsData,
@@ -4205,33 +4206,307 @@ export function useClobOhlc(
 }
 
 export const NATIVE_MARKET_ORDER_BOOK_LEVELS_MAX = 32;
+export const NATIVE_MARKET_ORDER_BOOK_REPLAY_LIMIT_MAX = 500;
+
+export interface NativeMarketOrderBookReplayOptions {
+  fromBlock?: number | bigint | string | null;
+  toBlock?: number | bigint | string | null;
+  cursor?: string | null;
+  replayLimit?: number | null;
+}
+
+interface NativeMarketOrderBookReplayResponse {
+  schemaVersion: number;
+  replay: true;
+  streamTopic: typeof NATIVE_MARKET_ORDER_BOOK_STREAM_TOPIC;
+  deltas: NativeMarketOrderBookStreamPayload[];
+  fromBlock?: number | string;
+  toBlock?: number | string;
+  cursor?: string | null;
+  nextCursor?: string | null;
+}
+
+type NativeMarketOrderBookReplayQuery = Record<string, string | number | bigint | boolean | null | undefined>;
+
+interface NativeMarketOrderBookSnapshot {
+  book: ClobOrderBookResponse;
+  latestHeight: number | null;
+}
 
 export function boundedNativeMarketOrderBookLevels(levels = 20): number {
   const requestedLevels = Number.isFinite(levels) ? Math.trunc(levels) : 20;
   return Math.max(1, Math.min(requestedLevels, NATIVE_MARKET_ORDER_BOOK_LEVELS_MAX));
 }
 
-export async function fetchNativeMarketOrderBook(
+function boundedNativeMarketOrderBookReplayLimit(limit: number | null | undefined): number {
+  const requestedLimit = typeof limit === "number" && Number.isFinite(limit)
+    ? Math.trunc(limit)
+    : NATIVE_MARKET_ORDER_BOOK_REPLAY_LIMIT_MAX;
+  return Math.max(1, Math.min(requestedLimit, NATIVE_MARKET_ORDER_BOOK_REPLAY_LIMIT_MAX));
+}
+
+function readReplayBlock(value: number | bigint | string | null | undefined): number | bigint | string | null {
+  if (typeof value === "number") return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : null;
+  if (typeof value === "bigint") return value >= 0n ? value : null;
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readApiEnvelopeHeight(envelope: ApiEnvelope<unknown>): number | null {
+  const height = envelope.latest?.height;
+  return typeof height === "number" && Number.isSafeInteger(height) && height >= 0 ? height : null;
+}
+
+async function fetchNativeMarketOrderBookSnapshot(
   marketId: string,
-  levels = 20,
-): Promise<ClobOrderBookResponse | null> {
-  const depth = boundedNativeMarketOrderBookLevels(levels);
+  depth: number,
+): Promise<NativeMarketOrderBookSnapshot | null> {
   try {
-    return await getApiClient()
+    const envelope = await getApiClient()
       .marketOrderBook(marketId, depth)
-      .then((response) => response.data)
-      .catch(() => getRpcClient().lythClobOrderBook(marketId, depth));
+      .catch(() => null);
+    if (envelope !== null) {
+      return {
+        book: envelope.data,
+        latestHeight: readApiEnvelopeHeight(envelope as ApiEnvelope<unknown>),
+      };
+    }
+    const book = await getRpcClient().lythClobOrderBook(marketId, depth);
+    return { book, latestHeight: null };
   } catch {
     return null;
   }
 }
 
-export function useNativeMarketOrderBook(marketId: string | undefined, levels = 20) {
+function normalizeNativeMarketOrderBookReplayResponse(
+  response: ApiEnvelope<unknown>,
+  marketId: string,
+): NativeMarketOrderBookReplayResponse {
+  const data = response.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("native market orderbook replay payload is malformed");
+  }
+  const row = data as Record<string, unknown>;
+  const deltas = row.deltas;
+  if (
+    row.streamTopic !== NATIVE_MARKET_ORDER_BOOK_STREAM_TOPIC ||
+    row.replay !== true ||
+    !Array.isArray(deltas)
+  ) {
+    throw new Error("native market orderbook replay payload is malformed");
+  }
+  const validated: NativeMarketOrderBookStreamPayload[] = [];
+  for (const delta of deltas) {
+    if (!isNativeMarketOrderBookStreamPayload(delta) || delta.marketId !== marketId) {
+      throw new Error("native market orderbook replay delta is malformed");
+    }
+    validated.push(delta);
+  }
+  return {
+    schemaVersion: typeof row.schemaVersion === "number" ? row.schemaVersion : 1,
+    replay: true,
+    streamTopic: NATIVE_MARKET_ORDER_BOOK_STREAM_TOPIC,
+    deltas: validated,
+    fromBlock: typeof row.fromBlock === "number" || typeof row.fromBlock === "string" ? row.fromBlock : undefined,
+    toBlock: typeof row.toBlock === "number" || typeof row.toBlock === "string" ? row.toBlock : undefined,
+    cursor: typeof row.cursor === "string" ? row.cursor : row.cursor === null ? null : undefined,
+    nextCursor: typeof row.nextCursor === "string" ? row.nextCursor : row.nextCursor === null ? null : undefined,
+  };
+}
+
+export async function fetchNativeMarketOrderBookReplayDeltas(
+  query: {
+    marketId: string;
+    fromBlock?: number | bigint | string | null;
+    toBlock?: number | bigint | string | null;
+    cursor?: string | null;
+    limit?: number | null;
+  },
+): Promise<NativeMarketOrderBookReplayResponse> {
+  const fromBlock = readReplayBlock(query.fromBlock);
+  const toBlock = readReplayBlock(query.toBlock);
+  const cursor = query.cursor?.trim() || null;
+  const apiQuery: NativeMarketOrderBookReplayQuery = {
+    marketId: query.marketId,
+    fromBlock,
+    toBlock,
+    cursor,
+    limit: boundedNativeMarketOrderBookReplayLimit(query.limit),
+  };
+  const response = await getApiClient().get<ApiEnvelope<unknown>>(
+    "/native-market-orderbook-deltas",
+    apiQuery,
+  );
+  return normalizeNativeMarketOrderBookReplayResponse(response, query.marketId);
+}
+
+function nativeMarketOrderBookSideKey(side: string | undefined): "bids" | "asks" | null {
+  const normalized = side?.toLowerCase();
+  if (normalized === "bid" || normalized === "buy") return "bids";
+  if (normalized === "ask" || normalized === "sell") return "asks";
+  return null;
+}
+
+function nativeMarketOrderBookLevelAmount(value: string | undefined): bigint | null {
+  if (typeof value !== "string" || !/^(0|[1-9][0-9]*)$/.test(value)) return null;
+  return BigInt(value);
+}
+
+function nativeMarketOrderBookLevelMap(
+  levels: ClobOrderBookResponse["bids"],
+): Map<string, bigint> {
+  const out = new Map<string, bigint>();
+  for (const level of levels) {
+    const amount = nativeMarketOrderBookLevelAmount(level.size);
+    if (amount === null) continue;
+    out.set(level.price, (out.get(level.price) ?? 0n) + amount);
+  }
+  return out;
+}
+
+function addNativeMarketOrderBookLevel(
+  levels: Map<string, bigint>,
+  price: string,
+  delta: bigint,
+): void {
+  const next = (levels.get(price) ?? 0n) + delta;
+  if (next > 0n) {
+    levels.set(price, next);
+  } else {
+    levels.delete(price);
+  }
+}
+
+function compareQuantityStrings(left: string, right: string): number {
+  const a = BigInt(left);
+  const b = BigInt(right);
+  return a === b ? 0 : a < b ? -1 : 1;
+}
+
+function nativeMarketOrderBookLevelsFromMap(
+  levels: Map<string, bigint>,
+  side: "bids" | "asks",
+  depth: number,
+): ClobOrderBookResponse["bids"] {
+  return [...levels.entries()]
+    .filter(([, size]) => size > 0n)
+    .sort(([left], [right]) => side === "bids"
+      ? compareQuantityStrings(right, left)
+      : compareQuantityStrings(left, right))
+    .slice(0, depth)
+    .map(([price, size]) => ({ price, size: size.toString() }));
+}
+
+export function applyNativeMarketOrderBookDeltas(
+  snapshot: ClobOrderBookResponse,
+  deltas: readonly NativeMarketOrderBookStreamPayload[],
+  levels = snapshot.levels ?? NATIVE_MARKET_ORDER_BOOK_LEVELS_MAX,
+): ClobOrderBookResponse {
   const depth = boundedNativeMarketOrderBookLevels(levels);
+  const books = {
+    bids: nativeMarketOrderBookLevelMap(snapshot.bids),
+    asks: nativeMarketOrderBookLevelMap(snapshot.asks),
+  };
+  const replayOrders = new Map<string, { side: "bids" | "asks"; price: string; remaining: bigint }>();
+
+  for (const delta of deltas) {
+    if (!isNativeMarketOrderBookStreamPayload(delta) || delta.marketId !== snapshot.marketId) {
+      throw new Error("native market orderbook delta is malformed");
+    }
+    const side = nativeMarketOrderBookSideKey(delta.side);
+    const price = delta.price;
+    if (side === null || typeof price !== "string" || !/^(0|[1-9][0-9]*)$/.test(price)) continue;
+    const previous = replayOrders.get(delta.orderId);
+    const hadPrevious = previous !== undefined;
+    if (previous) {
+      addNativeMarketOrderBookLevel(books[previous.side], previous.price, -previous.remaining);
+      replayOrders.delete(delta.orderId);
+    }
+    if (delta.action === "upsert") {
+      const remaining = nativeMarketOrderBookLevelAmount(delta.remaining ?? delta.quantity);
+      if (remaining === null || remaining === 0n) continue;
+      replayOrders.set(delta.orderId, { side, price, remaining });
+      addNativeMarketOrderBookLevel(books[side], price, remaining);
+    } else if (!hadPrevious) {
+      const removed = nativeMarketOrderBookLevelAmount(delta.quantity);
+      if (removed !== null && removed > 0n) {
+        addNativeMarketOrderBookLevel(books[side], price, -removed);
+      }
+    }
+  }
+
+  return {
+    ...snapshot,
+    levels: depth,
+    bids: nativeMarketOrderBookLevelsFromMap(books.bids, "bids", depth),
+    asks: nativeMarketOrderBookLevelsFromMap(books.asks, "asks", depth),
+  };
+}
+
+function nativeMarketOrderBookReplayQuery(
+  marketId: string,
+  snapshotHeight: number | null,
+  options: NativeMarketOrderBookReplayOptions = {},
+): { marketId: string; fromBlock?: number | bigint | string | null; toBlock?: number | bigint | string | null; cursor?: string | null; limit?: number | null } | null {
+  const cursor = options.cursor?.trim() || null;
+  const explicitFromBlock = readReplayBlock(options.fromBlock);
+  const toBlock = readReplayBlock(options.toBlock);
+  const fromBlock = explicitFromBlock ?? (
+    typeof snapshotHeight === "number" && toBlock !== null
+      ? snapshotHeight + 1
+      : null
+  );
+  if (cursor === null && (fromBlock === null || toBlock === null)) return null;
+  if (
+    cursor === null &&
+    typeof fromBlock === "number" &&
+    typeof toBlock === "number" &&
+    fromBlock > toBlock
+  ) {
+    return null;
+  }
+  return {
+    marketId,
+    fromBlock,
+    toBlock,
+    cursor,
+    limit: options.replayLimit,
+  };
+}
+
+export async function fetchNativeMarketOrderBook(
+  marketId: string,
+  levels = 20,
+  replayOptions: NativeMarketOrderBookReplayOptions = {},
+): Promise<ClobOrderBookResponse | null> {
+  const depth = boundedNativeMarketOrderBookLevels(levels);
+  const snapshot = await fetchNativeMarketOrderBookSnapshot(marketId, depth);
+  if (snapshot === null) {
+    return null;
+  }
+  const replayQuery = nativeMarketOrderBookReplayQuery(marketId, snapshot.latestHeight, replayOptions);
+  if (replayQuery === null) return snapshot.book;
+  try {
+    const replay = await fetchNativeMarketOrderBookReplayDeltas(replayQuery);
+    return applyNativeMarketOrderBookDeltas(snapshot.book, replay.deltas, depth);
+  } catch {
+    return snapshot.book;
+  }
+}
+
+export function useNativeMarketOrderBook(
+  marketId: string | undefined,
+  levels = 20,
+  replayOptions: NativeMarketOrderBookReplayOptions = {},
+) {
+  const depth = boundedNativeMarketOrderBookLevels(levels);
+  const fromBlock = readReplayBlock(replayOptions.fromBlock);
+  const toBlock = readReplayBlock(replayOptions.toBlock);
+  const cursor = replayOptions.cursor?.trim() || null;
   return useQuery<ClobOrderBookResponse | null>({
-    queryKey: QK.nativeMarketOrderBook(marketId ?? "", depth),
+    queryKey: QK.nativeMarketOrderBook(marketId ?? "", depth, fromBlock, toBlock, cursor),
     enabled: Boolean(marketId) && isRpcConfigured(),
-    queryFn: async () => fetchNativeMarketOrderBook(marketId as string, depth),
+    queryFn: async () => fetchNativeMarketOrderBook(marketId as string, depth, replayOptions),
     staleTime: 10_000,
   });
 }
