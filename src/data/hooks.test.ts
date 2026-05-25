@@ -2568,6 +2568,61 @@ describe("API execution-unit transformations", () => {
     expect(feedRows[0]?.feeDisplay).toBeNull();
   });
 
+  it("projects the tx feed receipt summary onto latest-transaction rows", () => {
+    const fee = structuredNativeReceiptFee(nativeFee())!;
+    const ok = txFeedToRows({
+      transactions: [{
+        txHash: "0xfeedok",
+        blockHash: "0xblock",
+        blockNumber: 50,
+        blockTimestamp: 1_700_000_000,
+        txIndex: 0,
+        from: "0xfrom",
+        to: "0xto",
+        value: "100",
+        executionUnitLimit: 21_000,
+        fee,
+        input: "0x",
+        receipt: { status: 1, executionUnitsUsed: 18_500, logsCount: 2 },
+      }],
+    } as any);
+    const reverted = txFeedToRows({
+      transactions: [{
+        txHash: "0xfeedfail",
+        blockHash: "0xblock",
+        blockNumber: 51,
+        blockTimestamp: null,
+        txIndex: 0,
+        from: "0xfrom",
+        to: "0xto",
+        value: "0",
+        executionUnitLimit: 21_000,
+        fee,
+        input: "0x",
+        receipt: { status: 0, execution_units_used: 17_000, logs_count: 0 },
+      }],
+    } as any);
+    const noReceipt = txFeedToRows({
+      transactions: [{
+        txHash: "0xfeednone",
+        blockHash: "0xblock",
+        blockNumber: 52,
+        blockTimestamp: null,
+        txIndex: 0,
+        from: "0xfrom",
+        to: "0xto",
+        value: "0",
+        executionUnitLimit: 21_000,
+        fee,
+        input: "0x",
+        receipt: null,
+      }],
+    } as any);
+    expect(ok[0]?.receipt).toEqual({ status: 1, executionUnitsUsed: 18_500, logsCount: 2 });
+    expect(reverted[0]?.receipt).toEqual({ status: 0, executionUnitsUsed: 17_000, logsCount: 0 });
+    expect(noReceipt[0]?.receipt).toBeNull();
+  });
+
   it("maps native RISC-V receipt events into transaction-detail display rows", () => {
     const receipt = {
       txHash: `0x${"22".repeat(32)}`,

@@ -1765,6 +1765,14 @@ const TransactionsPage = ({ go }: any) => {
   );
   const liveRows = (live.data?.rows ?? []).map((tx: any) => {
     const input = tx.input ?? "0x";
+    const receipt = tx.receipt ?? null;
+    const limit = Number(tx.executionUnitLimit ?? tx.gasLimit ?? 0);
+    const used = receipt && Number.isFinite(Number(receipt.executionUnitsUsed))
+      ? Number(receipt.executionUnitsUsed)
+      : null;
+    const status = receipt
+      ? receipt.status === 1 ? "ok" : "failed"
+      : "pending";
     return {
       hash: tx.hash,
       blockNumber: tx.blockNumber,
@@ -1774,9 +1782,11 @@ const TransactionsPage = ({ go }: any) => {
       to: tx.to ?? "contract creation",
       valueLabel: `${_fmtRawToken(tx.value)} LYTH`,
       feeLabel: transactionFeeValueLabel(tx.feeDisplay ?? null, null),
-      executionLabel: _fmt(tx.executionUnitLimit ?? tx.gasLimit ?? 0),
+      executionLabel: used !== null
+        ? `${_fmt(used)} / ${_fmt(limit)}`
+        : _fmt(limit),
       methodLabel: input && input !== "0x" ? `${input.slice(0, 10)} call` : "transfer",
-      status: "ok",
+      status,
       source: "live",
     };
   });
@@ -1877,7 +1887,7 @@ const TransactionsPage = ({ go }: any) => {
                 <th>To</th>
                 <th style={{textAlign:"right"}}>Value</th>
                 <th style={{textAlign:"right"}}>Fee</th>
-                <th style={{textAlign:"right"}}>Execution limit</th>
+                <th style={{textAlign:"right"}}>Used / Limit</th>
                 <th style={{textAlign:"right"}}>Age</th>
               </tr>
             </thead>
@@ -1885,8 +1895,11 @@ const TransactionsPage = ({ go }: any) => {
               {filtered.map((tx: any) => (
                 <tr key={`${tx.source}-${tx.hash}`} onClick={()=>go(`#/tx/${encodeURIComponent(tx.hash)}`)}>
                   <td>
-                    <span className={`pill ${tx.status === "failed" ? "err" : "ok"}`} style={{fontSize:9.5,padding:"2px 7px"}}>
-                      {tx.status === "failed" ? "failed" : "ok"}
+                    <span
+                      className={`pill ${tx.status === "failed" ? "err" : tx.status === "pending" ? "warn" : "ok"}`}
+                      style={{fontSize:9.5,padding:"2px 7px"}}
+                    >
+                      {tx.status === "failed" ? "failed" : tx.status === "pending" ? "pending" : "ok"}
                     </span>
                   </td>
                   <td>
