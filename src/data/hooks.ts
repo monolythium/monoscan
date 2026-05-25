@@ -3663,6 +3663,12 @@ export function useTxStatus(hash: string | undefined) {
   });
 }
 
+export interface LatestTransactionReceiptSummary {
+  status: number;
+  executionUnitsUsed: number;
+  logsCount: number;
+}
+
 export interface LatestTransactionRow {
   hash: string;
   blockNumber: number;
@@ -3676,6 +3682,7 @@ export interface LatestTransactionRow {
   fee: NativeReceiptFee | null;
   feeDisplay: NativeReceiptFeeDisplay | null;
   input: string;
+  receipt: LatestTransactionReceiptSummary | null;
 }
 
 export interface LatestTransactionsDigest {
@@ -3685,6 +3692,18 @@ export interface LatestTransactionsDigest {
   scannedTransactions: number;
   nextCursor: string | null;
   source: "lyth_txFeed" | "block_scan";
+}
+
+function txFeedReceiptToSummary(value: unknown): LatestTransactionReceiptSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const status = readNumberField(row, ["status"]);
+  if (status === null) return null;
+  return {
+    status,
+    executionUnitsUsed: readNumberField(row, ["executionUnitsUsed", "execution_units_used"]) ?? 0,
+    logsCount: readNumberField(row, ["logsCount", "logs_count"]) ?? 0,
+  };
 }
 
 export function apiBlockTransactionsToRows(page: ApiBlockTransactionsData): LatestTransactionRow[] {
@@ -3705,6 +3724,7 @@ export function apiBlockTransactionsToRows(page: ApiBlockTransactionsData): Late
       fee: structuredFee?.fee ?? null,
       feeDisplay: structuredFee?.display ?? null,
       input: tx.input,
+      receipt: null,
     };
   });
 }
@@ -3727,6 +3747,7 @@ export function txFeedToRows(feed: TxFeedResponse): LatestTransactionRow[] {
       fee: structuredFee?.fee ?? null,
       feeDisplay: structuredFee?.display ?? null,
       input: tx.input,
+      receipt: txFeedReceiptToSummary(readObjectField(tx, ["receipt"])),
     };
   });
 }
