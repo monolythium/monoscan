@@ -1588,7 +1588,16 @@ const WalletPage = ({ addr, go }: any) => {
               <th style={{textAlign:"right"}}>When</th>
             </tr></thead>
             <tbody>
-              {liveActivity.length > 0 ? liveActivity.map((row:any)=>(
+              {/* AddressActivityEntry is keyed by block:txIndex:logIndex.
+                  The row→tx-detail link waits on the SDK adding a txHash
+                  field; until then we link block + counterparty + cluster. */}
+              {liveActivity.length > 0 ? liveActivity.map((row:any)=>{
+                const blockHeight = Number(row.blockHeight);
+                const counterpartyAddress = row.counterparty as string | null;
+                const clusterSlot = row.cluster !== null && row.cluster !== undefined
+                  ? `C-${String(Number(row.cluster) + 1).padStart(3, "0")}`
+                  : null;
+                return (
                 <tr key={`${row.blockHeight}-${row.txIndex}-${row.logIndex}`}>
                   <td>
                     <span className={`wd-dir wd-dir--${row.direction === "out" ? "out" : "in"}`}>
@@ -1604,17 +1613,37 @@ const WalletPage = ({ addr, go }: any) => {
                     </div>
                   </td>
                   <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
-                    {row.counterparty ? _short(row.counterparty, 14) : row.cluster !== null && row.cluster !== undefined ? `C-${String(Number(row.cluster)+1).padStart(3,"0")}` : "—"}
+                    {counterpartyAddress ? (
+                      <a
+                        onClick={()=>go(`#/wallet/${encodeURIComponent(counterpartyAddress)}`)}
+                        style={{cursor:"pointer",color:"var(--fg-300)"}}
+                      >
+                        {_short(counterpartyAddress, 14)}
+                      </a>
+                    ) : clusterSlot ? (
+                      <a
+                        onClick={()=>go(`#/cluster/${Number(row.cluster) + 1}`)}
+                        style={{cursor:"pointer",color:"var(--gold)"}}
+                      >
+                        {clusterSlot}
+                      </a>
+                    ) : "—"}
                   </td>
                   <td className="mono num" style={{textAlign:"right",color: row.direction==="out" ? "var(--err, #ff6b6b)" : "var(--ok, #73d13d)"}}>
                     {row.amount ? `${row.direction==="out" ? "−" : "+"}${row.amount}` : row.weightBps !== null && row.weightBps !== undefined ? `${row.weightBps} bps` : "—"}
                   </td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>—</td>
                   <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>
-                    block {Number(row.blockHeight).toLocaleString()}
+                    <a
+                      onClick={()=>go(`#/round/${blockHeight}`)}
+                      style={{cursor:"pointer",color:"var(--gold)"}}
+                    >
+                      block {blockHeight.toLocaleString()}
+                    </a>
                   </td>
                 </tr>
-              )) : w.txs.map(t=>(
+                );
+              }) : w.txs.map(t=>(
                 <tr key={t.hash} onClick={()=>go(`#/tx/${encodeURIComponent(t.hash)}`)} className={t.status==="failed"?"wd-tx-failed":""}>
                   <td>
                     <span className={`wd-dir wd-dir--${t.direction}`}>
