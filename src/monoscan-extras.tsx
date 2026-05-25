@@ -2553,7 +2553,12 @@ const RoundPage = ({ round, go }: any) => {
   const roundCert = useBlsRoundCertificate(roundNumber);
   const dagParents = useDagParents(roundNumber);
   const verticesAtRound = useVerticesAtRound(roundNumber);
-  const cur = MONOSCAN_DATA?.consensus?.round || 0;
+  const chainStats = useChainStats();
+  const liveLatestHeight = chainStats.data?.latestHeight ?? null;
+  const cur = liveLatestHeight !== null
+    ? Number(liveLatestHeight)
+    : (MONOSCAN_DATA?.consensus?.round || 0);
+  const curIsLive = liveLatestHeight !== null;
   const verts = (MONOSCAN_DATA?.recentVertices || []).filter(v => v.round === r);
   const liveHeader: any = liveBlock.data ?? null;
   const liveCert: any = roundCert.data ?? null;
@@ -2561,6 +2566,21 @@ const RoundPage = ({ round, go }: any) => {
   const liveVertices = verticesAtRound.data?.vertices ?? [];
   const signerIndices = liveCert?.signer_indices ?? liveCert?.signerIndices ?? [];
   const signerCount = Number(liveCert?.signer_count ?? liveCert?.signerCount ?? signerIndices.length ?? 0);
+  const liveHeaderTimestamp = (() => {
+    const raw = liveHeader?.timestamp;
+    if (raw === null || raw === undefined) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
+  const liveHeaderTimestampDisplay = (() => {
+    if (liveHeaderTimestamp === null) return null;
+    const ms = liveHeaderTimestamp > 1_000_000_000_000
+      ? liveHeaderTimestamp
+      : liveHeaderTimestamp * 1000;
+    const iso = new Date(ms).toISOString().replace(".000Z", "Z");
+    const age = _ageFromTs(liveHeaderTimestamp);
+    return age && age !== "—" ? `${iso} · ${age}` : iso;
+  })();
   const found = liveHeader || liveVertices.length > 0 || (liveParents?.length ?? 0) > 0 || verts.length > 0 || (r > 0 && r <= cur);
   return (
     <div className="ms-page">
@@ -2568,9 +2588,11 @@ const RoundPage = ({ round, go }: any) => {
       <h1 className="ms-h1" style={{marginBottom:6}}>Round <span style={{color:"var(--gold)"}}>#{isNaN(r)?round:r.toLocaleString()}</span></h1>
       {!found ? (
         <p className="mono" style={{color:"var(--fg-400)"}}>
-          {liveBlock.isLoading
+          {liveBlock.isLoading || chainStats.isLoading
             ? "Checking live block…"
-            : `Round not found. Current head is ${cur.toLocaleString()}.`}
+            : curIsLive
+              ? `Round not found. Current head is ${cur.toLocaleString()} · live.`
+              : "Round not found and no live head available."}
         </p>
       ) : (
         <>
@@ -2600,7 +2622,9 @@ const RoundPage = ({ round, go }: any) => {
                 </div>
                 <div className="tx-kv__row">
                   <span className="mono tx-kv__k">Timestamp</span>
-                  <span className="mono tx-kv__v">{liveHeader.timestamp}</span>
+                  <span className="mono tx-kv__v">
+                    {liveHeaderTimestampDisplay ?? (liveHeader.timestamp ?? "—")}
+                  </span>
                 </div>
               </div>
             </div>
@@ -2608,7 +2632,9 @@ const RoundPage = ({ round, go }: any) => {
             <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
               {verts.length > 0
                 ? `${verts.length} cluster vertex${verts.length===1?"":"es"} committed at this round.`
-                : `Round committed ~${Math.max(0, (cur - r)).toLocaleString()} rounds ago.`}
+                : curIsLive && r > 0 && r <= cur
+                  ? `Round committed ~${Math.max(0, cur - r).toLocaleString()} rounds ago.`
+                  : "Round retained but no live header is exposed for it."}
             </p>
           )}
           {(liveCert || roundCert.isLoading || roundCert.isFetched) && (
