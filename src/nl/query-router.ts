@@ -50,8 +50,8 @@ export function matchQuery(q: string): Match | null {
     };
   }
 
-  // 2) "Show me activity for 0xabc..." / "address 0x..." / "what's 0x..." doing
-  const addr = ql.match(/(?:0x[a-f0-9]+(?:\.\.\.|…)?[a-f0-9]*)/i);
+  // 2) "Show me activity for mono1..." / "address mono1..." / "what's mono1..." doing
+  const addr = ql.match(/(?:mono1[023456789acdefghjklmnpqrstuvwxyz]+(?:\.\.\.|…)?[023456789acdefghjklmnpqrstuvwxyz]*)/i);
   if (addr && /(activity|recent|history|address|happen|do)/.test(ql)) {
     return { template: "address", args: { address: addr[0] } };
   }

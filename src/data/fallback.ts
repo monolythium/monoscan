@@ -9,8 +9,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Fallback data is shape-driven only; strict types live in `./hooks.ts`.
 
+import { addressToTypedBech32, type AddressKind } from "@monolythium/core-sdk";
+
 const _hash = (n: number): string =>
   `0x${n.toString(16).padStart(8, "0")}…${(n * 7919).toString(16).slice(-4)}`;
+const _typedAddress = (kind: AddressKind, n: number): string =>
+  addressToTypedBech32(kind, `0x${n.toString(16).padStart(40, "0")}`);
 const _spark = (n: number, base: number, v: number): number[] =>
   Array.from({ length: n }, (_, i) => base + Math.sin(i * 0.5) * v + (Math.random() - 0.5) * v * 0.6);
 
@@ -258,7 +262,7 @@ const _mkToken = (sym: string, name: string, rank: number, kind: string, tier: s
     holders,
     age: { days: Math.floor(30 + r() * 1800) },
     sparkline: spark,
-    contract: `mono1:${sym.toLowerCase().replace(/[^a-z0-9]/g, "")}:${(rank * 9931).toString(16).slice(-6)}`,
+    contract: _typedAddress("contract", 0x200000 + rank),
     tick: tier === "mega" ? 0.001 : tier === "big" ? 0.001 : tier === "mid" ? 0.002 : 0.005,
     venues: [
       { name: "coinzen", share: 0.55 + r() * 0.25 },
@@ -445,51 +449,42 @@ export const NETWORK_STATS = (() => {
 
 /* ================= WALLETS ================= */
 const WALLET_TAGS: any[] = [
-  { tag: "Foundation treasury", addr: "mono1:fnd:treasury:5-of-9", bal: 12_400_000, pct: 1.42 },
-  { tag: "Coinzen · hot wallet", addr: "mono1:cz:hot:0x8a21", bal: 9_844_120, pct: 1.13 },
-  { tag: "Coinzen · cold storage", addr: "mono1:cz:cold:0x1149", bal: 28_112_500, pct: 3.22 },
-  { tag: "Orbital DEX · LP treasury", addr: "mono1:orb:lp:0x7c32", bal: 6_291_700, pct: 0.72 },
-  { tag: "Bridge · Solana lane", addr: "mono1:brg:sol:0x5a90", bal: 4_188_200, pct: 0.48 },
-  { tag: "Bridge · IBC (cosmos)", addr: "mono1:brg:ibc:0x2e45", bal: 3_712_840, pct: 0.43 },
-  { tag: "Staking pool · Stakewise", addr: "mono1:sw:pool:0x9f01", bal: 3_244_000, pct: 0.37 },
-  { tag: "Staking pool · Pocket", addr: "mono1:pkt:pool:0x1a38", bal: 2_810_500, pct: 0.32 },
-  { tag: null, addr: "mono1:whale:0x4d82", bal: 2_490_000, pct: 0.28, note: "early genesis · OG" },
-  { tag: null, addr: "mono1:whale:0x9010", bal: 2_188_400, pct: 0.25 },
-  { tag: "Mira Protocol · contract", addr: "mono1:mira:pool:0x3e9a", bal: 1_944_220, pct: 0.22 },
-  { tag: null, addr: "mono1:whale:0x71a5", bal: 1_822_100, pct: 0.21 },
-  { tag: null, addr: "mono1:whale:0x62de", bal: 1_705_300, pct: 0.20 },
-  { tag: "Coinzen · fee collector", addr: "mono1:cz:fee:0x0044", bal: 1_520_800, pct: 0.17 },
-  { tag: null, addr: "mono1:addr:0x44b1", bal: 1_414_900, pct: 0.16 },
-  { tag: null, addr: "mono1:addr:0x3e82", bal: 1_312_400, pct: 0.15 },
-  { tag: null, addr: "mono1:addr:0x2c19", bal: 1_211_060, pct: 0.14 },
-  { tag: "Orbital DEX · router", addr: "mono1:orb:router:0x6f1a", bal: 1_155_900, pct: 0.13 },
-  { tag: null, addr: "mono1:addr:0x5a88", bal: 1_098_700, pct: 0.13 },
-  { tag: null, addr: "mono1:addr:0x18e3", bal: 988_200, pct: 0.11 },
-  { tag: null, addr: "mono1:addr:0x39bc", bal: 912_500, pct: 0.10 },
-  { tag: null, addr: "mono1:addr:0x7712", bal: 844_300, pct: 0.10 },
-  { tag: null, addr: "mono1:addr:0x22cd", bal: 802_100, pct: 0.09 },
-  { tag: null, addr: "mono1:addr:0x5f44", bal: 741_500, pct: 0.08 },
-  { tag: null, addr: "mono1:addr:0x91b8", bal: 688_200, pct: 0.08 },
-  { tag: "Mira · staking vault", addr: "mono1:mira:stake:0x0fa1", bal: 644_800, pct: 0.07 },
-  { tag: null, addr: "mono1:addr:0x0d72", bal: 611_700, pct: 0.07 },
-  { tag: null, addr: "mono1:addr:0x6e31", bal: 577_400, pct: 0.07 },
-  { tag: null, addr: "mono1:addr:0x8842", bal: 544_900, pct: 0.06 },
-  { tag: null, addr: "mono1:addr:0x11a9", bal: 512_100, pct: 0.06 },
+  { tag: "Foundation treasury", addr: _typedAddress("user", 0x300001), bal: 12_400_000, pct: 1.42 },
+  { tag: "Coinzen · hot wallet", addr: _typedAddress("user", 0x300002), bal: 9_844_120, pct: 1.13 },
+  { tag: "Coinzen · cold storage", addr: _typedAddress("user", 0x300003), bal: 28_112_500, pct: 3.22 },
+  { tag: "Orbital DEX · LP treasury", addr: _typedAddress("user", 0x300004), bal: 6_291_700, pct: 0.72 },
+  { tag: "Bridge · Solana lane", addr: _typedAddress("user", 0x300005), bal: 4_188_200, pct: 0.48 },
+  { tag: "Bridge · IBC (cosmos)", addr: _typedAddress("user", 0x300006), bal: 3_712_840, pct: 0.43 },
+  { tag: "Staking pool · Stakewise", addr: _typedAddress("user", 0x300007), bal: 3_244_000, pct: 0.37 },
+  { tag: "Staking pool · Pocket", addr: _typedAddress("user", 0x300008), bal: 2_810_500, pct: 0.32 },
+  { tag: null, addr: _typedAddress("user", 0x300009), bal: 2_490_000, pct: 0.28, note: "early genesis · OG" },
+  { tag: null, addr: _typedAddress("user", 0x30000a), bal: 2_188_400, pct: 0.25 },
+  { tag: "Mira Protocol · contract", addr: _typedAddress("contract", 0x30000b), bal: 1_944_220, pct: 0.22 },
+  { tag: null, addr: _typedAddress("user", 0x30000c), bal: 1_822_100, pct: 0.21 },
+  { tag: null, addr: _typedAddress("user", 0x30000d), bal: 1_705_300, pct: 0.20 },
+  { tag: "Coinzen · fee collector", addr: _typedAddress("user", 0x30000e), bal: 1_520_800, pct: 0.17 },
+  { tag: null, addr: _typedAddress("user", 0x30000f), bal: 1_414_900, pct: 0.16 },
+  { tag: null, addr: _typedAddress("user", 0x300010), bal: 1_312_400, pct: 0.15 },
+  { tag: null, addr: _typedAddress("user", 0x300011), bal: 1_211_060, pct: 0.14 },
+  { tag: "Orbital DEX · router", addr: _typedAddress("contract", 0x300012), bal: 1_155_900, pct: 0.13 },
+  { tag: null, addr: _typedAddress("user", 0x300013), bal: 1_098_700, pct: 0.13 },
+  { tag: null, addr: _typedAddress("user", 0x300014), bal: 988_200, pct: 0.11 },
+  { tag: null, addr: _typedAddress("user", 0x300015), bal: 912_500, pct: 0.10 },
+  { tag: null, addr: _typedAddress("user", 0x300016), bal: 844_300, pct: 0.10 },
+  { tag: null, addr: _typedAddress("user", 0x300017), bal: 802_100, pct: 0.09 },
+  { tag: null, addr: _typedAddress("user", 0x300018), bal: 741_500, pct: 0.08 },
+  { tag: null, addr: _typedAddress("user", 0x300019), bal: 688_200, pct: 0.08 },
+  { tag: "Mira · staking vault", addr: _typedAddress("contract", 0x30001a), bal: 644_800, pct: 0.07 },
+  { tag: null, addr: _typedAddress("user", 0x30001b), bal: 611_700, pct: 0.07 },
+  { tag: null, addr: _typedAddress("user", 0x30001c), bal: 577_400, pct: 0.07 },
+  { tag: null, addr: _typedAddress("user", 0x30001d), bal: 544_900, pct: 0.06 },
+  { tag: null, addr: _typedAddress("user", 0x30001e), bal: 512_100, pct: 0.06 },
 ];
 
 const _mkWalletTxs = (addr: string, seed: number) => {
   const r = _seed(seed);
   const kinds = ["transfer", "stake", "unstake", "reward", "swap", "bridge-out", "bridge-in", "contract"];
-  const counterparties = [
-    "mono1:cz:hot:0x8a21",
-    "mono1:orb:router:0x6f1a",
-    "mono1:brg:sol:0x5a90",
-    "mono1:fnd:treasury:5-of-9",
-    "mono1:addr:0x3e82",
-    "mono1:whale:0x9010",
-    "mono1:mira:pool:0x3e9a",
-    "mono1:sw:pool:0x9f01",
-  ];
+  const counterparties = WALLET_TAGS.slice(0, 8).map((w) => w.addr);
   const denoms = ["LYTH", "LYTH", "LYTH", "USDC", "wETH", "LYTH-p"];
   return Array.from({ length: 18 }, (_, i) => {
     const kind = kinds[Math.floor(r() * kinds.length)];

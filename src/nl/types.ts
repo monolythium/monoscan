@@ -51,7 +51,7 @@ export interface NlAnswer {
 /** Sample queries surfaced as buttons. */
 export const SAMPLE_QUERIES: string[] = [
   "What happened in block 12345?",
-  "Show me the latest activity for 0xabc1...",
+  "Show me the latest activity for mono1...",
   "Are there any recent gap records?",
   "Find tokens matching MONO",
   "Summarize cluster 3's recent rounds",
