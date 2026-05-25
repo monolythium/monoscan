@@ -371,7 +371,8 @@ type BridgeRoutesRpcClient = {
 /* bigint → number helpers.                                                    */
 /*                                                                             */
 /* The SDK returns `bigint` for every quantity-shaped wire field (block        */
-/* height, peer count, gas, etc.). The page chrome consumes them as `number`   */
+/* height, peer count, execution units, etc.). The page chrome consumes them   */
+/* as `number`                                                                */
 /* for `.toLocaleString()` / `.toFixed()` formatting. Convert at the seam,     */
 /* not at every call site. Heights and counters cannot exceed                  */
 /* `Number.MAX_SAFE_INTEGER` for any realistic chain age; if they ever do      */
@@ -559,8 +560,8 @@ export function apiBlockToRpcHeader(block: ApiBlockHeader): BlockHeader {
     parent_hash: block.parentHash,
     state_root: block.stateRoot,
     timestamp: numToBig(block.timestamp),
-    executionUnitsUsed: numToBig(readRequiredNumberField(block, ["executionUnitsUsed", "gasUsed", "gas_used"])),
-    executionUnitLimit: numToBig(readRequiredNumberField(block, ["executionUnitLimit", "gasLimit", "gas_limit"])),
+    executionUnitsUsed: numToBig(readRequiredNumberField(block, ["executionUnitsUsed"])),
+    executionUnitLimit: numToBig(readRequiredNumberField(block, ["executionUnitLimit"])),
   };
 }
 
@@ -574,9 +575,9 @@ export function apiTxToRpcTx(tx: ApiTransactionView, chainId: number): Transacti
     to: tx.to,
     nonce: decimalToHexQuantity(tx.nonce),
     value: decimalToHexQuantity(readRequiredStringField(tx, ["valueLythoshi", "value"])),
-    gas: decimalToHexQuantity(readRequiredNumberField(tx, ["executionUnitLimit", "gasLimit", "gas"])),
-    maxFeePerGas: decimalToHexQuantity(readRequiredStringField(tx, ["maxExecutionFeeLythoshi", "maxFeePerGas"])),
-    maxPriorityFeePerGas: decimalToHexQuantity(readRequiredStringField(tx, ["priorityTipLythoshi", "maxPriorityFeePerGas"])),
+    gas: decimalToHexQuantity(readRequiredNumberField(tx, ["executionUnitLimit"])),
+    maxFeePerGas: decimalToHexQuantity(readRequiredStringField(tx, ["maxExecutionFeeLythoshi"])),
+    maxPriorityFeePerGas: decimalToHexQuantity(readRequiredStringField(tx, ["priorityTipLythoshi"])),
     input: tx.input,
     type: "0x2",
     chainId: decimalToHexQuantity(chainId),
@@ -590,7 +591,7 @@ export function apiReceiptToRpcReceipt(receipt: ApiTransactionReceipt): Transact
     block_number: numToBig(receipt.blockHeight),
     tx_index: receipt.txIndex,
     status: receipt.status,
-    executionUnitsUsed: numToBig(readRequiredNumberField(receipt, ["executionUnitsUsed", "gasUsed", "gas_used"])),
+    executionUnitsUsed: numToBig(readRequiredNumberField(receipt, ["executionUnitsUsed"])),
   };
 }
 
@@ -616,9 +617,9 @@ export function decodedTxToRpcTx(decoded: DecodeTxResponse, chainId = 0): Transa
     to: decoded.to,
     nonce: decimalToHexQuantity(decoded.nonce),
     value: decimalToHexQuantity(readRequiredStringField(decoded, ["valueLythoshi", "value"])),
-    gas: decimalToHexQuantity(readRequiredStringField(decoded, ["executionUnitLimit", "gasLimit"])),
-    maxFeePerGas: decimalToHexQuantity(readRequiredStringField(decoded, ["maxExecutionFeeLythoshi", "maxFeePerGas"])),
-    maxPriorityFeePerGas: decimalToHexQuantity(readRequiredStringField(decoded, ["priorityTipLythoshi", "maxPriorityFeePerGas"])),
+    gas: decimalToHexQuantity(readRequiredStringField(decoded, ["executionUnitLimit"])),
+    maxFeePerGas: decimalToHexQuantity(readRequiredStringField(decoded, ["maxExecutionFeeLythoshi"])),
+    maxPriorityFeePerGas: decimalToHexQuantity(readRequiredStringField(decoded, ["priorityTipLythoshi"])),
     input: decodedInputHex(decoded),
     type: "0x2",
     chainId: decimalToHexQuantity(chainId),
@@ -3700,7 +3701,7 @@ export function apiBlockTransactionsToRows(page: ApiBlockTransactionsData): Late
       from: tx.from,
       to: tx.to,
       value: readRequiredStringField(tx, ["valueLythoshi", "value"]),
-      executionUnitLimit: readRequiredNumberField(tx, ["executionUnitLimit", "gasLimit", "gas"]),
+      executionUnitLimit: readRequiredNumberField(tx, ["executionUnitLimit"]),
       fee: structuredFee?.fee ?? null,
       feeDisplay: structuredFee?.display ?? null,
       input: tx.input,
@@ -3722,7 +3723,7 @@ export function txFeedToRows(feed: TxFeedResponse): LatestTransactionRow[] {
       from: tx.from,
       to: tx.to,
       value: tx.value,
-      executionUnitLimit: readRequiredNumberField(tx, ["executionUnitLimit", "gasLimit", "gas"]),
+      executionUnitLimit: readRequiredNumberField(tx, ["executionUnitLimit"]),
       fee: structuredFee?.fee ?? null,
       feeDisplay: structuredFee?.display ?? null,
       input: tx.input,
