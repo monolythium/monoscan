@@ -2409,7 +2409,7 @@ describe("API execution-unit transformations", () => {
     expect(receipt.executionUnitsUsed).toBe(21_111n);
   });
 
-  it("maps new decoded transaction fields with older payload fallbacks", () => {
+  it("maps new decoded transaction fields", () => {
     const decoded = {
       txHash: "0xtx",
       blockHash: "0xblock",
@@ -2433,8 +2433,76 @@ describe("API execution-unit transformations", () => {
 
     expect(decodedTxToRpcTx(decoded as any).gas).toBe("0xa410");
     expect(decodedTxToRpcReceipt(decoded as any).executionUnitsUsed).toBe(21_111n);
+  });
 
-    expect(decodedTxToRpcTx({ ...decoded, valueLythoshi: undefined, executionUnitLimit: undefined, value: "0x2a", gasLimit: 21_000n } as any).value).toBe("0x2a");
+  it("rejects legacy gas aliases in native API execution-unit transforms", () => {
+    expect(() => apiBlockToRpcHeader({
+      height: 42,
+      blockHash: "0xblock",
+      parentHash: "0xparent",
+      stateRoot: "0xstate",
+      timestamp: 1_700_000_000,
+      gasUsed: 123_456,
+      gasLimit: 30_000_000,
+    } as any)).toThrow("executionUnitsUsed");
+
+    expect(() => apiTxToRpcTx({
+      txHash: "0xtx",
+      blockHash: "0xblock",
+      blockHeight: 42,
+      txIndex: 3,
+      from: "0xfrom",
+      to: "0xto",
+      nonce: 9,
+      valueLythoshi: "1234",
+      maxFeePerGas: "55",
+      maxPriorityFeePerGas: "7",
+      gasLimit: 42_000,
+      input: "0xabcdef",
+    } as any, 69_420)).toThrow("executionUnitLimit");
+
+    expect(() => apiTxToRpcTx({
+      txHash: "0xtx",
+      blockHash: "0xblock",
+      blockHeight: 42,
+      txIndex: 3,
+      from: "0xfrom",
+      to: "0xto",
+      nonce: 9,
+      valueLythoshi: "1234",
+      executionUnitLimit: 42_000,
+      maxFeePerGas: "55",
+      priorityTipLythoshi: "7",
+      input: "0xabcdef",
+    } as any, 69_420)).toThrow("maxExecutionFeeLythoshi");
+
+    expect(() => apiReceiptToRpcReceipt({
+      txHash: "0xtx",
+      blockHash: "0xblock",
+      blockHeight: 42,
+      txIndex: 3,
+      status: 1,
+      gasUsed: 21_111,
+      logs: [],
+    } as any)).toThrow("executionUnitsUsed");
+
+    expect(() => decodedTxToRpcTx({
+      txHash: "0xtx",
+      blockHash: "0xblock",
+      blockNumber: 42n,
+      txIndex: 3,
+      from: "0xfrom",
+      to: null,
+      valueLythoshi: "1234",
+      nonce: 9n,
+      gasLimit: 42_000n,
+      maxFeePerGas: "55",
+      maxPriorityFeePerGas: "7",
+      executionUnitsUsed: 21_111n,
+      decodedCalldata: { rawCalldata: "0xabcdef" },
+      logs: [],
+      status: "success",
+    } as any)).toThrow("executionUnitLimit");
   });
 
   it("normalizes recent transaction rows from API pages and tx feeds", () => {
