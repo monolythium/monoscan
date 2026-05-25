@@ -693,8 +693,10 @@ const BridgeTrustDisclosuresCard = ({
     </Card>
   );
 };
-const _fmtExecutionUnitPrice = (price: bigint | null | undefined) =>
-  price === null || price === undefined ? null : `${price.toLocaleString()} lythoshi / execution unit`;
+export function executionUnitPriceValueLabel(price: bigint | null | undefined): string | null {
+  const lyth = _fmtLyth(price);
+  return lyth === null ? null : `${lyth} / execution unit`;
+}
 const _ageFromTs = (timestamp: number | null | undefined) => {
   if (!timestamp) return "—";
   const ms = timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000;
@@ -804,7 +806,7 @@ const StatsPage = ({ go }: any) => {
   const formatMetricValue = (sample: any) => sample
     ? `${Number(sample.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}${sample.unit ? ` ${sample.unit}` : ""}`
     : "—";
-  const executionUnitPrice = _fmtExecutionUnitPrice(feeStats.data?.gasPrice);
+  const executionUnitPrice = executionUnitPriceValueLabel(feeStats.data?.gasPrice);
   const feePriceSub = feeStats.data?.gasPriceSource === "eth_feeHistory"
     ? "derived from fee history"
     : feeStats.data?.gasPriceSource === "eth_gasPrice"
@@ -2198,7 +2200,6 @@ const TxPage = ({ hash, go }: any) => {
               {liveNativeFee ? (
                 <>
                   <KV label="Total fee" value={transactionFeeValueLabel(liveNativeFee.display, null)} mono/>
-                  <KV label="Total fee lythoshi" value={liveNativeFee.display.totalLythoshi} mono/>
                   <KV label="Fee detail" value={adr0039FeeDetailText(liveNativeFee.display.detailTexts[0])} mono/>
                   <KV label="Fee rates" value={adr0039FeeDetailText(liveNativeFee.display.detailTexts[1])} mono/>
                 </>
@@ -3061,7 +3062,7 @@ const ProtocolPage = ({ go }: any) => {
   const surfaceRows = Object.entries(operatorCapabilities.data?.surfaces ?? {});
   const availableSurfaceCount = surfaceRows.filter(([, cap]: any) => cap.status === "available").length;
   const upgrade = upgradeStatus.data;
-  const executionUnitPrice = _fmtExecutionUnitPrice(feeStats.data?.gasPrice);
+  const executionUnitPrice = executionUnitPriceValueLabel(feeStats.data?.gasPrice);
   const feePriceSub = feeStats.data?.gasPriceSource === "eth_feeHistory"
     ? "derived from fee history"
     : feeStats.data?.gasPriceSource === "eth_gasPrice"
