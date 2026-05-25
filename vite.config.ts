@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { getRpcEndpoints } from "@monolythium/core-sdk";
 
 const testnetRpc = getRpcEndpoints("testnet-69420")[0]?.url;
+const productionSourcemaps = process.env.VITE_MONOSCAN_SOURCEMAP === "true";
 const localRpcProxy = testnetRpc
   ? {
       "/rpc": {
@@ -17,13 +18,12 @@ const localRpcProxy = testnetRpc
     }
   : undefined;
 
-// Monoscan is a public web SPA served as static dist/ behind Caddy/nginx
-// (see ../CLAUDE.md section 4.3). No SSR, no Tauri.
+// Monoscan is a public web SPA served as static dist/ behind Caddy/nginx.
 export default defineConfig({
   plugins: [react()],
   build: {
     target: "es2022",
-    sourcemap: true,
+    sourcemap: productionSourcemaps,
     outDir: "dist",
   },
   server: {

@@ -1,19 +1,9 @@
 /**
  * Ask Monoscan — natural-language search over typed node-service tools.
- *
- * HYBRID STAGE — the LLM substrate is `mock-llm.ts` (deterministic
- * pattern matching); the typed tools in `tools.ts` are live-first for
- * current RPC surfaces and fixture-backed for missing indexer data. The full UX is real: streaming-style trace,
- * collapsible per-tool view, Markdown answer block. The follow-up stage
- * swaps `mock-llm` for the real Anthropic Messages API.
- *
- * TODO(monolythium): swap `ask` import for the real Claude API
- * client once `mono/api/monoscan-claude` is provisioned and the
- * `monoscan-nl-service/` Rust proxy is deployed.
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
-import { ask, SAMPLES } from "./mock-llm";
+import { ask, SAMPLES } from "./query-router";
 import { Markdown } from "./markdown";
 import type { NlAnswer, ToolInvocation } from "./types";
 
@@ -33,7 +23,7 @@ export function AskPage({ go, initialQuery }: AskPageProps): ReactElement {
   const inflight = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  /** Run the deterministic LLM router. Cancels any in-flight call first. */
+  /** Run the deterministic query router. Cancels any in-flight call first. */
   const runQuery = useCallback(async (q: string) => {
     if (!q.trim()) return;
     inflight.current?.abort();
@@ -146,12 +136,12 @@ export function AskPage({ go, initialQuery }: AskPageProps): ReactElement {
         </div>
       )}
 
-      {/* Status line: a tiny disclosure that the LLM router is mocked. */}
+      {/* Status line for live and local data coverage. */}
       <div className="ms-ask__notice">
-        <span className="pill">hybrid</span>
+        <span className="pill">routed</span>
         <span className="mono">
           Deterministic routing with live RPC-backed tools where available. Gap records,
-          token search, and rich operator aggregates remain fixture-backed until their
+          token search, and rich operator aggregates use local fallback rows until their
           indexer namespaces land.
         </span>
       </div>

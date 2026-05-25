@@ -1,8 +1,7 @@
 .git
-.gitignore
-README.md
-.dockerignore
 node_modules
 dist
-*.md
-
+.env
+.env.*
+coverage
+*.log

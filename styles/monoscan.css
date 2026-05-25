@@ -1733,9 +1733,8 @@ body::after {
 }
 
 /* =====================================================
-   ASK · NL search ("ask the blockchain") · Stage 4 mockup
-   Pattern-matched mock LLM today; swappable for real
-   Claude Messages API at the seam in src/nl/mock-llm.ts.
+   ASK · NL search ("ask the blockchain")
+   Deterministic query routing through src/nl/query-router.ts.
 ===================================================== */
 
 /* Header CTA — sits between the search bar and the nav. Reads as a
@@ -1858,7 +1857,7 @@ body::after {
 }
 .ms-ask__chip:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* Mockup notice */
+/* Query-routing notice */
 .ms-ask__notice {
   display: flex;
   gap: 10px;

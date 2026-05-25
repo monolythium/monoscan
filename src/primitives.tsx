@@ -1,5 +1,5 @@
 /* =====================================================
-   Monoscan v4.0 — Primitives
+   Monoscan — Primitives
    Shared atomic components. Imported as ES modules.
 ===================================================== */
 /* eslint-disable @typescript-eslint/no-explicit-any */

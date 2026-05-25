@@ -1,70 +1,80 @@
-# monoscan
+![Monoscan](https://raw.githubusercontent.com/mono-labs-org/.github/prod/media/github-banners/monolythium/monoscan.png)
 
-monoscan.xyz — public blockchain explorer for Monolythium v4.0.
+# Monoscan
 
-> Part of the [Monolythium](https://monolythium.com) ecosystem — a sovereign Layer-1 for finality-first apps.
+Monoscan is the public explorer for Monolythium. It provides browser views for blocks, transactions, rounds, operators, clusters, wallets, markets, protocol capability surfaces, and native receipt proof material.
 
----
+The app is a Vite + React + TypeScript single-page application served as static files. Browser traffic uses relative `/rpc` and `/api/v1` routes by default, so deployments can point the Caddy proxy at their own Monolythium node without rebuilding the frontend.
 
-## What this is
+## Architecture
 
-Monoscan is the public web explorer for **Monolythium v4.0** — a Rust-native L1 running **LythiumDAG-BFT (Starfish-C)** consensus on testnet `chain_id 69420`. It surfaces blocks, transactions, clusters/operators, protocol capability gates, and the explorer shell for markets, gap records, and natural-language chain search.
+```text
+monoscan/
+├── Caddyfile              # Static file server and runtime RPC/API proxy
+├── Dockerfile             # Self-contained production image
+├── docker-compose.yml     # Local container entrypoint
+├── docs/
+│   └── self-host.md       # Runtime configuration notes
+├── public/                # Favicons, manifest, and brand assets
+├── src/
+│   ├── data/              # Live data hooks and local fallback rows
+│   ├── nl/                # Deterministic query routing for Ask Monoscan
+│   ├── sdk/               # Monolythium SDK client setup
+│   └── *.tsx              # Explorer pages and shared UI
+└── styles/                # Monoscan theme and design tokens
+```
 
-Built as a Vite + React 19 + TypeScript SPA, served as a static `dist/` bundle behind Caddy. The current build is live-first against any Monolythium v4.0 node's JSON-RPC and `/api/v1` surfaces: head/block data, global transaction feed, fee history, mempool, clusters, account basics, address profile/flow, delegation views, capability gates, checkpoints, certificate lookups, operator-exit ledgers, CLOB markets/trades/OHLC/order books, gap records, and search route through `@monolythium/core-sdk`. Fixture data remains only for enrichment that the node does not expose yet, such as token metadata, USD market aggregates, operator reputation history, reward charts, and the deterministic natural-language mock router.
-
-## Who this is for
-
-Traders, developers, and compliance teams who need a fast, honest view into what is happening on the Monolythium chain — without running a node.
-
-## Install
-
-This repo ships a self-hostable container. To run it locally:
+## Quick Start
 
 ```bash
 git clone https://github.com/monolythium/monoscan.git
 cd monoscan
-docker compose up
+docker compose up --build
 ```
 
-Or visit the hosted instance at https://monoscan.xyz.
+Open http://localhost:8080.
 
-## Getting started
+By default, the container proxies node requests to `https://rpc.monolythium.com`. Set `MONOSCAN_RPC_UPSTREAM` if you want to use your own node.
 
-Once `docker compose up` is running, open http://localhost:8080 in your browser. For local development, `pnpm dev` serves the app at http://localhost:5174 and proxies `/rpc` plus `/api/v1` to the testnet endpoint from `chain-registry` unless `VITE_MONOSCAN_RPC_URL` or `VITE_MONO_RPC_URL` is set. The production container uses the same relative routes through Caddy, with `MONOSCAN_RPC_UPSTREAM` controlling the runtime upstream node.
+## Local Development
 
-Self-hosting notes live in [docs/self-host.md](./docs/self-host.md).
+Source builds expect `../mono-core-sdk/packages/ts` next to this repository. The Docker build clones that SDK automatically through the `MONO_CORE_SDK_REPO` and `MONO_CORE_SDK_REF` build args.
+
+```bash
+pnpm install
+pnpm dev        # http://localhost:5174
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm preview
+```
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `MONOSCAN_RPC_UPSTREAM` | `https://rpc.monolythium.com` | Runtime upstream used by Caddy for `/rpc` and `/api/*`. |
+| `MONOSCAN_PORT` | `8080` | Host port used by Docker Compose. |
+| `VITE_MONOSCAN_RPC_URL` | `/rpc` | Browser RPC route baked into local builds. |
+| `VITE_MONO_RPC_URL` | unset | Secondary frontend RPC override. |
+| `VITE_MONOSCAN_SOURCEMAP` | unset | Set to `true` only for private debugging builds. |
+
+More deployment notes are in [docs/self-host.md](./docs/self-host.md).
 
 ## Documentation
 
-- Public docs: https://docs.monolythium.com
-- Chain reference: https://monolythium.com
-
-## Building from source
-
-```bash
-pnpm install      # install dependencies
-pnpm dev          # local dev server (http://localhost:5174)
-pnpm typecheck    # tsc --noEmit
-pnpm build        # produces dist/ for static hosting
-pnpm preview      # serve the production build locally
-```
-
-Or build a self-contained container (Caddy serving `dist/`):
-
-```bash
-docker compose up
-```
-
-Requirements: Node 22+, pnpm 9+, or Docker.
+- Monolythium: https://monolythium.com
+- Docs: https://docs.monolythium.com
+- Hosted explorer: https://monoscan.xyz
 
 ## Contributing
 
-We welcome contributions. See [CONTRIBUTING.md](./CONTRIBUTING.md) for the guidelines.
+See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Security
 
-Found a vulnerability? Please **do not open a public issue**. Email security@monolythium.com instead. See [SECURITY.md](./SECURITY.md) for the full disclosure policy.
+Please report vulnerabilities privately to security@monolythium.com. See [SECURITY.md](./SECURITY.md).
 
 ## License
 
-Released under the Apache License, Version 2.0. See [LICENSE](./LICENSE) for the full text.
+Released under the Apache License, Version 2.0. See [LICENSE](./LICENSE).

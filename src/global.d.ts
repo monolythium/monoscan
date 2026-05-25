@@ -2,9 +2,8 @@
  * Global type augmentations for monoscan.
  *
  * The current pages stash a tiny toast helper on `window.__msToast` (and a
- * matching timer on `window.__msToastT`). Stage 3 will replace this with a
- * real React-context toast — see `plans/monoscan.md`. Until then, declare the
- * fields here so `tsc --noEmit` doesn't fail.
+ * matching timer on `window.__msToastT`). Declare the fields here so
+ * `tsc --noEmit` can typecheck the browser globals.
  */
 export {};
 

@@ -12,14 +12,14 @@ ARG MONO_CORE_SDK_REPO=https://github.com/monolythium/mono-core-sdk.git
 # Pin the SDK commit used by Monoscan's API-client integration. Docker build
 # cache cannot see when a remote branch moves, so a floating `master` ref can
 # keep serving stale dist files until the cache is manually busted.
-ARG MONO_CORE_SDK_REF=59fd6aae22556553aa6dd4d75977da1fea9c2c1e
+ARG MONO_CORE_SDK_REF=46c009ab04217434a3760de6bcf53a9f856cc228
 RUN git clone "${MONO_CORE_SDK_REPO}" /mono-core-sdk \
   && cd /mono-core-sdk \
   && git checkout "${MONO_CORE_SDK_REF}" \
   && (pnpm --dir /mono-core-sdk/packages/ts install --frozen-lockfile || pnpm --dir /mono-core-sdk/packages/ts install --no-frozen-lockfile) \
   && pnpm --dir /mono-core-sdk/packages/ts build
 
-COPY package.json pnpm-lock.yaml* ./
+COPY .npmrc package.json pnpm-lock.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
 COPY . .
 RUN pnpm build

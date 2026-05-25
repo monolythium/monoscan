@@ -1,18 +1,8 @@
 /**
- * Mock LLM driver — pattern-matches a natural-language query against
- * five canned templates and returns a structurally faithful Claude
- * tool-use response (sequence of tool_calls + Markdown explanation).
+ * Deterministic natural-language router for Ask Monoscan.
  *
- * TODO(monolythium): swap this whole module for a real Claude
- * Messages API call (with `tools: TOOL_CATALOG`) once the
- * `mono/api/monoscan-claude` key is provisioned. The output shape
- * (`NlAnswer`) does not change — the renderer is shape-stable across
- * the swap.
- *
- * Design constraint: every call is **synchronous-ish** (returns a
- * Promise that resolves on a small `setTimeout`) so the renderer can
- * already animate "thinking" + per-tool "calling…" states the same way
- * it will against the streaming real API.
+ * It maps common explorer questions to typed tool calls, then returns the
+ * same `NlAnswer` shape consumed by the page renderer.
  */
 
 import {
@@ -44,9 +34,8 @@ interface Match {
  * Match a query against the five canned templates. Returns null on no
  * match; the caller renders the fallback example-buttons hint.
  *
- * The patterns are intentionally lenient — the goal is "demo-true" not
- * "robust" — and the real Claude integration replaces this with semantic
- * tool selection.
+ * The patterns are intentionally lenient so common explorer queries resolve
+ * without requiring exact syntax.
  */
 export function matchQuery(q: string): Match | null {
   const ql = q.toLowerCase().trim();
@@ -134,7 +123,7 @@ function explainAddress(r: GetAddressActivityResult): string {
   ];
   if (r.is_private_denomination) {
     lines.push(
-      "_Private-denomination address — amounts withheld per Monolythium v4.0 privacy bifurcation._",
+      "_Private-denomination address — amounts withheld by protocol privacy rules._",
       "",
     );
   } else {
@@ -213,9 +202,9 @@ function explainCluster(r: GetClusterResult): string {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Run the (mock) LLM against a natural-language question. Resolves on a
- * short `setTimeout` so the renderer can show "thinking" + per-tool
- * "calling…" animations the same way the real streaming Claude API will.
+ * Run the local router against a natural-language question. Resolves on a
+ * short `setTimeout` so the renderer can show thinking and per-tool calling
+ * states consistently.
  *
  * @param signal optional AbortSignal — the renderer cancels in-flight
  *               queries when the user submits a new one.
@@ -245,7 +234,7 @@ export async function ask(
       explanation: [
         "I'm not sure how to answer that yet.",
         "",
-        "The mock LLM ships with five demo templates — try one of these:",
+        "The local router supports these query shapes:",
       ].join("\n"),
       unmatched: true,
       examples: [...SAMPLE_QUERIES_VAL],

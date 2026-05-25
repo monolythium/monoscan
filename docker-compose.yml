@@ -4,10 +4,10 @@ services:
       context: .
       args:
         MONO_CORE_SDK_REPO: ${MONO_CORE_SDK_REPO:-https://github.com/monolythium/mono-core-sdk.git}
-        MONO_CORE_SDK_REF: ${MONO_CORE_SDK_REF:-ffeb897e4b710b4ee993a0c78bdde3f505009ae6}
+        MONO_CORE_SDK_REF: ${MONO_CORE_SDK_REF:-46c009ab04217434a3760de6bcf53a9f856cc228}
     ports:
       - "${MONOSCAN_PORT:-8080}:8080"
     environment:
       PORT: 8080
-      MONOSCAN_RPC_UPSTREAM: ${MONOSCAN_RPC_UPSTREAM:-http://178.105.15.216:8545}
+      MONOSCAN_RPC_UPSTREAM: ${MONOSCAN_RPC_UPSTREAM:-https://rpc.monolythium.com}
     restart: unless-stopped

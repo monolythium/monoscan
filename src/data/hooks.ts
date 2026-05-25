@@ -2,17 +2,13 @@
  * React-Query hooks for monoscan.
  *
  * Single seam through which every page reads chain data. Hooks return
- * already-typed values from `@monolythium/core-sdk`; mock fallbacks live
- * in `./mock` and stay tagged `TODO(monolythium)` for list-level
- * aggregates and per-signer enrichment that mono-core has not yet shipped
- * (per `plans/monoscan.md` Stage 3).
+ * already-typed values from `@monolythium/core-sdk`; local fallback rows live
+ * in `./fallback` for list-level aggregates and per-signer enrichment that a
+ * node may not retain yet.
  *
  * Cache strategy:
- *   - Chain head polls every 2s (Stage 3 long-poll target). The live SDK's
- *     WebSocket entry point `lyth_subscribe` returns an RPC error over the
- *     plain HTTP transport today; the WebSocket upgrade is mono-core
- *     OI-0069 and is gated here behind `VITE_MONOSCAN_USE_WS` so the swap
- *     is a single feature-flag flip when it lands.
+ *   - Chain head polls every 2s. The WebSocket path is gated behind
+ *     `VITE_MONOSCAN_USE_WS` for deployments that expose subscriptions.
  *   - Block / tx detail is on-demand with staleTime 30s; receipts are
  *     immutable once finalized so retry-on-mount is cheap.
  *   - Cluster / operator / account surfaces use staleTime 30s — slow-moving
@@ -23,7 +19,7 @@
 
 import { QueryClient, useQuery } from "@tanstack/react-query";
 import * as CoreSdk from "@monolythium/core-sdk";
-import { keccak256 } from "ethers/crypto";
+import { keccak256Hex as keccak256 } from "../hash";
 import {
   NATIVE_MARKET_ORDER_BOOK_STREAM_TOPIC,
   assertMrvStructuredFeeConformance,
@@ -117,7 +113,7 @@ export const queryClient = new QueryClient({
   },
 });
 
-/** How often to long-poll the chain head until WS lands (mono-core OI-0069). */
+/** How often to long-poll the chain head when subscriptions are unavailable. */
 export const HEAD_POLL_MS = 2_000;
 
 export interface PendingRewardsRowLive {
@@ -726,23 +722,23 @@ export interface NativeAgentStateDisplayRows {
 export const MRV_NATIVE_TX_EXTENSION_KIND = 0x30;
 export const MRV_NATIVE_TX_EXTENSION_BODY_HEX = "0x01";
 export const MRV_NATIVE_RECEIPT_TX_TYPE = 0x41;
-export const NO_EVM_RECEIPT_PROOF_SCHEMA = "mono.no_evm_receipt_proof.v1";
-export const NO_EVM_RECEIPT_PROOF_TYPE = "canonicalReceiptsTranscript";
+export const NO_EVM_RECEIPT_PROOF_SCHEMA = CoreSdk.NO_EVM_RECEIPT_PROOF_SCHEMA;
+export const NO_EVM_RECEIPT_PROOF_TYPE = CoreSdk.NO_EVM_RECEIPT_PROOF_TYPE;
 export const NO_EVM_COMPACT_RECEIPT_PROOF_TYPE = "canonicalReceiptInclusion";
-export const NO_EVM_RECEIPT_CODEC = "bincode(protocore_evm::Receipt)";
+export const NO_EVM_RECEIPT_CODEC = CoreSdk.NO_EVM_RECEIPT_CODEC;
 export const NO_EVM_RECEIPTS_ROOT_DOMAIN = "monolythium/v2/receipts_root/1";
 export const NO_EVM_RECEIPTS_ROOT_ALGORITHM = `keccak256("${NO_EVM_RECEIPTS_ROOT_DOMAIN}" || receipts_len_u32_le || (idx_u32_le || receipt_len_u32_le || receipt_bytes)*)`;
 export const NO_EVM_LEGACY_RECEIPTS_ROOT_ALGORITHM = "keccak256(monolythium/v2/receipts_root/1 || len || indexed bincode receipts)";
-export const NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM = "keccak256(monolythium/v4.1/receipts_root_empty/1|receipt_leaf/1|receipt_node/1 binary Merkle)";
-export const NO_EVM_BINARY_RECEIPTS_ROOT_EMPTY_DOMAIN = "monolythium/v4.1/receipts_root_empty/1";
-export const NO_EVM_BINARY_RECEIPT_LEAF_DOMAIN = "monolythium/v4.1/receipt_leaf/1";
-export const NO_EVM_BINARY_RECEIPT_NODE_DOMAIN = "monolythium/v4.1/receipt_node/1";
+export const NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM = CoreSdk.NO_EVM_RECEIPT_ROOT_ALGORITHM;
+export const NO_EVM_BINARY_RECEIPTS_ROOT_EMPTY_DOMAIN = CoreSdk.NO_EVM_RECEIPTS_ROOT_DOMAIN;
+export const NO_EVM_BINARY_RECEIPT_LEAF_DOMAIN = NO_EVM_BINARY_RECEIPTS_ROOT_EMPTY_DOMAIN.replace("receipts_root_empty", "receipt_leaf");
+export const NO_EVM_BINARY_RECEIPT_NODE_DOMAIN = NO_EVM_BINARY_RECEIPTS_ROOT_EMPTY_DOMAIN.replace("receipts_root_empty", "receipt_node");
 export const NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA = "mono.no_evm_receipt_compact_inclusion.v1";
 export const NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM = "binary-keccak-receipt-tree";
-export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA = "mono.no_evm_receipt_archive_binding.v1";
+export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA = CoreSdk.NO_EVM_ARCHIVE_PROOF_SCHEMA;
 export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE = "indexerReceiptArchiveContentDigest";
-export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA = "mono.no_evm_receipt_finality.v1";
-export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE = "blsRoundCertificate";
+export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA = CoreSdk.NO_EVM_FINALITY_EVIDENCE_SCHEMA;
+export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE = CoreSdk.NO_EVM_FINALITY_EVIDENCE_SOURCE;
 
 const HEX_BYTES_RE = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HASH32_RE = /^0x[0-9a-fA-F]{64}$/;
@@ -3337,14 +3333,10 @@ export interface ChainHead {
 }
 
 /**
- * 2-second long-poll on `eth_blockNumber` + `lyth_currentRound`.
+ * 2-second long-poll on current block height and current round.
  *
- * Long-poll is a deliberate fallback until mono-core ships the WebSocket
- * upgrade in OI-0069 (see `plans/monoscan.md` Stage 3). The WS path is
- * gated behind `VITE_MONOSCAN_USE_WS=true`; today that flag throws inside
- * `subscribeHeadOverWebSocket` because `lyth_subscribe` is HTTP-only on
- * v0.0.1 of the chain. When OI-0069 lands, swap the WS impl in `subscribeHeadOverWebSocket`
- * and flip the env var — the consumers stay identical.
+ * The WebSocket path is gated behind `VITE_MONOSCAN_USE_WS=true`; polling
+ * remains the default for broad node compatibility.
  */
 export function useChainHead() {
   return useQuery<ChainHead | null>({
@@ -3352,9 +3344,8 @@ export function useChainHead() {
     queryFn: async () => {
       if (!isRpcConfigured()) return null;
       if (isWebSocketEnabled()) {
-        // Future: this branch returns the latest cached value off a
-        // long-lived `lyth_subscribe("newHeads")` stream. Today the
-        // helper throws — flag stays default-false until OI-0069 lands.
+        // Future subscription-backed deployments return the latest cached
+        // head value here.
         return readLatestHeadFromWebSocket();
       }
       const rpc: RpcClient = getRpcClient();
@@ -3366,7 +3357,7 @@ export function useChainHead() {
           blockNumber: block === null ? null : bigToNum(block),
         };
       } catch {
-        // Live node unreachable — return null so consumers fall back to mock.
+        // Live node unreachable; consumers render local fallback rows.
         return null;
       }
     },
@@ -3382,8 +3373,7 @@ export function useChainHead() {
  *
  * Each sub-call is best-effort — if a method fails (e.g. node disabled
  * `lyth_indexerStatus`) the field is `null` rather than the whole digest
- * going dark. This is the closest we can get to the rich strip the design
- * asks for until mono-core ships an aggregate counter view (OI-0070).
+ * going dark.
  */
 export interface ChainStrip {
   round: number | null;
@@ -3494,10 +3484,9 @@ export function useBlockByNumber(n: number | "latest" | undefined) {
  * Page through the most-recent N blocks ending at the head. Used by the
  * landing-page live feed and the dedicated block-list view (when added).
  *
- * The first request fans out to N parallel `eth_getBlockByNumber` calls;
- * subsequent polls reuse the cached entries and only fetch the new tip
- * blocks. (React Query handles per-block caching; the wrapper just
- * sequences the height list.)
+ * The first request fans out to N parallel block-header calls; subsequent
+ * polls reuse the cached entries and only fetch the new tip blocks. React
+ * Query handles per-block caching; the wrapper just sequences the height list.
  */
 export function useLatestBlocks(count = 10) {
   return useQuery<BlockHeader[]>({
@@ -3537,7 +3526,7 @@ export interface MempoolDigest {
 }
 
 /** Hook around `lyth_mempoolStatus`. Returns null when the namespace is
- *  disabled; consumers degrade to mock values. */
+ *  disabled; consumers degrade to local fallback values. */
 export function useMempool() {
   return useQuery<MempoolDigest | null>({
     queryKey: QK.mempool(),
@@ -3566,7 +3555,8 @@ export function useMempool() {
 
 /**
  * Hook around `eth_getTransactionReceipt`. Returns the receipt envelope; the
- * mempool / indexer trace surface lives in `useTxTrace` once OI-0070 lands.
+ * mempool / indexer trace surface lives in `useTxTrace` once the retained
+ * trace surface is available.
  */
 export function useTxReceipt(hash: string | undefined) {
   return useQuery<TransactionReceipt | null>({
@@ -3847,9 +3837,8 @@ export function useClusterSet() {
   return useQuery<ClusterDescriptor[] | null>({
     queryKey: QK.clusterSet(),
     queryFn: async () => {
-      // TODO(monolythium): swap to indexer aggregate (cluster +
-      // operator + reward) once mono-core OI-0070 lands. Today's RPC returns
-      // a compact descriptor list; the profile cards remain fixture-backed.
+      // Current RPC returns a compact descriptor list; profile cards add local
+      // fallback rows for aggregate fields the node does not retain yet.
       return readClusterSet();
     },
     staleTime: 30_000,
@@ -5540,7 +5529,7 @@ export interface AccountHistoryDigest {
  * field-by-field rather than failing the whole query.
  *
  * The address activity feed is best-effort: empty testnet accounts commonly
- * return no rows, so the wallet page keeps its fixture rows as a fallback.
+ * return no rows, so the wallet page keeps its local rows as a fallback.
  */
 export function useAccountHistory(addr: string | undefined) {
   return useQuery<AccountHistoryDigest | null>({
@@ -6201,8 +6190,8 @@ export function useChainStats() {
 /**
  * Best-effort live network-status snapshot. Returns the bits the SDK can
  * give us today (chain tip, peer count, mempool depth, cluster count,
- * indexer height); the rest of the Stats page stays on mock until
- * mono-core OI-0070 ships an aggregate counter view.
+ * indexer height); the rest of the Stats page uses local fallback rows until
+ * a retained aggregate counter view is available.
  */
 export interface NetworkStatusLive {
   blockNumber: number | null;
@@ -6301,19 +6290,18 @@ export function useNetworkStatus() {
 /* -------------------------------------------------------------------------- */
 /* WebSocket head subscription — feature-flag stub.                             */
 /*                                                                             */
-/* Mono-core OI-0069 ships the WebSocket transport; today `lyth_subscribe`     */
+/* Some deployments expose subscription transport; polling remains the default. */
 /* is HTTP-only and rejects with an RPC error. The flag is wired here so       */
 /* the swap is a one-line change inside this helper plus an env-var flip       */
 /* — the rest of the codebase already routes through `useChainHead`.           */
 /* -------------------------------------------------------------------------- */
 
 async function readLatestHeadFromWebSocket(): Promise<ChainHead | null> {
-  // Until OI-0069 lands the WS transport the RPC side rejects this method
-  // and there is no cached frame. Throw so React-Query surfaces the error
-  // and auto-retry policies kick in; consumers degrade through their
-  // existing mock fallbacks.
+  // This build has no subscription cache. Throw so React-Query surfaces the
+  // error and auto-retry policies kick in; consumers degrade through their
+  // existing local fallbacks.
   throw new Error(
-    "WebSocket head stream not implemented — OI-0069 still pending. " +
+    "WebSocket head stream is not configured. " +
       "Disable VITE_MONOSCAN_USE_WS or wait for the WS upgrade.",
   );
 }
