@@ -97,7 +97,7 @@ export function AskPage({ go, initialQuery }: AskPageProps): ReactElement {
           ref={inputRef}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="What happened in block 12345? · 0xabc1… recent activity · cluster 3 status"
+          placeholder="What happened in block 12345? · mono1… recent activity · cluster 3 status"
           aria-label="Ask Monoscan a natural-language question"
           autoComplete="off"
           spellCheck={false}

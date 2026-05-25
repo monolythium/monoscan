@@ -178,7 +178,7 @@ const Header = ({ go, route }: any) => {
         <input
           value={q}
           onChange={e=>setQ(e.target.value)}
-          placeholder="Round number · cluster C-044 · operator 0x… · vertex hash · tx hash"
+          placeholder="Round number · cluster C-044 · address mono1… · vertex hash · tx hash"
         />
         <span className="ms-search__hint">enter ↵</span>
       </form>

@@ -2753,7 +2753,7 @@ const SearchPage = ({ q, go }: any) => {
         {total === 0
           ? liveSearch.isLoading
             ? "Checking live search index…"
-            : "No matches. Try a round number, C-NNN cluster id, 0x… operator address, tx hash, or ticker."
+            : "No matches. Try a round number, C-NNN cluster id, typed mono1 address, tx hash, or ticker."
           : `${total} result${total===1?"":"s"}`}
       </p>
 
