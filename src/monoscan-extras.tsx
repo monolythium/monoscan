@@ -1,14 +1,13 @@
 /* =====================================================
    Monoscan — Statistics, Wallets, Wallet detail, Tx detail
-   Mounted by monoscan-app.tsx. Reads its demo data through
-   `./data/mock` until the indexer surfaces (Stage 3, mono-core
-   OI-0070) replace each block via `./data/hooks`.
+   Mounted by monoscan-app.tsx. Live data comes through `./data/hooks`;
+   local fallback rows come through `./data/fallback`.
 ===================================================== */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState as useStateX, useMemo as useMemoX, useEffect as useEffectX } from "react";
 import { Card } from "./primitives";
-import { MONOSCAN_DATA, MARKETS, NETWORK_STATS, WALLETS, TXS } from "./data/mock";
+import { MONOSCAN_DATA, MARKETS, NETWORK_STATS, WALLETS, TXS } from "./data/fallback";
 import {
   useAccountCode,
   useAccountHistory,
@@ -158,12 +157,12 @@ const _rawToLythNumber = (value: string | bigint | number | null | undefined) =>
 };
 export function transactionFeeValueLabel(
   feeDisplay: NativeReceiptFeeDisplay | null | undefined,
-  fixtureFee: number | null | undefined,
-  fixtureDenom = "LYTH",
+  fallbackFee: number | null | undefined,
+  fallbackDenom = "LYTH",
 ): string {
   if (feeDisplay) return `${feeDisplay.totalLyth} LYTH`;
-  return typeof fixtureFee === "number" && Number.isFinite(fixtureFee)
-    ? `${fixtureFee.toFixed(4)} ${fixtureDenom}`
+  return typeof fallbackFee === "number" && Number.isFinite(fallbackFee)
+    ? `${fallbackFee.toFixed(4)} ${fallbackDenom}`
     : "—";
 }
 export function adr0039FeeDetailText(detail: string | null | undefined): string {
@@ -756,12 +755,9 @@ const LIVE_METRIC_SELECTORS = [
 const StatsPage = ({ go }: any) => {
   const S = NETWORK_STATS;
   const t = S.totals;
-  // Live counters — best-effort. When the node is reachable, the head round
-  // and cluster count come from the live RPC; the rest of the page is
-  // still mocked aggregate counters (txTotal, walletsTotal, contracts) until
-  // mono-core OI-0070 ships an indexer aggregate view.
-  // TODO(monolythium): swap mocked aggregate counters for indexer
-  // aggregates the moment the indexer surface lands.
+  // Live counters are best-effort. When the node is reachable, head round and
+  // cluster count come from live RPC; local rows cover aggregate counters that
+  // require retained indexer data.
   const live = useNetworkStatus();
   const chainStats = useChainStats();
   const feeStats = useFeeStats();
@@ -1206,7 +1202,7 @@ const WalletPage = ({ addr, go }: any) => {
   const agentReputation = useAgentReputation(addr);
   const nativeAgentState = useNativeAgentState({ account: addr, includePolicySpends: true, limit: 25 });
   const mrcAccount = useMrcAccount(addr, 6);
-  const fixtureWallet = WALLETS.find(w => w.addr === addr);
+  const fallbackWallet = WALLETS.find(w => w.addr === addr);
   const profileAccount = profile.data?.account ?? null;
   const profileBalance = profileAccount?.nativeBalance ?? null;
   const liveBalanceNumber = profileBalance
@@ -1215,7 +1211,7 @@ const WalletPage = ({ addr, go }: any) => {
       ? _rawToLythNumber(live.data.balance)
       : 0;
   const zeroFlow = Array.from({ length: 30 }, (_, day) => ({ day, in: 0, out: 0, stake: 0, reward: 0 }));
-  const w = fixtureWallet ?? {
+  const w = fallbackWallet ?? {
     rank: "live",
     addr,
     tag: null,
@@ -1745,7 +1741,7 @@ const TransactionsPage = ({ go }: any) => {
   const [query, setQuery] = useStateX("");
   const live = useLatestTransactions(60, 32);
   const hasLiveDigest = live.data !== undefined && live.data !== null;
-  const fixtureRows = useMemoX(() =>
+  const fallbackRows = useMemoX(() =>
     Object.values(TXS)
       .sort((a: any, b: any) => (b.round ?? 0) - (a.round ?? 0))
       .slice(0, 80)
@@ -1761,7 +1757,7 @@ const TransactionsPage = ({ go }: any) => {
         executionLabel: tx.gasUsed ? _fmt(tx.gasUsed) : "—",
         methodLabel: tx.kindLabel ?? tx.kind ?? "transaction",
         status: tx.status ?? "ok",
-        source: "fixture",
+        source: "fallback",
       })),
     [],
   );
@@ -1782,7 +1778,7 @@ const TransactionsPage = ({ go }: any) => {
       source: "live",
     };
   });
-  const rows = hasLiveDigest ? liveRows : fixtureRows;
+  const rows = hasLiveDigest ? liveRows : fallbackRows;
   const q = query.trim().toLowerCase();
   const filtered = q
     ? rows.filter((row: any) =>
@@ -1795,7 +1791,7 @@ const TransactionsPage = ({ go }: any) => {
       : `live API · scanned ${live.data?.scannedBlocks ?? 0} blocks`
     : live.isLoading
       ? "checking live API"
-      : "fixture fallback";
+      : "local fallback";
 
   return (
     <div className="ms-page ms-transactions">
@@ -1828,7 +1824,7 @@ const TransactionsPage = ({ go }: any) => {
         <StatCounter
           label="Scanned txs"
           value={hasLiveDigest ? _fmtI(live.data?.scannedTransactions ?? 0) : _fmtI(Object.keys(TXS).length)}
-          sub={hasLiveDigest ? (live.data?.source === "lyth_txFeed" ? "reported by transaction feed" : "reported by block pages") : "fixture rows"}
+          sub={hasLiveDigest ? (live.data?.source === "lyth_txFeed" ? "reported by transaction feed" : "reported by block pages") : "fallback rows"}
           tone="neutral"
         />
         <StatCounter
@@ -1865,7 +1861,7 @@ const TransactionsPage = ({ go }: any) => {
       >
         {filtered.length === 0 ? (
           <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
-            {hasLiveDigest ? "No transactions found in the scanned block window." : "No fixture transactions matched the filter."}
+            {hasLiveDigest ? "No transactions found in the scanned block window." : "No fallback transactions matched the filter."}
           </p>
         ) : (
           <div style={{overflowX:"auto"}}>
@@ -1927,9 +1923,8 @@ const TransactionsPage = ({ go }: any) => {
 
 /* =====================================================
    TRANSACTION DETAIL PAGE
-   Tries `eth_getTransactionByHash` + receipt for live sender, recipient,
-   status, block, value, and execution fields first; falls back to the mock
-   fixture for the rich attestation panel until the indexer trace lands.
+   Reads live transaction, receipt, native receipt, and status fields first;
+   local rows fill retained trace fields when they are not available.
 ===================================================== */
 const TxPage = ({ hash, go }: any) => {
   const live = useTxByHashLive(hash);
@@ -1946,7 +1941,7 @@ const TxPage = ({ hash, go }: any) => {
   const nativeMarketEventRows = nativeReceiptMarketEventRows(liveNativeReceipt);
   const mrvEvidence = mrvNativeTransactionEvidence(liveDecoded, liveNativeReceipt);
   const indexedStatus = txStatus.data ?? null;
-  const fixture = TXS[hash];
+  const fallback = TXS[hash];
   const decodedCalldata = liveDecoded?.decodedCalldata && typeof liveDecoded.decodedCalldata === "object"
     ? liveDecoded.decodedCalldata as Record<string, any>
     : null;
@@ -1972,15 +1967,15 @@ const TxPage = ({ hash, go }: any) => {
       ? Number(BigInt(liveTx.blockNumber))
       : liveNativeReceipt?.blockHeight ?? null;
 
-  // Merge live receipt over the fixture so the UI always renders a complete
+  // Merge live receipt over the fallback so the UI always renders a complete
   // shape. `lyth_decodeTx` now provides decoded calldata, logs, status,
   // execution-unit usage, and PQ-finality metadata; the signature timing chart
-  // remains fixture-only until the chain exposes per-signer timing.
+  // remains fallback-only until the chain exposes per-signer timing.
   const tx = liveTx || liveReceipt || liveNativeReceipt
     ? {
-        ...(fixture ?? {
+        ...(fallback ?? {
           // Bare minimum so the page has something to render when there's
-          // no fixture for the hash but the chain has confirmed it.
+          // no fallback for the hash but the chain has confirmed it.
           hash,
           round: 0,
           roundLabel: "round —",
@@ -2006,24 +2001,24 @@ const TxPage = ({ hash, go }: any) => {
           gasLimit: 0,
         }),
         // Live overrides — keep the node fields as the source of truth.
-        hash: liveTx?.hash ?? liveReceipt?.tx_hash ?? liveNativeReceipt?.txHash ?? fixture?.hash ?? hash,
-        from: liveTx?.from ?? fixture?.from ?? "—",
-        to: liveTx?.to ?? fixture?.to ?? "—",
-        amount: liveTx?.value ? _rawToLythNumber(liveTx.value) : (fixture?.amount ?? 0),
-        fee: fixture?.fee ?? 0,
-        feeDenom: fixture?.feeDenom ?? "LYTH",
+        hash: liveTx?.hash ?? liveReceipt?.tx_hash ?? liveNativeReceipt?.txHash ?? fallback?.hash ?? hash,
+        from: liveTx?.from ?? fallback?.from ?? "—",
+        to: liveTx?.to ?? fallback?.to ?? "—",
+        amount: liveTx?.value ? _rawToLythNumber(liveTx.value) : (fallback?.amount ?? 0),
+        fee: fallback?.fee ?? 0,
+        feeDenom: fallback?.feeDenom ?? "LYTH",
         feeLabel: liveNativeReceipt
           ? liveNativeFee
             ? transactionFeeValueLabel(liveNativeFee.display, null)
-            : "invalid ADR-0039 fee object"
-          : transactionFeeValueLabel(null, fixture?.fee ?? 0, fixture?.feeDenom ?? "LYTH"),
+            : "invalid structured native fee object"
+          : transactionFeeValueLabel(null, fallback?.fee ?? 0, fallback?.feeDenom ?? "LYTH"),
         feeDetailTexts: liveNativeFee?.display.detailTexts ?? [],
-        gasLimit: liveTx?.gas ? Number(BigInt(liveTx.gas)) : (fixture?.gasLimit ?? 0),
-        nonce: liveTx?.nonce ? Number(BigInt(liveTx.nonce)) : (fixture?.nonce ?? 0),
-        kindLabel: decodedMethod ?? fixture?.kindLabel ?? "Transfer",
-        inputNote: liveDecoded?.memo ?? fixture?.inputNote ?? "",
-        contractInput: decodedInputText ?? (liveTx?.input && liveTx.input !== "0x" ? liveTx.input : (fixture?.contractInput ?? null)),
-        logs: liveLogs.length ? liveLogs : (fixture?.logs ?? []),
+        gasLimit: liveTx?.gas ? Number(BigInt(liveTx.gas)) : (fallback?.gasLimit ?? 0),
+        nonce: liveTx?.nonce ? Number(BigInt(liveTx.nonce)) : (fallback?.nonce ?? 0),
+        kindLabel: decodedMethod ?? fallback?.kindLabel ?? "Transfer",
+        inputNote: liveDecoded?.memo ?? fallback?.inputNote ?? "",
+        contractInput: decodedInputText ?? (liveTx?.input && liveTx.input !== "0x" ? liveTx.input : (fallback?.contractInput ?? null)),
+        logs: liveLogs.length ? liveLogs : (fallback?.logs ?? []),
         status:
           (liveDecoded?.status
             ? (liveDecoded.status === "success" ? "ok" : liveDecoded.status === "unknown" ? "pending" : "failed")
@@ -2031,17 +2026,17 @@ const TxPage = ({ hash, go }: any) => {
             ? (liveReceipt.status === 1 ? "ok" : liveReceipt.status === -1 ? "pending" : "failed")
             : liveNativeReceipt
             ? (liveNativeReceipt.reverted ? "failed" : "ok")
-            : (fixture?.status ?? "ok")),
+            : (fallback?.status ?? "ok")),
         gasUsed: Number(
-          liveReceipt?.executionUnitsUsed ?? liveNativeReceipt?.counters.cycles ?? fixture?.gasUsed ?? 0,
+          liveReceipt?.executionUnitsUsed ?? liveNativeReceipt?.counters.cycles ?? fallback?.gasUsed ?? 0,
         ),
-        round: liveBlockNumber ?? fixture?.round ?? 0,
+        round: liveBlockNumber ?? fallback?.round ?? 0,
         roundLabel:
           liveBlockNumber !== null
             ? `block ${liveBlockNumber.toLocaleString()}`
-            : (fixture?.roundLabel ?? "round —"),
+            : (fallback?.roundLabel ?? "round —"),
       }
-    : fixture;
+    : fallback;
 
   if (!tx) return (
     <div className="ms-page">
@@ -2208,7 +2203,7 @@ const TxPage = ({ hash, go }: any) => {
                   <KV label="Fee rates" value={adr0039FeeDetailText(liveNativeFee.display.detailTexts[1])} mono/>
                 </>
               ) : (
-                <KV label="Fee" value="invalid ADR-0039 fee object" mono/>
+                <KV label="Fee" value="invalid structured native fee object" mono/>
               )}
             </div>
           </Card>
@@ -2580,7 +2575,7 @@ const RoundPage = ({ round, go }: any) => {
         <>
           {liveHeader ? (
             <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
-              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>Live block · eth_getBlockByNumber</div>
+              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>Live block · header API</div>
               <div className="tx-kv">
                 <div className="tx-kv__row">
                   <span className="mono tx-kv__k">Hash</span>

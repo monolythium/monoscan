@@ -1,16 +1,10 @@
 /**
- * Tiny, safe Markdown renderer scoped to what the mock-llm explanation
+ * Tiny, safe Markdown renderer scoped to what the query-router explanation
  * strings actually emit: paragraphs, **bold**, *italic*, `code`,
  * `-` bullet lists, and pipe-tables. Output is React elements, not
  * dangerouslySetInnerHTML — no XSS surface.
  *
- * This deliberately is **not** a general Markdown engine. The full
- * Claude integration in the follow-up stage may expand this; for the
- * mockup the substrate is whatever `mock-llm.ts` writes.
- *
- * TODO(monolythium): when the live Claude API replaces the
- * mock-llm, swap this for `react-markdown` (or similar) — the seam is
- * one import.
+ * This deliberately is **not** a general Markdown engine.
  */
 
 import { Fragment, type ReactNode } from "react";
@@ -93,7 +87,7 @@ function renderInline(line: string, keyPrefix: string): ReactNode[] {
   return out;
 }
 
-/** Top-level block parser. Stable enough for the mock-llm output. */
+/** Top-level block parser for query-router output. */
 export function Markdown({ source }: { source: string }): ReactNode {
   const lines = source.split("\n");
   const blocks: ReactNode[] = [];
@@ -110,8 +104,7 @@ export function Markdown({ source }: { source: string }): ReactNode {
       continue;
     }
 
-    // Heading: `# h1`, `## h2`, `### h3` — mock-llm doesn't emit these
-    // today but the live Claude response might.
+    // Heading: `# h1`, `## h2`, `### h3`.
     const heading = trimmed.match(/^(#{1,3})\s+(.*)$/);
     if (heading) {
       const level = heading[1].length;

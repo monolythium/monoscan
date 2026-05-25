@@ -17,12 +17,12 @@
 	@rpc path /rpc /rpc/*
 	handle @rpc {
 		rewrite * /
-		reverse_proxy {$MONOSCAN_RPC_UPSTREAM:http://178.105.15.216:8545}
+		reverse_proxy {$MONOSCAN_RPC_UPSTREAM:https://rpc.monolythium.com}
 	}
 
 	@api path /api /api/*
 	handle @api {
-		reverse_proxy {$MONOSCAN_RPC_UPSTREAM:http://178.105.15.216:8545}
+		reverse_proxy {$MONOSCAN_RPC_UPSTREAM:https://rpc.monolythium.com}
 	}
 
 	handle {

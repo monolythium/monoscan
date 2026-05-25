@@ -240,7 +240,7 @@ html[data-theme="mono"] .card {
   box-shadow: none !important;
 }
 
-/* ---------- GLASS (Monoscan-style frosted liquid glass, visionOS vibe) ---------- */
+/* ---------- GLASS (Monoscan-style frosted liquid glass) ---------- */
 html[data-theme="glass"] {
   --ink:     #0a0b14;
   --ink-000: #0a0b14;

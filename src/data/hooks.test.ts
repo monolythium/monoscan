@@ -2,22 +2,21 @@
  * Smoke tests for the live-SDK seam.
  *
  * The hooks themselves require a React render env to exercise; that's
- * Stage 4 work (proper component tests once Tanstack Router is wired
- * to per-page routes). For Stage 3 we assert two things:
+ * Focused hook tests for the retained explorer data surfaces. They assert:
  *
  *   1. The long-poll cadence is 2 seconds — the contract that drives
- *      the head ticker until mono-core ships OI-0069's WebSocket
+ *      the head ticker until subscription transport is available
  *      transport.
  *   2. The chain-strip query function speaks `lyth_*` (Law §13.2 native
  *      namespace) — not the old `protocore_*` names that pre-dated the
  *      SDK rename.
  *   3. The WebSocket fallback path stays disabled by default so the
  *      explorer never tries an unimplemented WS transport at runtime
- *      (per `plans/monoscan.md` Stage 3 + OI-0069).
+ *      once subscription transport is available.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { keccak256 } from "ethers/crypto";
+import { keccak256Hex as keccak256 } from "../hash";
 import {
   ApiClient,
   CHAIN_REGISTRY,
@@ -145,7 +144,7 @@ function nativeReceiptFixture(
     eventCount: 0,
     events: [],
     source: {
-      chainProvider: "mock_chain",
+      chainProvider: "test_chain",
       indexerProvider: "native_events",
       metadataLogIndex: 0xffff_ffff,
     },
@@ -422,7 +421,7 @@ describe("live-SDK seam", () => {
 
   it("keeps the WebSocket head subscription disabled by default", () => {
     // `isWebSocketEnabled` flips on `VITE_MONOSCAN_USE_WS=true`; the
-    // explorer must never speculatively dial WS until OI-0069 lands.
+    // Explorer must never speculatively dial WS until the deployment enables it.
     expect(isWebSocketEnabled()).toBe(false);
   });
 
@@ -2477,7 +2476,7 @@ describe("API execution-unit transformations", () => {
     expect(feedRows[0]?.feeDisplay?.defaultFeeText).toBe("Network fee: 77 LYTH");
   });
 
-  it("does not accept legacy embedded fee keys as valid ADR-0039 fees", () => {
+  it("does not accept legacy embedded fee keys as valid structured native fees", () => {
     const legacyFee = nativeFee({ gasUsed: "21000" });
     const fee = structuredNativeReceiptFee(legacyFee);
     const feedRows = txFeedToRows({
@@ -2545,7 +2544,7 @@ describe("API execution-unit transformations", () => {
         },
       ],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -2622,7 +2621,7 @@ describe("API execution-unit transformations", () => {
         },
       ],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -2681,7 +2680,7 @@ describe("API execution-unit transformations", () => {
       eventCount: 1,
       events: [],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -3737,7 +3736,7 @@ describe("API execution-unit transformations", () => {
           body: [1],
         }],
       },
-      finalityProof: { verifier: "fixture" },
+      finalityProof: { verifier: "test" },
     } as any, null);
 
     expect(evidence).toMatchObject({

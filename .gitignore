@@ -1,18 +1,13 @@
-# --- Monolythium Vision base .gitignore (applies to every repo) ---
-
-# Local-only development context (NEVER push these)
-CLAUDE.md
-.claude/local/
-.claude/skills/
-.gemini/
-plans/
+# Local-only development context
+.local-context/
+local-context.md
 docs-internal/
 *.internal.md
 AUDIT-*.md
 RESUME.md
 STATUS.md
 TODO.md
-monoscan-todo.md
+*-todo.md
 
 # Environment + secrets
 .env
@@ -46,7 +41,7 @@ tmp/
 *.log
 logs/
 
-# --- Node / TS / Vite additions (append to gitignore.base) ---
+# Node / TS / Vite
 node_modules/
 dist/
 dist-ssr/

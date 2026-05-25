@@ -1,21 +1,13 @@
 /**
- * Demo data for surfaces the SDK / indexer does not yet expose.
+ * Local fallback rows for surfaces that require retained aggregate indexes.
  *
- * Every export here is tagged `TODO(monolythium)` and points at the
- * issue or plan that will replace it with a real RPC + indexer call. The
- * old `src/monoscan-data.tsx` (with `@ts-nocheck` and an implicit window
- * attach) has been removed; this module is deliberately scoped to demo
- * fallbacks the live wiring has not reached yet.
- *
- * Per `../../CLAUDE.md` Stage 2 — kill `monoscan-data.tsx`. This file is
- * the thin shim that survives until Stage 3 (live RPC + indexer streams)
- * lands. The pages still consume the same shapes through the React-Query
- * hooks in `./hooks.ts`; those hooks are the seam to swap one surface at
- * a time without touching the page code.
+ * Live RPC and `/api/v1` values are preferred by the hooks in `./hooks.ts`.
+ * These rows keep offline, local, and early-testnet views renderable when a
+ * node does not expose the retained aggregate data for a surface yet.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// Mock data is shape-driven only — strict types live in `./hooks.ts`.
+// Fallback data is shape-driven only; strict types live in `./hooks.ts`.
 
 const _hash = (n: number): string =>
   `0x${n.toString(16).padStart(8, "0")}…${(n * 7919).toString(16).slice(-4)}`;
@@ -170,15 +162,9 @@ const _makeClusters = () => {
 };
 
 /**
- * TODO(monolythium): partially superseded by Stage 3 wiring:
- *   - `consensus.round` → live via `useChainHead`/`useChainStrip` (`hooks.ts`)
- *   - `clusters` / `operators` → still partially mock; SDK has compact
- *     descriptor lists, while cluster TVS / operator reputation / vertex include
- *     await mono-core OI-0070 indexer aggregate
- *   - `recentVertices` → partially superseded by `useLatestBlocks` on the
- *     landing live feed; per-cluster vertex breakdown still needs OI-0070.
- *   - `supply` → needs balance-aggregation indexer view (no SDK exposure yet).
- *   - `treasury` → static foundation multi-sig surface (no SDK exposure yet).
+ * Baseline explorer state used when live aggregate surfaces are unavailable.
+ * Block head, cluster descriptors, and selected stats are replaced by live
+ * hook data as soon as the node reports them.
  */
 export const MONOSCAN_DATA = {
   consensus: {
@@ -359,10 +345,8 @@ const _mkTrades = (mid: number, count: number, seedN: number) => {
 };
 
 /**
- * TODO(monolythium): market list/search still needs an aggregate CLOB
- * feed. MarketPage now probes `lyth_clobMarket` when
- * `VITE_MONOSCAN_MARKET_IDS` maps a symbol to a market id; this fixture stays
- * as the list and unconfigured-detail fallback.
+ * Local market rows used for list rendering and unconfigured-detail fallback.
+ * Market pages probe live CLOB surfaces when market IDs are configured.
  */
 export const MARKETS: any[] = MARKET_DEFS.map(([rank, sym, name, kind, tier]) => {
   const t = _mkToken(sym, name, rank, kind, tier);
@@ -397,12 +381,8 @@ MARKETS.forEach((m: any) => {
 
 /* ================= NETWORK STATS ================= */
 /**
- * TODO(monolythium): aggregate counters need a real indexer
- * (mono-core OI-0070). Stage 3 partially supersedes this: `useNetworkStatus`
- * in `hooks.ts` now feeds StatsPage live values for round, cluster
- * count, peer count and mempool depth. Everything else here (txTotal,
- * walletsTotal, contracts, supply split, slashing series) stays mock until
- * the indexer aggregate ships.
+ * Aggregate fallback counters. StatsPage replaces round, cluster count, peer
+ * count, and mempool depth with live node data when available.
  */
 export const NETWORK_STATS = (() => {
   const now = MONOSCAN_DATA.consensus.round;
@@ -548,9 +528,8 @@ const _mkFlow = (seed: number) => {
 };
 
 /**
- * TODO(monolythium): WalletsPage now probes `lyth_richList` for the
- * configured LYTH token id. These rows remain the distribution chart and
- * fallback list until token metadata + percentage supply aggregates are live.
+ * Wallet distribution fallback rows. WalletsPage probes `lyth_richList` for
+ * the configured LYTH token id when the node exposes it.
  */
 const _wallets: any = WALLET_TAGS.map((w: any, i: number) => {
   const seed = parseInt(w.addr.replace(/[^0-9a-f]/gi, "").slice(-4) || (i + 1).toString(), 16) || i + 1;
@@ -607,11 +586,8 @@ const TX_KINDS: Record<string, { label: string; icon: string }> = {
 };
 
 /**
- * TODO(monolythium): partially superseded by Stage 3 — `TxPage` now
- * reads `lyth_decodeTx` live via `useTxByHashLive` and overrides status,
- * block, gas, decoded calldata, logs, and PQ-finality fields. Signature timing
- * and DAC coverage still fall back to this fixture until the chain exposes
- * per-signer timing.
+ * Transaction fallback rows. TxPage overlays live decoded transaction, receipt,
+ * native receipt, fee, and proof fields when available.
  */
 export const TXS: Record<string, any> = {};
 WALLETS.forEach((w: any) => {

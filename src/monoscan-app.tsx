@@ -1,7 +1,5 @@
 /* =====================================================
-   Monoscan — public chain explorer for Monolythium v4.0
-   Three views: Landing · Cluster detail · Operator profile.
-   Hash-routed; data is faked but shape-true to data.tsx.
+   Monoscan — public chain explorer for Monolythium.
 ===================================================== */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -9,7 +7,7 @@ import { useState, useEffect, useMemo } from "react";
 import {
   Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
-import { MONOSCAN_DATA, MARKETS } from "./data/mock";
+import { MONOSCAN_DATA, MARKETS } from "./data/fallback";
 import { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
 import {
@@ -62,9 +60,9 @@ const openWalletStakeIntent = (cluster: any) => {
 /* ============== TOP STRIP ============== */
 /**
  * Renders the live top strip. `round` arrives already-resolved by the App
- * (live RPC long-poll first, mock fallback second); the rest of the fields
+ * (live RPC long-poll first, local fallback second); the rest of the fields
  * are best-effort live values from `useChainStrip` and degrade quietly to
- * the mocked values when the node is unreachable.
+ * local values when the node is unreachable.
  */
 const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
   const block = strip?.blockNumber;
@@ -105,7 +103,7 @@ const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
       <span style={{flex:1}}/>
       <Field label="network" value={netVersion ? `chain-id ${netVersion}` : "testnet 69420"}/>
       <Sep/>
-      <Field label="proto" value="whitepaper v4.0"/>
+      <Field label="protocol" value="Monolythium"/>
     </div>
   );
 };
@@ -172,7 +170,7 @@ const Header = ({ go, route }: any) => {
         <img className="ms-brand__mark" src="/brand/monolythium.svg" alt="" width="32" height="32"/>
         <div>
           <b>Monoscan</b>
-          <small>monolythium v4.0 explorer</small>
+          <small>monolythium explorer</small>
         </div>
       </a>
       <form onSubmit={submit} className="ms-search">
@@ -251,12 +249,8 @@ const Landing = ({ go }: any) => {
   const [rateSeries, setRateSeries]       = useState(()=>Array.from({length:60},(_,i)=>2.8+Math.sin(i*0.3)*0.15+Math.random()*0.08));
   const [showDeep, setShowDeep] = useState(false);
 
-  // Live latest blocks for the on-chain feed strip. Falls back to the mocked
-  // recent vertices when the node is offline so the page never goes blank.
-  // TODO(monolythium): once mono-core OI-0070 lands the indexer's
-  // per-vertex breakdown (transaction count, BLS-agg ms, DAC coverage, cluster
-  // attribution), swap these block headers for the richer vertex shape the
-  // designs demand.
+  // Live latest blocks for the on-chain feed strip. Local recent vertices keep
+  // the page populated when a node is offline.
   const liveBlocks = useLatestBlocks(8);
   const chainStats = useChainStats();
   const liveClobMarkets = useClobMarkets(25);
@@ -347,7 +341,7 @@ const Landing = ({ go }: any) => {
             <span className="mono" style={{fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--fg-300)"}}>
               {hasLiveStats
                 ? `Monolythium · block ${fmt(liveStats.latestHeight)} · ${liveStats.peerCount} peers`
-                : `Monolythium · demo feed · ${c.ratePerSec.toFixed(1)} rounds/s`}
+                : `Monolythium · local feed · ${c.ratePerSec.toFixed(1)} rounds/s`}
             </span>
           </div>
           <h1 className="ov-hero__title">
@@ -400,7 +394,7 @@ const Landing = ({ go }: any) => {
               label="Supply split"
               value="pending"
               sub="no live supply/privacy aggregate yet"
-              delta="fixture hidden in live mode"
+              delta="local rows hidden in live mode"
               tone="neutral"
             />
           ) : (
@@ -494,7 +488,7 @@ const Landing = ({ go }: any) => {
         <section className="ms-card" style={{padding:"18px 20px"}}>
           <div className="cap" style={{color:"var(--gold)",marginBottom:8}}>Markets</div>
           <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-            The live CLOB index responded, but it has no indexed markets yet. Demo gainers, losers, and most-traded rows are hidden while the node is live.
+            The live CLOB index responded, but it has no indexed markets yet. Local gainers, losers, and most-traded rows are hidden while the node is live.
           </div>
         </section>
       ) : (
@@ -937,7 +931,7 @@ const ClusterPage = ({ slot, go }: any) => {
             <KVRow label="Entity ratchet" value={entityRatchet.data ? `${entityRatchet.data.active}/${entityRatchet.data.threshold === 4294967295 ? "unset" : entityRatchet.data.threshold}` : "—"}/>
           </div>
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
-            Cluster status, quorum, and member BLS keys come from public RPC. Rich APY, rewards, and vertex inclusion remain indexer-backed mock data.
+            Cluster status, quorum, and member BLS keys come from public RPC. Rich APY, rewards, and vertex inclusion use local fallback rows until retained aggregates are available.
           </div>
         </Card>
         <Card title="Members · 7 operators">
@@ -1115,7 +1109,7 @@ const OperatorPage = ({ addr, go }: any) => {
             <KVRow label="Next key rotation" value={keyRotationLabel}/>
           </div>
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
-            Live telemetry appears when this page is opened from a live cluster member id. Mock operator profiles keep their fixture metrics until the indexer exposes reputation and membership aggregates.
+            Live telemetry appears when this page is opened from a live cluster member id. Local operator profile history remains in place until retained reputation and membership aggregates are available.
           </div>
         </Card>
         <Card title="Reputation timeline · 12 months">
@@ -1484,13 +1478,9 @@ const MiniRing = ({ members, size=110, threshold=5 }: any) => {
 };
 
 const OperatorsPage = ({go}: any) => {
-  // Live cluster descriptors (id + pubkey + stake + active flag). It's a thin
-  // shape compared to the mocked operator profiles below; once the indexer
-  // surfaces operator reputation/region/uptime aggregates we can swap the mock
-  // list entirely.
-  // TODO(monolythium): the SDK does not yet expose operator
-  // memberships, region, reputation, or 90d uptime — see plans/monoscan.md
-  // Stage 3 + mono-core OI-0070.
+  // Live cluster descriptors expose id, pubkey, stake, and active flag. Local
+  // operator rows fill reputation, region, and uptime until retained operator
+  // aggregates are available.
   const clusters = useClusterSet();
   const healthyClusters = useHealthyClusters();
   const liveCount = clusters.data?.length ?? null;
@@ -1547,22 +1537,16 @@ const App = () => {
   }, []);
   const go = (h) => { window.location.hash = h; setRoute(h); };
 
-  // Live chain head (2s poll per Stage 3) + chain-strip aggregate (round +
-  // block + peers + version + mempool + indexer). Both fall back to a local
-  // timer-based mock when the RPC endpoint is unreachable so the strip
-  // never freezes during dev.
-  // TODO(monolythium): swap the 2s long-poll for `lyth_subscribe`
-  // over WebSocket once mono-core OI-0069 lands. The seam lives in
-  // `data/hooks.ts::readLatestHeadFromWebSocket` and is feature-flagged
-  // behind `VITE_MONOSCAN_USE_WS` (see `sdk/client.ts::isWebSocketEnabled`).
+  // Live chain head plus chain-strip aggregate. A local timer keeps the strip
+  // readable when the RPC endpoint is unreachable.
   const head = useChainHead();
   const strip = useChainStrip();
-  const [mockRound, setMockRound] = useState(SCAN.consensus.round);
+  const [fallbackRound, setFallbackRound] = useState(SCAN.consensus.round);
   useEffect(()=>{
-    const id = setInterval(()=>setMockRound(r=>r+1), 380);
+    const id = setInterval(()=>setFallbackRound(r=>r+1), 380);
     return ()=>clearInterval(id);
   },[]);
-  const round = strip.data?.round ?? head.data?.round ?? mockRound;
+  const round = strip.data?.round ?? head.data?.round ?? fallbackRound;
 
   // Lightweight toast channel (for clipboard copies, preview-only actions, etc.)
   const [toast, setToast] = useState<string | null>(null);

@@ -5,7 +5,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import { router } from "./router";
 import { queryClient } from "./data/hooks";
 
-// Tokens + monoscan CSS — preserved verbatim from the static mockup.
+// Monoscan design tokens and styles.
 import "../styles/tokens.css";
 import "../styles/themes.css";
 import "../styles/monoscan.css";

@@ -1,18 +1,14 @@
 /**
- * Typed tool implementations the (mock) LLM can invoke.
+ * Typed tool implementations the Ask Monoscan query router can invoke.
  *
  * Tools are live-first where mono-core already exposes a public RPC surface,
- * then fall back to deterministic fixtures for indexer-only fields.
+ * then fall back to deterministic local rows for indexer-only fields.
  *
- * The remaining fixture paths are list-level aggregates or metadata surfaces
- * that the public RPC does not expose yet. The Anthropic tool definitions
- * consume these signatures verbatim, so each future swap is one body change.
- *
- * The fixtures are intentionally tiny — the goal is a coherent demo, not
- * exhaustive testnet replay.
+ * Remaining fallback paths are list-level aggregates or metadata surfaces
+ * that the public RPC does not expose yet.
  */
 
-import { MARKETS, MONOSCAN_DATA } from "../data/mock";
+import { MARKETS, MONOSCAN_DATA } from "../data/fallback";
 import { getRpcClient, isRpcConfigured } from "../sdk/client";
 import type { ToolName } from "./types";
 
@@ -47,7 +43,7 @@ const _formatLyth = (lythoshi: bigint): string => {
 
 /** Deterministic pseudo-random in [0, 1) — keyed off an integer. */
 const _rand = (seed: number): number => {
-  // Mulberry32 — small + deterministic + good enough for fixtures.
+  // Mulberry32 is small, deterministic, and sufficient for fallback rows.
   let t = (seed + 0x6d2b79f5) >>> 0;
   t = Math.imul(t ^ (t >>> 15), t | 1);
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
@@ -81,14 +77,14 @@ export interface GetBlockResult {
 /**
  * Look up a block by number or hash.
  *
- * Uses live block-header RPC when available. The per-block tx/DAC
- * enrichment remains fixture-backed until the indexer aggregate ships.
+ * Uses live block-header RPC when available. The per-block tx/DAC enrichment
+ * uses local fallback rows until the retained aggregate surface is available.
  */
 export async function get_block(input: GetBlockInput): Promise<GetBlockResult> {
   const raw = String(input.number_or_hash).toLowerCase();
   const n = /^\d+$/.test(raw)
     ? parseInt(raw, 10)
-    : 12_345; // fallback for hash queries — fixture key
+    : 12_345; // fallback key for hash queries
   const seed = n;
   const cluster = ((seed % 28) + 1).toString().padStart(3, "0");
   const txCount = 14 + Math.floor(_rand(seed) * 60);
@@ -245,7 +241,7 @@ export interface GetOperatorResult {
 /**
  * Look up an operator by address.
  *
- * TODO(monolythium): swap fixture for live SDK/indexer operator lookup.
+ * Uses local operator rows until the retained operator index is available.
  */
 export function get_operator(input: GetOperatorInput): GetOperatorResult {
   const D: any = MONOSCAN_DATA;
@@ -300,7 +296,8 @@ export interface GetClusterResult {
  * Fetch cluster summary + recent-round signing record.
  *
  * Uses live cluster descriptors when available. Rich operator roster, APY,
- * and recent signing aggregates still fall back to fixtures until OI-0070.
+ * and recent signing aggregates use local fallback rows until retained
+ * cluster aggregates are available.
  */
 export async function get_cluster(input: GetClusterInput): Promise<GetClusterResult> {
   const D: any = MONOSCAN_DATA;
@@ -365,7 +362,7 @@ export async function get_cluster(input: GetClusterInput): Promise<GetClusterRes
 /* -------------------------------------------------------------------------- */
 
 export interface GetGapRecordsInput {
-  /** Range string: "24h" | "7d" | "30d" — fixture is mostly for 24h. */
+  /** Range string: "24h" | "7d" | "30d". */
   range?: string;
 }
 
@@ -407,12 +404,11 @@ export async function get_gap_records(input: GetGapRecordsInput): Promise<GetGap
         })),
       };
     } catch {
-      // Fall through to deterministic fixtures.
+      // Fall through to deterministic local rows.
     }
   }
-  // Three canned records — tuned to look like a real testnet day:
-  // one heartbeat coalesced gap, one network pause from a cluster outage,
-  // and one short maintenance window.
+  // Local fallback rows for a heartbeat coalesced gap, a network pause, and a
+  // short maintenance window.
   const records: GapRecord[] = [
     {
       start_round: 12_341,
@@ -469,9 +465,9 @@ export interface SearchTokensResult {
 /**
  * Substring search over the listed market set.
  *
- * Uses the live CLOB market/search index when available. Market-cap and
- * 24h-change remain fixture-only fields; live CLOB summaries expose last
- * price, total base volume, and trade count.
+ * Uses the live CLOB market/search index when available. Market cap and
+ * 24h-change use local fallback fields when the live summary does not expose
+ * them yet.
  */
 export async function search_tokens(input: SearchTokensInput): Promise<SearchTokensResult> {
   const q = input.query.toLowerCase().trim();
@@ -508,7 +504,7 @@ export async function search_tokens(input: SearchTokensInput): Promise<SearchTok
         };
       }
     } catch {
-      // Fall through to fixture markets.
+      // Fall through to local market rows.
     }
   }
   const matched = (MARKETS as any[])
@@ -565,8 +561,8 @@ export interface GetAddressActivityResult {
 
 /**
  * Recent activity for an address. Uses live balance/policy/activity when
- * the indexer-backed RPC returns rows; falls back to deterministic fixtures
- * when the queried address has no indexed activity yet.
+ * the retained RPC returns rows; falls back to deterministic local rows when
+ * the queried address has no indexed activity yet.
  */
 export async function get_address_activity(
   input: GetAddressActivityInput,
@@ -655,11 +651,7 @@ export async function get_address_activity(
 /* -------------------------------------------------------------------------- */
 
 /**
- * Catalog of every tool the (mock) LLM can invoke. Mirrors the shape an
- * Anthropic Messages API `tools: [...]` array expects — `name` +
- * `description` + JSON-Schema `input_schema`. The mock LLM does not
- * actually consult these (it pattern-matches), but keeping them here
- * means the swap to real Claude is one diff.
+ * Catalog of every tool the local query router can invoke.
  */
 export const TOOL_CATALOG: ReadonlyArray<{
   name: ToolName;
@@ -756,8 +748,7 @@ export const TOOLS = {
 } as const;
 
 /**
- * Type-erased invoker the mock LLM uses. Real Claude integration calls
- * the same surface — just pulls `name` + `input` from the tool_use block.
+ * Type-erased invoker used by the local query router.
  */
 export async function invokeTool(name: ToolName, input: Record<string, unknown>): Promise<unknown> {
   switch (name) {

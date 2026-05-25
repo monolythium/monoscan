@@ -22,7 +22,7 @@ import {
   type NativeNftListingKind,
   type SpotLimitOrderSide,
 } from "@monolythium/core-sdk";
-import { MARKETS } from "./data/mock";
+import { MARKETS } from "./data/fallback";
 import {
   fetchNativeMarketState,
   nativeMarketEventRows,
@@ -1357,29 +1357,29 @@ const MarketsPage = ({ go }: any) => {
 
   const liveRows = useMemo(() => {
     return (liveMarkets.data?.markets ?? []).map((row: any, i: number) => {
-      const fixture = MARKETS.find((m: any) => getMarketIdForSymbol(m.sym) === row.marketId);
-      const price = mkDec(row.lastPrice, fixture?.price ?? 0);
+      const fallback = MARKETS.find((m: any) => getMarketIdForSymbol(m.sym) === row.marketId);
+      const price = mkDec(row.lastPrice, fallback?.price ?? 0);
       const baseVolume = mkDec(row.totalVolumeBase, 0);
-      const fallbackSpark = fixture?.sparkline ?? [price || 0, price || 0];
+      const fallbackSpark = fallback?.sparkline ?? [price || 0, price || 0];
       return {
-        ...(fixture ?? {}),
+        ...(fallback ?? {}),
         rank: i + 1,
-        sym: fixture?.sym ?? `MKT-${i + 1}`,
-        name: fixture?.name ?? `CLOB ${_shortMarketId(row.marketId)}`,
-        kind: fixture?.kind ?? "native",
+        sym: fallback?.sym ?? `MKT-${i + 1}`,
+        name: fallback?.name ?? `CLOB ${_shortMarketId(row.marketId)}`,
+        kind: fallback?.kind ?? "native",
         price,
-        chg24h: fixture?.chg24h ?? 0,
+        chg24h: fallback?.chg24h ?? 0,
         sparkline: fallbackSpark,
         vol24h: price > 0 ? baseVolume * price : baseVolume,
-        liquidity: fixture?.liquidity ?? 0,
-        mcap: fixture?.mcap ?? 0,
-        holders: fixture?.holders ?? 0,
-        verified: fixture?.verified ?? true,
-        trades: fixture?.trades?.length ? fixture.trades : [{ round: row.lastBlockHeight }],
+        liquidity: fallback?.liquidity ?? 0,
+        mcap: fallback?.mcap ?? 0,
+        holders: fallback?.holders ?? 0,
+        verified: fallback?.verified ?? true,
+        trades: fallback?.trades?.length ? fallback.trades : [{ round: row.lastBlockHeight }],
         marketId: row.marketId,
         tradeCount: row.tradeCount,
         totalVolumeBase: baseVolume,
-        hasFixture: Boolean(fixture),
+        hasFallback: Boolean(fallback),
         live: true,
       };
     });
@@ -1510,13 +1510,13 @@ const MarketsPage = ({ go }: any) => {
                   <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
                     {usingLiveMarkets
                       ? "The live CLOB index responded, but it has no indexed markets matching this view yet."
-                      : "No fixture markets matched this filter."}
+                      : "No fallback markets matched this filter."}
                   </div>
                 </td>
               </tr>
             ) : (
               filtered.map(t => (
-                <tr key={t.marketId ?? t.sym} onClick={()=>go(`#/market/${encodeURIComponent(t.live && !t.hasFixture ? t.marketId : t.sym)}`)}>
+                <tr key={t.marketId ?? t.sym} onClick={()=>go(`#/market/${encodeURIComponent(t.live && !t.hasFallback ? t.marketId : t.sym)}`)}>
                   <td className="mono num" style={{color:"var(--fg-500)",fontSize:11.5}}>{t.rank}</td>
                   <td>
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -1527,7 +1527,7 @@ const MarketsPage = ({ go }: any) => {
                           {t.verified && <span title="verified" style={{color:"var(--gold)",fontSize:11,lineHeight:1}}>✓</span>}
                         </div>
                         <div className="mono" style={{fontSize:10.5,color:"var(--fg-500)",marginTop:1,letterSpacing:"0.02em"}}>
-                          {t.live && !t.hasFixture ? `market ${_shortMarketId(t.marketId)}` : t.name}
+                          {t.live && !t.hasFallback ? `market ${_shortMarketId(t.marketId)}` : t.name}
                         </div>
                       </div>
                     </div>
@@ -1538,9 +1538,9 @@ const MarketsPage = ({ go }: any) => {
                     <span style={{display:"inline-block"}}><Spark data={t.sparkline} up={t.chg24h>=0} w={96} h={24}/></span>
                   </td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:12}}>{mkUsd(t.vol24h)}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkUsd(t.liquidity)}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkUsd(t.mcap)}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:12}}>{t.live && !t.hasFixture ? "—" : mkNum(t.holders)}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFallback ? "—" : mkUsd(t.liquidity)}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFallback ? "—" : mkUsd(t.mcap)}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:12}}>{t.live && !t.hasFallback ? "—" : mkNum(t.holders)}</td>
                   <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>
                     <span style={{display:"inline-flex",alignItems:"center",gap:5}}>
                       <span className="dot" style={{color:"var(--ok)",width:5,height:5}}/>
@@ -1571,7 +1571,7 @@ const MarketsPage = ({ go }: any) => {
 
       <div className="mono" style={{color:"var(--fg-500)",fontSize:11,textAlign:"center",letterSpacing:"0.04em",padding:"6px 0"}}>
         {usingLiveMarkets
-          ? "Live CLOB index. Empty rows mean the node has no indexed markets yet, not that demo fixtures are hidden by filters."
+          ? "Live CLOB index. Empty rows mean the node has no indexed markets yet."
           : "Listing policy: top 100 markets by rolling 24h volume · re-ranked every 240 rounds · full list on the Monoscan API"}
       </div>
     </div>

@@ -1,10 +1,9 @@
 /**
  * Monoscan SDK seam.
  *
- * Single place every page/component gets typed access to a Monolythium v4.0
- * node from. Hand-written `fetch` calls are forbidden — import the
- * singletons here instead. See ../../CLAUDE.md section 4.3 + the orchestration
- * contract at ../../../CLAUDE.md section 6.
+ * Single place every page/component gets typed access to a Monolythium node.
+ * Import the singletons here instead of scattering hand-written `fetch` calls
+ * across page code.
  */
 
 import {
@@ -21,8 +20,7 @@ import {
  * Two env vars are supported, in priority order:
  *   1. `VITE_MONOSCAN_RPC_URL` — explorer-specific override.
  *   2. `VITE_MONO_RPC_URL`     — workspace-wide fallback shared with the
- *                                wallets / Monarch builds (per
- *                                `monolythium/CLAUDE.md` §6).
+ *                                wallets / Monarch builds.
  *
  * If neither is set, use the same relative `/rpc` route in every browser
  * build. Vite proxies that path in dev/preview, and the production Caddy
@@ -169,11 +167,9 @@ export function resetRpcClient(): void {
 /**
  * Build-time feature flag for the WebSocket head-subscription path.
  *
- * Today the SDK's `lyth_subscribe` rejects over the plain HTTP transport
- * (mono-core OI-0069 still pending). The 2-second long-poll inside
- * `useChainHead` is the temporary fallback. When OI-0069 lands, set
- * `VITE_MONOSCAN_USE_WS=true` at build time and the WebSocket branch in
- * `data/hooks.ts::readLatestHeadFromWebSocket` takes over.
+ * Polling remains the default for broad node compatibility. Deployments that
+ * expose subscription transport can set `VITE_MONOSCAN_USE_WS=true` at build
+ * time and use the WebSocket branch in `data/hooks.ts`.
  *
  * Returns `false` until the env var explicitly opts in. Any other value
  * (`"0"`, `"false"`, undefined) keeps the flag off.
@@ -184,17 +180,10 @@ export function isWebSocketEnabled(): boolean {
 }
 
 /**
- * Indexer client placeholder.
+ * Indexer client adapter.
  *
- * Stage 3 of `plans/monoscan.md` wires per-node indexer streams
- * (block + tx WebSocket subscriptions, address-activity feed, gap records,
- * private-asset policy lookups). `lyth_subscribe` is the WebSocket entry
- * point but currently returns `not-implemented` over HTTP transport
- * (mono-core OI-0069 — until that lands monoscan long-polls instead).
- *
- * For now we expose the node API as the indexer too so call sites can already
- * import the right symbol; the moment a dedicated streaming `IndexerClient`
- * lands the swap is one-line.
+ * The current app exposes the node API under this interface so call sites can
+ * remain stable as retained indexer surfaces expand.
  */
 export interface IndexerClient {
   /** Same relative-path shape as ApiClient.get — kept for forward compat. */
@@ -208,9 +197,8 @@ export function getIndexerClient(): IndexerClient {
     throw new Error("Monoscan indexer URL is not configured");
   }
   if (_indexer === null) {
-    // TODO(monolythium): swap in a streaming IndexerClient once
-    // mono-core ships OI-0069. The HTTP `/api/v1` client is enough for the
-    // current block, tx, address, cluster, and operator reads.
+    // The HTTP `/api/v1` client is enough for current block, tx, address,
+    // cluster, and operator reads.
     _indexer = getApiClient();
   }
   return _indexer;

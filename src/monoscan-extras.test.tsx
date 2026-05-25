@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { keccak256 } from "ethers/crypto";
+import { keccak256Hex as keccak256 } from "./hash";
 import type { ReactElement } from "react";
 import {
   AgentReputationCard,
@@ -302,7 +302,7 @@ function renderMrvArchiveEvidenceHtml(
     eventCount: 2,
     events: [],
     source: {
-      chainProvider: "mock_chain",
+      chainProvider: "test_chain",
       indexerProvider: "native_events",
       metadataLogIndex: 0xffff_ffff,
     },
@@ -329,7 +329,7 @@ describe("transactionFeeValueLabel", () => {
     }, 0.0001)).toBe("123,456,789,012.34567891 LYTH");
   });
 
-  it("falls back to fixture fee text only when no structured fee display exists", () => {
+  it("falls back to local fee text only when no structured fee display exists", () => {
     expect(transactionFeeValueLabel(null, 0.012345, "LYTH")).toBe("0.0123 LYTH");
     expect(transactionFeeValueLabel(null, null)).toBe("—");
   });
@@ -341,7 +341,7 @@ describe("adr0039FeeDetailText", () => {
       .toBe("execution unit price 10 lythoshi · execution units used 42 · execution unit limit 100 · base fee per execution unit · total 1 lythoshi");
   });
 
-  it("keeps ADR-0039-native fee detail text unchanged", () => {
+  it("keeps structured native fee detail text unchanged", () => {
     expect(adr0039FeeDetailText("cycles 42, state I/O 8, total 50000 lythoshi"))
       .toBe("cycles 42, state I/O 8, total 50000 lythoshi");
   });
@@ -608,7 +608,7 @@ describe("MrvNativeEvidenceCard", () => {
       eventCount: 2,
       events: [],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -670,7 +670,7 @@ describe("MrvNativeEvidenceCard", () => {
       eventCount: 2,
       events: [],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -745,7 +745,7 @@ describe("MrvNativeEvidenceCard", () => {
       eventCount: 2,
       events: [],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -828,7 +828,7 @@ describe("MrvNativeEvidenceCard", () => {
       eventCount: 2,
       events: [],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -971,7 +971,7 @@ describe("MrvNativeEvidenceCard", () => {
       eventCount: 2,
       events: [],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -1032,7 +1032,7 @@ describe("MrvNativeEvidenceCard", () => {
       eventCount: 2,
       events: [],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -1087,7 +1087,7 @@ describe("MrvNativeEvidenceCard", () => {
       eventCount: 2,
       events: [],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -1144,7 +1144,7 @@ describe("MrvNativeEvidenceCard", () => {
       eventCount: 2,
       events: [],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
@@ -1197,7 +1197,7 @@ describe("MrvNativeEvidenceCard", () => {
       eventCount: 2,
       events: [],
       source: {
-        chainProvider: "mock_chain",
+        chainProvider: "test_chain",
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
