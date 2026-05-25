@@ -107,7 +107,7 @@ function explainBlock(r: GetBlockResult): string {
     `**Block ${r.number}** committed in round \`${r.round}\` by cluster **${r.proposer_cluster}**.`,
     "",
     `- **${r.tx_count}** transactions included`,
-    `- Gas used: \`${r.gas_used.toLocaleString()}\` of \`${r.gas_limit.toLocaleString()}\` (${((r.gas_used / r.gas_limit) * 100).toFixed(1)}%)`,
+    `- Execution units: \`${r.gas_used.toLocaleString()}\` of \`${r.gas_limit.toLocaleString()}\` (${((r.gas_used / r.gas_limit) * 100).toFixed(1)}%)`,
     `- BLS aggregation latency: **${r.bls_agg_ms.toFixed(2)}ms**`,
     `- DAC coverage: **${(r.dac_coverage * 100).toFixed(2)}%** of expected shards`,
     `- Status: \`${r.status}\` — finalized at ${r.timestamp_iso}`,

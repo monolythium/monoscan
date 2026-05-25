@@ -10,6 +10,7 @@ import {
   NativeAgentActionsCard,
   NativeAgentStateCard,
   adr0039FeeDetailText,
+  executionUnitPriceValueLabel,
   mrcPolicyAllowedAssetsSummary,
   mrcPolicyBodySummary,
   redemptionTicketStatusText,
@@ -332,6 +333,13 @@ describe("transactionFeeValueLabel", () => {
   it("falls back to local fee text only when no structured fee display exists", () => {
     expect(transactionFeeValueLabel(null, 0.012345, "LYTH")).toBe("0.0123 LYTH");
     expect(transactionFeeValueLabel(null, null)).toBe("—");
+  });
+});
+
+describe("executionUnitPriceValueLabel", () => {
+  it("renders per-execution-unit prices in LYTH rather than raw lythoshi", () => {
+    expect(executionUnitPriceValueLabel(100n)).toBe("0.000001 LYTH / execution unit");
+    expect(executionUnitPriceValueLabel(null)).toBeNull();
   });
 });
 
