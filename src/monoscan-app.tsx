@@ -9,7 +9,7 @@ import { useState, useEffect, useMemo } from "react";
 import {
   Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
-import { MONOSCAN_DATA, MARKETS } from "./data/mock";
+import { MONOSCAN_DATA, MARKETS } from "./data/fallback";
 import { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
 import {
