@@ -9,7 +9,9 @@
 import {
   ApiClient,
   RpcClient,
+  addressToTypedBech32,
   apiEndpointFromRpcEndpoint,
+  typedBech32ToAddress,
   type ApiClientOptions,
   type CapabilitiesResponse,
   type RpcClientOptions,
@@ -87,6 +89,22 @@ export function getEnvNativeAgentForwarderAddress(): string | null {
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
+export function normalizeNativeForwarderContractAddress(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (HEX20_RE.test(trimmed)) {
+    return addressToTypedBech32("contract", trimmed);
+  }
+  try {
+    typedBech32ToAddress(trimmed, "contract");
+    return trimmed;
+  } catch {
+    return null;
+  }
+}
+
 export function getNativeMarketForwarderAddress(
   capabilities?: CapabilitiesResponse | null,
   requestBytes?: number | null,
@@ -95,12 +113,12 @@ export function getNativeMarketForwarderAddress(
   if (rows.length > 0) {
     const match = rows.find((row) =>
       row.module === "market" &&
-      HEX20_RE.test(row.contractAddress) &&
+      normalizeNativeForwarderContractAddress(row.contractAddress) !== null &&
       (requestBytes === null || requestBytes === undefined || row.requestBytes === requestBytes)
     );
-    return match?.contractAddress ?? null;
+    return normalizeNativeForwarderContractAddress(match?.contractAddress);
   }
-  return getEnvNativeMarketForwarderAddress();
+  return normalizeNativeForwarderContractAddress(getEnvNativeMarketForwarderAddress());
 }
 
 export function getNativeAgentForwarderAddress(
@@ -111,12 +129,12 @@ export function getNativeAgentForwarderAddress(
   if (rows.length > 0) {
     const match = rows.find((row) =>
       row.module === "agent" &&
-      HEX20_RE.test(row.contractAddress) &&
+      normalizeNativeForwarderContractAddress(row.contractAddress) !== null &&
       (requestBytes === null || requestBytes === undefined || row.requestBytes === requestBytes)
     );
-    return match?.contractAddress ?? null;
+    return normalizeNativeForwarderContractAddress(match?.contractAddress);
   }
-  return getEnvNativeAgentForwarderAddress();
+  return normalizeNativeForwarderContractAddress(getEnvNativeAgentForwarderAddress());
 }
 
 let _marketIds: Record<string, string> | null = null;

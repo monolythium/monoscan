@@ -987,8 +987,8 @@ const StatsPage = ({ go }: any) => {
               <HealthRow label="Last slashing event" value="3 rounds ago" tone="warn"/>
               <HealthRow label="Last halted (emergency)" value="never" tone="ok"/>
               <HealthRow label="Private tx DAC coverage" value="91.4%" tone="ok"/>
-              <HealthRow label="Bridge queue · Solana" value="41 pending" tone="neutral"/>
-              <HealthRow label="Bridge queue · IBC" value="8 pending" tone="ok"/>
+              <HealthRow label="Bridge queue · CCIP" value="41 pending" tone="neutral"/>
+              <HealthRow label="Bridge fees · LINK" value="ready" tone="ok"/>
             </div>
           </Card>
         </div>
