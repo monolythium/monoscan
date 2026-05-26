@@ -1444,15 +1444,12 @@ const MarketsPage = ({ go }: any) => {
 
   const indexerAvailability = useIndexerAvailability();
   const hasLiveMarketResponse = liveMarkets.data !== undefined && liveMarkets.data !== null;
-  // When the node confirms the indexer is disabled, do not silently fall
-  // back to the fixture demo rows — the explorer should render an empty
-  // live state and explain why, per the "live empty must not be hidden"
-  // rule. Fixtures still cover the offline / RPC-unreachable path.
-  const marketRows = indexerAvailability.disabled
-    ? []
-    : hasLiveMarketResponse
-      ? liveRows
-      : MARKETS;
+  // Once the chain is reachable (liveChain) the CLOB endpoint speaks for
+  // itself — even an empty array is the truth. Only fall back to the
+  // 100-row demo fixture in offline / RPC-unreachable mode.
+  const marketRows = indexerAvailability.liveChain
+    ? hasLiveMarketResponse ? liveRows : []
+    : hasLiveMarketResponse ? liveRows : MARKETS;
 
   const tabs = [
     { k:"all",    label:"All markets" },
@@ -1490,7 +1487,7 @@ const MarketsPage = ({ go }: any) => {
   const totalMCAP = marketRows.reduce((a,t)=>a+(t.mcap || 0),0);
   const totalVOL  = marketRows.reduce((a,t)=>a+(t.vol24h || 0),0);
   const totalLIQ  = marketRows.reduce((a,t)=>a+(t.liquidity || 0),0);
-  const usingLiveMarkets = hasLiveMarketResponse || indexerAvailability.disabled;
+  const usingLiveMarkets = hasLiveMarketResponse || indexerAvailability.liveChain;
 
   return (
     <div className="ms-page ms-markets">

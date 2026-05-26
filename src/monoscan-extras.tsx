@@ -854,19 +854,23 @@ const StatsPage = ({ go }: any) => {
       <section className="stats-counters">
         <StatCounter
           label="Transactions · all-time"
-          value={indexerAvailability.disabled ? "—" : _abbr(t.txTotal)}
-          sub={indexerAvailability.disabled
-            ? "all-time tx aggregate requires an indexed peer"
+          value={indexerAvailability.liveChain ? "—" : _abbr(t.txTotal)}
+          sub={indexerAvailability.liveChain
+            ? indexerAvailability.disabled
+              ? indexerAvailability.reason ?? "indexer disabled on this node"
+              : "no all-time tx aggregate endpoint yet"
             : `${_fmt(txLast24)} in the last 24h`}
-          trend={indexerAvailability.disabled ? undefined : S.series.tx30d}
+          trend={indexerAvailability.liveChain ? undefined : S.series.tx30d}
           tone="gold"
           onClick={()=>{}}
         />
         <StatCounter
           label="Active wallets"
-          value={indexerAvailability.disabled ? "—" : _fmt(t.walletsTotal)}
-          sub={indexerAvailability.disabled
-            ? "wallet aggregate requires an indexed peer"
+          value={indexerAvailability.liveChain ? "—" : _fmt(t.walletsTotal)}
+          sub={indexerAvailability.liveChain
+            ? indexerAvailability.disabled
+              ? indexerAvailability.reason ?? "indexer disabled on this node"
+              : "no wallet aggregate endpoint yet"
             : `${_fmt(t.walletsActive24h)} active in 24h`}
           tone="neutral"
           onClick={()=>go("#/wallets")}
@@ -894,9 +898,11 @@ const StatsPage = ({ go }: any) => {
         />
         <StatCounter
           label="Smart contracts deployed"
-          value={indexerAvailability.disabled ? "—" : _fmt(t.contracts)}
-          sub={indexerAvailability.disabled
-            ? "deploy counter requires an indexed peer"
+          value={indexerAvailability.liveChain ? "—" : _fmt(t.contracts)}
+          sub={indexerAvailability.liveChain
+            ? indexerAvailability.disabled
+              ? indexerAvailability.reason ?? "indexer disabled on this node"
+              : "deploy counter endpoint not yet exposed"
             : `${t.tokensListed} listed tokens`}
           tone="neutral"
         />
@@ -934,9 +940,11 @@ const StatsPage = ({ go }: any) => {
         />
         <StatCounter
           label="Private vs public txs"
-          value={indexerAvailability.disabled ? "—" : `${((t.privateTxs/t.txTotal)*100).toFixed(1)}%`}
-          sub={indexerAvailability.disabled
-            ? "privacy split requires an indexed peer"
+          value={indexerAvailability.liveChain ? "—" : `${((t.privateTxs/t.txTotal)*100).toFixed(1)}%`}
+          sub={indexerAvailability.liveChain
+            ? indexerAvailability.disabled
+              ? indexerAvailability.reason ?? "indexer disabled on this node"
+              : "no privacy-split endpoint yet"
             : `${_abbr(t.privateTxs)} private · ${_abbr(t.publicTxs)} public`}
           tone="neutral"
         />
@@ -952,11 +960,13 @@ const StatsPage = ({ go }: any) => {
       <section>
         <h3 className="ov-section-title">Economy · issuance, rewards, slashing</h3>
         <p className="ov-section-desc">MONO minted as staking rewards, burned via base fees, slashed for operator misbehavior, and still waiting to be claimed.</p>
-        {indexerAvailability.disabled ? (
+        {indexerAvailability.liveChain ? (
           <div className="ms-card" style={{padding:"18px 20px"}}>
             <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-              {indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.
-              Economy aggregates (net inflation, accrued rewards, all-time slashing) are computed by the indexer; the cards will populate once an indexed peer is reachable.
+              {indexerAvailability.disabled
+                ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
+                : "No economy aggregate (net inflation, accrued rewards, all-time slashing) endpoint is exposed by the chain yet."}{" "}
+              Cards will populate once the endpoint lands.
             </div>
           </div>
         ) : (
@@ -997,10 +1007,12 @@ const StatsPage = ({ go }: any) => {
         <div>
           <h3 className="ov-section-title">Activity · last 30 days</h3>
           <Card title="">
-            {indexerAvailability.disabled ? (
+            {indexerAvailability.liveChain ? (
               <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
-                {indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.
-                30-day activity rollups (transactions, rewards paid, slashing, new contracts, new wallets) come from the indexer.
+                {indexerAvailability.disabled
+                  ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
+                  : "No 30-day rollup endpoint is exposed by the chain yet."}{" "}
+                Rollups (transactions, rewards paid, slashing, new contracts, new wallets) appear here when published.
               </div>
             ) : (
             <table className="ms-table stats-table">
@@ -1054,14 +1066,14 @@ const StatsPage = ({ go }: any) => {
               />
               <HealthRow
                 label="Clusters in jail cooldown"
-                value={indexerAvailability.disabled
+                value={indexerAvailability.liveChain
                   ? "—"
                   : `${MONOSCAN_DATA.clusters.filter(c=>c.inactiveReason==="jailed").length}`}
-                tone={indexerAvailability.disabled ? "neutral" : "warn"}
+                tone={indexerAvailability.liveChain ? "neutral" : "warn"}
               />
               <HealthRow
                 label="Clusters recruiting ops"
-                value={indexerAvailability.disabled
+                value={indexerAvailability.liveChain
                   ? "—"
                   : `${MONOSCAN_DATA.clusters.filter(c=>c.recruiting && c.active).length}`}
                 tone="neutral"
@@ -1070,36 +1082,36 @@ const StatsPage = ({ go }: any) => {
                 label="Proposer latency (p95)"
                 value={proposerLatency
                   ? formatMetricValue(proposerLatency)
-                  : indexerAvailability.disabled ? "—" : "342ms"}
+                  : indexerAvailability.liveChain ? "—" : "342ms"}
                 tone="ok"
               />
               <HealthRow
                 label="Attestation rate"
                 value={attestationRate
                   ? formatMetricValue(attestationRate)
-                  : indexerAvailability.disabled ? "—" : "97.8%"}
+                  : indexerAvailability.liveChain ? "—" : "97.8%"}
                 tone="ok"
               />
               <HealthRow
                 label="Last slashing event"
-                value={indexerAvailability.disabled ? "—" : "3 rounds ago"}
-                tone={indexerAvailability.disabled ? "neutral" : "warn"}
+                value={indexerAvailability.liveChain ? "—" : "3 rounds ago"}
+                tone={indexerAvailability.liveChain ? "neutral" : "warn"}
               />
               <HealthRow label="Last halted (emergency)" value="never" tone="ok"/>
               <HealthRow
                 label="Private tx DAC coverage"
-                value={indexerAvailability.disabled ? "—" : "91.4%"}
-                tone={indexerAvailability.disabled ? "neutral" : "ok"}
+                value={indexerAvailability.liveChain ? "—" : "91.4%"}
+                tone={indexerAvailability.liveChain ? "neutral" : "ok"}
               />
               <HealthRow
                 label="Bridge queue · CCIP"
-                value={indexerAvailability.disabled ? "—" : "41 pending"}
+                value={indexerAvailability.liveChain ? "—" : "41 pending"}
                 tone="neutral"
               />
               <HealthRow
                 label="Bridge fees · LINK"
-                value={indexerAvailability.disabled ? "—" : "ready"}
-                tone={indexerAvailability.disabled ? "neutral" : "ok"}
+                value={indexerAvailability.liveChain ? "—" : "ready"}
+                tone={indexerAvailability.liveChain ? "neutral" : "ok"}
               />
             </div>
           </Card>
@@ -1151,10 +1163,20 @@ const WalletsPage = ({ go }: any) => {
   const [hover, setHover] = useStateX(null);
   const topSum = wallets.slice(0, 30).reduce((a,w)=>a+w.bal, 0);
   const usingLiveRichList = liveHolders.length > 0;
-  // When the node confirms its indexer is disabled, the rich list will never
-  // resolve. Switch the page into an explanatory empty state instead of
-  // silently rendering the 50-row demo fixture.
-  const richListUnavailable = indexerAvailability.disabled;
+  // Once chainStats has responded, the explorer is connected to a live node
+  // and the rich list endpoint speaks for itself. An indexer-disabled signal
+  // becomes "endpoint not exposed"; an empty array becomes "no holders yet".
+  // Either way: prefer the live answer over the 50-row demo fixture.
+  const richListResolved = richList.data !== null && richList.data !== undefined;
+  const richListUnavailable = indexerAvailability.disabled
+    || (indexerAvailability.liveChain && (richListResolved || !usingLiveRichList));
+  const emptyReason = indexerAvailability.disabled
+    ? indexerAvailability.reason ?? "Indexer is unavailable on the connected node"
+    : richListResolved && !usingLiveRichList
+      ? `Live rich list is empty — the chain reports ${richList.data?.holders?.length ?? 0} holders for the LYTH token id`
+      : indexerAvailability.liveChain
+        ? "Rich list endpoint did not respond yet"
+        : indexerAvailability.reason ?? "Indexer is unavailable";
 
   return (
     <div className="ms-page ms-wallets">
@@ -1169,13 +1191,13 @@ const WalletsPage = ({ go }: any) => {
           <div>{usingLiveRichList
             ? `${liveHolders.length} live holders`
             : richListUnavailable
-              ? "rich list unavailable"
+              ? "rich list empty"
               : `${_fmt(NETWORK_STATS.totals.walletsTotal)} total wallets`}</div>
           <div style={{color:"var(--fg-400)"}}>
             {usingLiveRichList
               ? `token ${_short(richList.data?.tokenId, 12)}`
               : richListUnavailable
-                ? (indexerAvailability.reason ?? "indexer disabled")
+                ? `token ${_short(richList.data?.tokenId ?? getLythTokenId(), 12)}`
                 : `top 30 hold ${_abbr(topSum)} LYTH`}
           </div>
         </div>
@@ -1186,8 +1208,7 @@ const WalletsPage = ({ go }: any) => {
         <Card title="Distribution · top 30 vs. the long tail">
           {richListUnavailable ? (
             <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
-              {indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.
-              Holder distribution is computed by the indexer; the chart will populate once an indexed peer is reachable.
+              {emptyReason}. Holder distribution will populate once the rich list returns rows.
             </div>
           ) : (
           <div style={{padding:"10px 4px 4px"}}>
@@ -1220,8 +1241,7 @@ const WalletsPage = ({ go }: any) => {
                 <tr>
                   <td colSpan={5}>
                     <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
-                      {indexerAvailability.reason ?? "Indexer is disabled on the connected node"}.
-                      Rich list will populate once an indexed peer is reachable.
+                      {emptyReason}. Rows will appear here as soon as the chain has indexed holders.
                     </div>
                   </td>
                 </tr>
@@ -1426,7 +1446,11 @@ const WalletPage = ({ addr, go }: any) => {
       <section className="wd-hero">
         <div className="wd-hero__meta">
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em"}}>
-            WALLET{fallbackWallet ? ` · #${w.rank} OF ${WALLETS.length}` : indexerAvailability.disabled ? " · live · rank requires indexer" : " · live"}
+            WALLET{fallbackWallet
+              ? ` · #${w.rank} OF ${WALLETS.length}`
+              : indexerAvailability.liveChain
+                ? " · live · rank not yet exposed"
+                : " · live"}
           </div>
           <h1 className="wd-hero__title">{liveLabel?.displayName || w.tag || "Unlabeled wallet"}</h1>
           <div className="mono wd-hero__addr">{w.addr}</div>
@@ -1434,8 +1458,8 @@ const WalletPage = ({ addr, go }: any) => {
             <span>
               {fallbackWallet
                 ? `First seen · ${w.firstSeenAgo}`
-                : indexerAvailability.disabled
-                  ? "First seen · indexer required"
+                : indexerAvailability.liveChain
+                  ? "First seen · not yet exposed"
                   : `First seen · ${w.firstSeenAgo}`}
             </span>
             <span className="sep"/>
@@ -1456,8 +1480,8 @@ const WalletPage = ({ addr, go }: any) => {
                 ? "live RPC balance"
                 : fallbackWallet
                   ? `${w.pct.toFixed(3)}% of supply`
-                  : indexerAvailability.disabled
-                    ? "% of supply requires indexer"
+                  : indexerAvailability.liveChain
+                    ? "% of supply not yet exposed"
                     : "—"}
             </div>
           </div>
@@ -1695,11 +1719,13 @@ const WalletPage = ({ addr, go }: any) => {
       {/* Flow diagram */}
       <section>
         <h3 className="ov-section-title">30-day flow</h3>
-        {indexerAvailability.disabled && !fallbackWallet ? (
+        {indexerAvailability.liveChain && !fallbackWallet && !flowTotals ? (
           <div className="ms-card" style={{padding:"16px 18px"}}>
             <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-              {indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.
-              30-day inflow/outflow, staking activity, and rewards-earned aggregates require an indexed peer.
+              {indexerAvailability.disabled
+                ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
+                : "No 30-day flow aggregate for this address yet."}{" "}
+              Inflow/outflow, staking activity, and rewards-earned cards will populate once the indexer reports rows.
             </div>
           </div>
         ) : (
