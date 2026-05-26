@@ -785,6 +785,10 @@ const StatsPage = ({ go }: any) => {
   const liveMempoolPending = live.data?.mempoolPending ?? null;
   const liveLatestBlock = chainStats.data?.latestHeight ?? live.data?.blockNumber ?? null;
   const liveChainId = chainStats.data?.chainId ?? null;
+  const liveGenesisHash = chainStats.data?.genesisHash ?? null;
+  const liveGenesisShort = liveGenesisHash
+    ? `${liveGenesisHash.slice(0, 10)}…${liveGenesisHash.slice(-6)}`
+    : null;
   const liveClusterTotal = chainStats.data?.clusters.total ?? liveClusters;
   const livePeerTotal = chainStats.data?.peerCount ?? livePeers;
   const headRound = liveRound ?? round;
@@ -818,7 +822,10 @@ const StatsPage = ({ go }: any) => {
       <section className="stats-hero">
         <div className="stats-hero__left">
           <div className="mono stats-hero__tag">
-            <span className="ov-livedot"/> NETWORK · GENESIS {S.network.genesisDate} · {S.network.chainAge}
+            <span className="ov-livedot"/> NETWORK ·{" "}
+            {liveGenesisShort
+              ? `GENESIS ${liveGenesisShort} · ${liveLatestBlock !== null ? _fmtI(liveLatestBlock) : "?"} rounds`
+              : `GENESIS ${S.network.genesisDate} · ${S.network.chainAge}`}
           </div>
           <h1 className="ov-hero__title">
             Monolythium<br/>
@@ -898,7 +905,12 @@ const StatsPage = ({ go }: any) => {
           tone="neutral"
         />
         <StatCounter label="Private vs public txs" value={`${((t.privateTxs/t.txTotal)*100).toFixed(1)}%`} sub={`${_abbr(t.privateTxs)} private · ${_abbr(t.publicTxs)} public`} tone="neutral"/>
-        <StatCounter label="Chain age" value={S.network.chainAge} sub={`genesis ${S.network.genesisDate}`} tone="neutral"/>
+        <StatCounter
+          label="Chain age"
+          value={liveLatestBlock !== null ? `${_fmtI(liveLatestBlock)} rounds` : S.network.chainAge}
+          sub={liveGenesisShort ? `genesis ${liveGenesisShort}` : `genesis ${S.network.genesisDate}`}
+          tone="neutral"
+        />
       </section>
 
       {/* Economy row */}
