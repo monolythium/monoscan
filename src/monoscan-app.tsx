@@ -32,6 +32,7 @@ import {
   useDelegationCap,
   useEntityRatchet,
   useMetricsRange,
+  useIndexerAvailability,
   useOperatorCapabilities,
 } from "./data/hooks";
 import { AskPage } from "./nl/AskPage";
@@ -260,6 +261,7 @@ const Landing = ({ go }: any) => {
   const liveBlocks = useLatestBlocks(8);
   const chainStats = useChainStats();
   const liveClobMarkets = useClobMarkets(25);
+  const indexerAvailability = useIndexerAvailability();
   const liveClusters = useClusterSet();
   const liveMetrics = useMetricsRange(LANDING_METRIC_SELECTORS);
   const operatorCapabilities = useOperatorCapabilities();
@@ -490,7 +492,14 @@ const Landing = ({ go }: any) => {
       )}
 
       {/* ---------- WHAT'S MOVING ---------- */}
-      {hasLiveMarketResponse && liveMarketCount === 0 ? (
+      {indexerAvailability.disabled ? (
+        <section className="ms-card" style={{padding:"18px 20px"}}>
+          <div className="cap" style={{color:"var(--gold)",marginBottom:8}}>Markets</div>
+          <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
+            {indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}. Demo gainers, losers, and most-traded rows are hidden until an indexed peer is reachable.
+          </div>
+        </section>
+      ) : hasLiveMarketResponse && liveMarketCount === 0 ? (
         <section className="ms-card" style={{padding:"18px 20px"}}>
           <div className="cap" style={{color:"var(--gold)",marginBottom:8}}>Markets</div>
           <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
