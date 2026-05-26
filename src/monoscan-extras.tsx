@@ -767,15 +767,11 @@ const StatsPage = ({ go }: any) => {
   const precompiles = useActivePrecompiles();
   const peerSummary = usePeerSummary();
   const metrics = useMetricsRange(LIVE_METRIC_SELECTORS);
-  const [round, setRound] = useStateX(t.vertices);
-  const [txLast24, setTxLast24] = useStateX(t.txLast24);
-  useEffectX(() => {
-    const id = setInterval(() => {
-      setRound(r => r + 1);
-      setTxLast24(n => n + Math.floor(Math.random() * 3));
-    }, 400);
-    return () => clearInterval(id);
-  }, []);
+  // Static fallback values when the live network-status query has no data.
+  // The live hook polls on its own cadence; do not drive UI numbers from
+  // setInterval + Math.random.
+  const round = t.vertices;
+  const txLast24 = t.txLast24;
 
   const liveRound = live.data?.round ?? null;
   const liveClusters = live.data?.clusterCount ?? null;
