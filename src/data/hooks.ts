@@ -3461,6 +3461,34 @@ export function useBlockByHash(hash: string | undefined) {
  * Fetch a single block header by height. `"latest"` always re-fetches with
  * the head poll to avoid a stale chain tip.
  */
+/**
+ * Page transactions for a specific block via the indexer API. Returns the
+ * full envelope so callers can read `totalTransactions` for pagination and
+ * `block.timestamp` for row age display.
+ */
+export function useBlockTransactions(
+  block: number | "latest" | undefined,
+  page = 0,
+  limit = 25,
+) {
+  const rowLimit = Math.max(1, Math.min(Math.trunc(limit), 100));
+  const safePage = Math.max(0, Math.trunc(page));
+  return useQuery<ApiBlockTransactionsData | null>({
+    queryKey: QK.blockTransactions(block ?? "latest", safePage, rowLimit),
+    enabled: block !== undefined && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await getApiClient()
+          .blockTransactions(block as number | "latest", safePage, rowLimit)
+          .then((response) => response.data);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: block === "latest" ? 0 : 30_000,
+  });
+}
+
 export function useBlockByNumber(n: number | "latest" | undefined) {
   return useQuery<BlockHeader | null>({
     queryKey: QK.blockByNumber(n ?? "latest"),

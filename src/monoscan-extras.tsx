@@ -21,6 +21,7 @@ import {
   useBlsRoundCertificate,
   useBlockByHash,
   useBlockByNumber,
+  useBlockTransactions,
   useBridgeRouteDisclosures,
   useCapabilities,
   useChainStats,
@@ -2596,6 +2597,7 @@ const RoundPage = ({ round, go }: any) => {
   const r = parseInt(round, 10);
   const roundNumber = Number.isFinite(r) ? r : undefined;
   const liveBlock = useBlockByNumber(roundNumber);
+  const blockTransactions = useBlockTransactions(roundNumber, 0, 25);
   const roundCert = useBlsRoundCertificate(roundNumber);
   const dagParents = useDagParents(roundNumber);
   const verticesAtRound = useVerticesAtRound(roundNumber);
@@ -2722,6 +2724,62 @@ const RoundPage = ({ round, go }: any) => {
               ) : (
                 <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
                   {dagParents.isLoading ? "checking DAG parents…" : "No retained parent vertices reported for this round."}
+                </p>
+              )}
+            </div>
+          )}
+          {(blockTransactions.data || blockTransactions.isLoading || blockTransactions.isFetched) && (
+            <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
+              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>
+                Transactions in this block · /api/v1/blocks/{roundNumber}/transactions
+              </div>
+              {blockTransactions.data && blockTransactions.data.transactions.length > 0 ? (
+                <>
+                  <table className="ms-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Hash</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th style={{textAlign:"right"}}>Value</th>
+                        <th style={{textAlign:"right"}}>Execution limit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {blockTransactions.data.transactions.map((tx:any) => (
+                        <tr
+                          key={tx.txHash}
+                          onClick={()=>go(`#/tx/${encodeURIComponent(tx.txHash)}`)}
+                          style={{cursor:"pointer"}}
+                        >
+                          <td className="mono num" style={{color:"var(--fg-400)"}}>{tx.txIndex}</td>
+                          <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(tx.txHash, 14)}</td>
+                          <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(tx.from, 13)}</td>
+                          <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
+                            {tx.to ? _short(tx.to, 13) : "contract creation"}
+                          </td>
+                          <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)"}}>
+                            {_fmtRawToken(tx.valueLythoshi ?? "0")} LYTH
+                          </td>
+                          <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>
+                            {_fmt(Number(tx.executionUnitLimit ?? 0))}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {blockTransactions.data.totalTransactions > blockTransactions.data.transactions.length && (
+                    <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:"8px 0 0"}}>
+                      Showing {blockTransactions.data.transactions.length} of {blockTransactions.data.totalTransactions} transactions.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+                  {blockTransactions.isLoading
+                    ? "checking block transactions…"
+                    : "No transactions reported for this block."}
                 </p>
               )}
             </div>
