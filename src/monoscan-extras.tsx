@@ -770,6 +770,7 @@ const StatsPage = ({ go }: any) => {
   const precompiles = useActivePrecompiles();
   const peerSummary = usePeerSummary();
   const metrics = useMetricsRange(LIVE_METRIC_SELECTORS);
+  const indexerAvailability = useIndexerAvailability();
   // Static fallback values when the live network-status query has no data.
   // The live hook polls on its own cadence; do not drive UI numbers from
   // setInterval + Math.random.
@@ -850,8 +851,26 @@ const StatsPage = ({ go }: any) => {
 
       {/* Primary counters grid */}
       <section className="stats-counters">
-        <StatCounter label="Transactions · all-time" value={_abbr(t.txTotal)} sub={`${_fmt(txLast24)} in the last 24h`} trend={S.series.tx30d} tone="gold" onClick={()=>{}}/>
-        <StatCounter label="Active wallets" value={_fmt(t.walletsTotal)} sub={`${_fmt(t.walletsActive24h)} active in 24h`} tone="neutral" onClick={()=>go("#/wallets")} clickable/>
+        <StatCounter
+          label="Transactions · all-time"
+          value={indexerAvailability.disabled ? "—" : _abbr(t.txTotal)}
+          sub={indexerAvailability.disabled
+            ? "all-time tx aggregate requires an indexed peer"
+            : `${_fmt(txLast24)} in the last 24h`}
+          trend={indexerAvailability.disabled ? undefined : S.series.tx30d}
+          tone="gold"
+          onClick={()=>{}}
+        />
+        <StatCounter
+          label="Active wallets"
+          value={indexerAvailability.disabled ? "—" : _fmt(t.walletsTotal)}
+          sub={indexerAvailability.disabled
+            ? "wallet aggregate requires an indexed peer"
+            : `${_fmt(t.walletsActive24h)} active in 24h`}
+          tone="neutral"
+          onClick={()=>go("#/wallets")}
+          clickable
+        />
         <StatCounter
           label="Clusters"
           value={liveClusterTotal !== null ? `${liveClusterTotal}` : `${t.clustersActive}/${t.clustersTotal}`}
@@ -905,7 +924,14 @@ const StatsPage = ({ go }: any) => {
           sub={liveMempoolPending !== null ? `${_fmtI(liveMempoolPending)} pending · ${chainStats.data ? "chain stats" : "mempool RPC"}` : "ready queue"}
           tone="neutral"
         />
-        <StatCounter label="Private vs public txs" value={`${((t.privateTxs/t.txTotal)*100).toFixed(1)}%`} sub={`${_abbr(t.privateTxs)} private · ${_abbr(t.publicTxs)} public`} tone="neutral"/>
+        <StatCounter
+          label="Private vs public txs"
+          value={indexerAvailability.disabled ? "—" : `${((t.privateTxs/t.txTotal)*100).toFixed(1)}%`}
+          sub={indexerAvailability.disabled
+            ? "privacy split requires an indexed peer"
+            : `${_abbr(t.privateTxs)} private · ${_abbr(t.publicTxs)} public`}
+          tone="neutral"
+        />
         <StatCounter
           label="Chain age"
           value={liveLatestBlock !== null ? `${_fmtI(liveLatestBlock)} rounds` : S.network.chainAge}
