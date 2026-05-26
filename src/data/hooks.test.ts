@@ -3969,14 +3969,30 @@ describe("deriveIndexerAvailability", () => {
 
   it("stays neutral when neither signal has resolved yet", () => {
     expect(deriveIndexerAvailability({ capabilities: null, stats: null })).toEqual({
+      liveChain: false,
       available: false,
       disabled: false,
       reason: null,
     });
     expect(deriveIndexerAvailability({ capabilities: undefined, stats: undefined })).toEqual({
+      liveChain: false,
       available: false,
       disabled: false,
       reason: null,
     });
+  });
+
+  it("sets liveChain true as soon as chainStats has responded", () => {
+    const live = deriveIndexerAvailability({
+      capabilities: null,
+      stats: { ...baseStats, indexer: { latestHeight: 100n } } as any,
+    });
+    expect(live.liveChain).toBe(true);
+    const disabledLive = deriveIndexerAvailability({
+      capabilities: { schemaVersion: 2, surfaces: { indexer_history: { status: "disabled" } } } as any,
+      stats: { ...baseStats } as any,
+    });
+    expect(disabledLive.liveChain).toBe(true);
+    expect(disabledLive.disabled).toBe(true);
   });
 });

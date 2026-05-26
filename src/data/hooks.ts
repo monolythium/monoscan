@@ -4338,6 +4338,8 @@ export function useOperatorCapabilities() {
 
 /** Indexer availability digest for surfaces that depend on indexed history. */
 export interface IndexerAvailability {
+  /** True when chainStats has responded — the explorer is talking to a real node. */
+  liveChain: boolean;
   /** True when the node's indexer is reporting active. */
   available: boolean;
   /** True only when we have a positive "disabled" signal from the node. */
@@ -4369,25 +4371,28 @@ export function deriveIndexerAvailability(input: {
   statsLoading?: boolean;
 }): IndexerAvailability {
   const surfaceStatus = input.capabilities?.surfaces?.indexer_history?.status ?? null;
+  const liveChain = Boolean(input.stats);
 
   if (surfaceStatus === "disabled") {
     return {
+      liveChain,
       available: false,
       disabled: true,
       reason: "Indexer is disabled on the connected node",
     };
   }
   if (surfaceStatus === "available") {
-    return { available: true, disabled: false, reason: null };
+    return { liveChain, available: true, disabled: false, reason: null };
   }
   if (input.stats && input.stats.indexer === null) {
     return {
+      liveChain,
       available: false,
       disabled: true,
       reason: "Connected node is running without an indexer",
     };
   }
-  return { available: false, disabled: false, reason: null };
+  return { liveChain, available: false, disabled: false, reason: null };
 }
 
 /**

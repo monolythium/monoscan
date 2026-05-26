@@ -497,18 +497,16 @@ const Landing = ({ go }: any) => {
       )}
 
       {/* ---------- WHAT'S MOVING ---------- */}
-      {indexerAvailability.disabled ? (
+      {indexerAvailability.liveChain ? (
         <section className="ms-card" style={{padding:"18px 20px"}}>
           <div className="cap" style={{color:"var(--gold)",marginBottom:8}}>Markets</div>
           <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-            {indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}. Demo gainers, losers, and most-traded rows are hidden until an indexed peer is reachable.
-          </div>
-        </section>
-      ) : hasLiveMarketResponse && liveMarketCount === 0 ? (
-        <section className="ms-card" style={{padding:"18px 20px"}}>
-          <div className="cap" style={{color:"var(--gold)",marginBottom:8}}>Markets</div>
-          <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-            The live CLOB index responded, but it has no indexed markets yet. Demo gainers, losers, and most-traded rows are hidden while the node is live.
+            {indexerAvailability.disabled
+              ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
+              : hasLiveMarketResponse
+                ? `Live CLOB index responded — ${liveMarketCount} indexed market${liveMarketCount === 1 ? "" : "s"}.`
+                : "Awaiting live CLOB index response."}{" "}
+            Demo gainers, losers, and most-traded rows are hidden while the explorer is connected to a live chain.
           </div>
         </section>
       ) : (
@@ -1443,13 +1441,13 @@ const ClustersPage = ({go}: any) => {
       )}
 
       {/* ---------- LIVE CLUSTER NOTICE ---------- */}
-      {haveLiveDirectory && liveDescriptorCount !== null && liveDescriptorCount !== active.length && (
+      {haveLiveDirectory && liveDescriptorCount !== null && (
         <section className="ms-card" style={{padding:"14px 18px"}}>
           <div className="cap" style={{color:"var(--gold)",marginBottom:6}}>Live cluster directory</div>
           <div className="mono" style={{color:"var(--fg-300)",fontSize:12.5,lineHeight:1.55}}>
             Live RPC reports {liveDescriptorCount} cluster{liveDescriptorCount === 1 ? "" : "s"}
             {liveQuorumLabel ? ` · ${liveQuorumLabel}` : ""}.
-            The table below preserves the fixture for design reference; only the live cluster ids will resolve when clicked.
+            TVS/APY/reward columns degrade to "—" because no reward-history aggregate is exposed yet.
           </div>
         </section>
       )}
@@ -1501,7 +1499,28 @@ const ClustersPage = ({go}: any) => {
                   <th style={{textAlign:"right"}}>Vertex incl.</th>
                 </tr></thead>
                 <tbody>
-                  {activeFiltered.map(cl=>(
+                  {haveLiveDirectory ? (liveDescriptors ?? []).filter(c => c.active).map((cl)=>{
+                    const slotLabel = `C-${String(cl.id + 1).padStart(3, "0")}`;
+                    return (
+                      <tr key={cl.id} onClick={()=>go(`#/cluster/${cl.id + 1}`)}>
+                        <td className="mono" style={{color:"var(--gold)",fontWeight:600}}>#{cl.id + 1}</td>
+                        <td>
+                          <div style={{fontWeight:500,fontSize:13,color:"var(--fg-100)"}}>{slotLabel}</div>
+                          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1,letterSpacing:"0.02em"}}>cluster id {cl.id} · {cl.threshold}-of-{cl.size} BFT</div>
+                        </td>
+                        <td>
+                          <span className={`pill ${cl.aggregateHealth === "ok" ? "ok" : "warn"}`} style={{fontSize:10,padding:"2px 7px"}}>
+                            {cl.aggregateHealth ?? "unknown"}
+                          </span>
+                        </td>
+                        <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)"}}>—</td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                      </tr>
+                    );
+                  }) : activeFiltered.map(cl=>(
                     <tr key={cl.slot} onClick={()=>go(`#/cluster/${cl.slot}`)}>
                       <td className="mono" style={{color:cl.rank<=10?"var(--gold)":"var(--fg-400)",fontWeight:cl.rank<=10?600:400}}>#{cl.rank}</td>
                       <td>
@@ -1555,7 +1574,24 @@ const ClustersPage = ({go}: any) => {
                   <th style={{textAlign:"right"}}>Cooldown</th>
                 </tr></thead>
                 <tbody>
-                  {inactiveFiltered.map(cl=>{
+                  {haveLiveDirectory ? (liveDescriptors ?? []).filter(c => !c.active).map((cl)=>(
+                    <tr key={cl.id} onClick={()=>go(`#/cluster/${cl.id + 1}`)} className="cl-waiting-row">
+                      <td className="mono" style={{color:"var(--fg-500)"}}>#{cl.id + 1}</td>
+                      <td>
+                        <div style={{fontWeight:500,fontSize:13,color:"var(--fg-200)"}}>C-{String(cl.id + 1).padStart(3, "0")}</div>
+                        <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1,letterSpacing:"0.02em"}}>
+                          cluster id {cl.id} · {cl.threshold}-of-{cl.size} BFT
+                        </div>
+                      </td>
+                      <td>
+                        <span className="pill warn" style={{fontSize:10,padding:"2px 7px"}}>{cl.aggregateHealth ?? "inactive"}</span>
+                      </td>
+                      <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)"}}>—</td>
+                      <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                      <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                      <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                    </tr>
+                  )) : inactiveFiltered.map(cl=>{
                     const isJailed = cl.inactiveReason==="jailed";
                     const cdPct = isJailed ? ((100 - cl.cooldownRoundsLeft) / 100) : 0;
                     return (
