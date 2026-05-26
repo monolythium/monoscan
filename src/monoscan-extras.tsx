@@ -474,6 +474,8 @@ function bridgeRouteIssueText(row: BridgeTrustDisclosureRow): string | null {
 
 function bridgeRouteBindingText(row: BridgeTrustDisclosureRow): string | null {
   const parts: string[] = [];
+  if (row.route.protocol) parts.push(`protocol ${row.route.protocol}`);
+  if (row.route.feeToken) parts.push(`fee ${row.route.feeToken}`);
   if (row.route.bridgeId) parts.push(`bridgeId ${_short(row.route.bridgeId, 12)}`);
   if (row.route.wrappedAsset) parts.push(`wrappedAsset ${_short(row.route.wrappedAsset, 12)}`);
   return parts.length > 0 ? parts.join(" · ") : null;
@@ -564,7 +566,7 @@ const BridgeTrustDisclosuresCard = ({
               {preferred.route.bridge || "Unnamed bridge"} · route {preferred.route.routeId || "missing"}
             </div>
             <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.6}}>
-              {preferred.route.sourceChain || "unknown"} → {preferred.route.destinationChain || "unknown"} · {preferred.route.asset || "asset missing"}
+              {preferred.route.sourceChain || "unknown"} → {preferred.route.destinationChain || "unknown"} · {preferred.route.asset || "asset missing"} · fee {preferred.route.feeToken || "missing"}
             </div>
             {preferredBinding && (
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.6}}>
@@ -645,7 +647,7 @@ const BridgeTrustDisclosuresCard = ({
                     )}
                   </div>
                   <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>
-                    {row.route.sourceChain || "unknown"} → {row.route.destinationChain || "unknown"} · {row.route.asset || "asset missing"}
+                    {row.route.sourceChain || "unknown"} → {row.route.destinationChain || "unknown"} · {row.route.asset || "asset missing"} · fee {row.route.feeToken || "missing"}
                   </div>
                   {bindingText && (
                     <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>{bindingText}</div>
@@ -804,11 +806,11 @@ const StatsPage = ({ go }: any) => {
     ? `${Number(sample.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}${sample.unit ? ` ${sample.unit}` : ""}`
     : "—";
   const executionUnitPrice = executionUnitPriceValueLabel(feeStats.data?.gasPrice);
-  const feePriceSub = feeStats.data?.gasPriceSource === "eth_feeHistory"
+  const feePriceSub = feeStats.data?.gasPriceSource === "lyth_executionUnitPrice"
+    ? "native execution-unit quote"
+    : feeStats.data?.gasPriceSource === "eth_feeHistory"
     ? "derived from fee history"
-    : feeStats.data?.gasPriceSource === "eth_gasPrice"
-      ? "live fee endpoint"
-      : "live fee endpoint";
+    : "live fee endpoint";
 
   return (
     <div className="ms-page ms-stats">
@@ -3208,11 +3210,11 @@ const ProtocolPage = ({ go }: any) => {
   const availableSurfaceCount = surfaceRows.filter(([, cap]: any) => cap.status === "available").length;
   const upgrade = upgradeStatus.data;
   const executionUnitPrice = executionUnitPriceValueLabel(feeStats.data?.gasPrice);
-  const feePriceSub = feeStats.data?.gasPriceSource === "eth_feeHistory"
+  const feePriceSub = feeStats.data?.gasPriceSource === "lyth_executionUnitPrice"
+    ? "native execution-unit quote"
+    : feeStats.data?.gasPriceSource === "eth_feeHistory"
     ? "derived from fee history"
-    : feeStats.data?.gasPriceSource === "eth_gasPrice"
-      ? "live fee endpoint"
-      : "live fee endpoint";
+    : "live fee endpoint";
   const indexerHeight = network.data?.indexerHeight ?? null;
   const key = encryptionKey.data;
   return (

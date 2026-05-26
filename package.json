@@ -13,7 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@monolythium/core-sdk": "0.2.0",
+    "@monolythium/core-sdk": "https://github.com/monolythium/mono-core-sdk/archive/06760a857adb3643db6613f294de002a63557b04.tar.gz",
     "@noble/hashes": "^2.2.0",
     "@tanstack/react-query": "^5.62.0",
     "@tanstack/react-router": "^1.95.0",
