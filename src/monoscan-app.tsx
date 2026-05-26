@@ -848,7 +848,7 @@ const ClusterPage = ({ slot, go }: any) => {
       <div className="ms-crumb">
         <a href="#/clusters" onClick={()=>go("#/clusters")}>Clusters</a>
         <span>›</span>
-        <b>{cl.name}</b>
+        <b>{showLiveHero ? `C-${String(liveClusterId + 1).padStart(3, "0")}` : cl.name}</b>
       </div>
 
       {/* Ring hero — left: ring + standby tray, right: plain-language health + 4 key stats + stake CTA */}
@@ -878,10 +878,16 @@ const ClusterPage = ({ slot, go }: any) => {
         </div>
         <div className="cl-hero__body">
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
-            <span className="cl-rank-badge">#{cl.rank} of 100</span>
-            <span className="cap">DVT cluster · {totalOperators} operators · {threshold}-of-{totalOperators} BFT · up to 3 standby</span>
+            <span className="cl-rank-badge">
+              {showLiveHero
+                ? `#${liveClusterId + 1}${liveClusters.data?.length ? ` of ${liveClusters.data.length}` : ""}`
+                : `#${cl.rank} of 100`}
+            </span>
+            <span className="cap">DVT cluster · {totalOperators} operators · {threshold}-of-{totalOperators} BFT</span>
           </div>
-          <h1 className="ms-h1" style={{marginTop:4,marginBottom:4}}>{cl.name}</h1>
+          <h1 className="ms-h1" style={{marginTop:4,marginBottom:4}}>
+            {showLiveHero ? `C-${String(liveClusterId + 1).padStart(3, "0")}` : cl.name}
+          </h1>
           <div className="mono" style={{fontSize:11,color:"var(--fg-500)",letterSpacing:"0.03em",marginBottom:8}}>
             C-{String(cl.slot).padStart(3,"0")} · operator-named cluster
           </div>
@@ -961,10 +967,27 @@ const ClusterPage = ({ slot, go }: any) => {
           </div>
 
           <div className="cl-hero__ctas">
-            <button className="ov-cta ov-cta--primary" onClick={()=>openWalletStakeIntent(cl)}>Stake with {cl.name}</button>
-            <button className="ov-cta" onClick={()=>{ navigator.clipboard?.writeText(cl.aggKey); window.__msToast?.("Cluster aggregate key copied"); }}>Copy cluster key</button>
+            <button className="ov-cta ov-cta--primary" onClick={()=>openWalletStakeIntent(cl)}>
+              {showLiveHero ? `Stake with C-${String(liveClusterId + 1).padStart(3, "0")}` : `Stake with ${cl.name}`}
+            </button>
+            <button
+              className="ov-cta"
+              onClick={()=>{
+                const keyToCopy = showLiveHero
+                  ? (liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? cl.aggKey)
+                  : cl.aggKey;
+                if (keyToCopy) {
+                  navigator.clipboard?.writeText(keyToCopy);
+                  window.__msToast?.("Cluster key copied");
+                }
+              }}
+            >
+              Copy cluster key
+            </button>
             <span className="mono" style={{fontSize:10,color:"var(--fg-500)",marginLeft:"auto"}}>
-              {cl.aggKey}
+              {showLiveHero
+                ? (liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? cl.aggKey)
+                : cl.aggKey}
             </span>
           </div>
         </div>
