@@ -211,6 +211,8 @@ export const QK = {
   blockByNumber: (n: number | "latest") => ["mono", "block", "byNumber", n] as const,
   blockByHash: (h: string) => ["mono", "block", "byHash", h] as const,
   blocksLatest: (n: number) => ["mono", "blocks", "latest", n] as const,
+  blockTransactions: (block: number | "latest", page: number, limit: number) =>
+    ["mono", "block", "byNumber", block, "transactions", page, limit] as const,
   txReceipt: (h: string) => ["mono", "tx", h] as const,
   txNativeReceipt: (h: string) => ["mono", "tx", h, "nativeReceipt"] as const,
   txLive: (h: string) => ["mono", "tx", h, "live"] as const,
