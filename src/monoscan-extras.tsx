@@ -2842,6 +2842,7 @@ const SearchPage = ({ q, go }: any) => {
   const liveBlockByHash = useBlockByHash(looksLikeHash ? q : undefined);
   const liveTx = useTxByHashLive(looksLikeHash ? q : undefined);
   const liveSearch = useSearch(q, 12);
+  const liveRichList = useRichList(getLythTokenId(), 30);
   const D: any = MONOSCAN_DATA || {};
   const markets = (MARKETS || []).filter(m =>
     m.sym.toLowerCase().includes(ql) || (m.name||"").toLowerCase().includes(ql)
@@ -2853,9 +2854,26 @@ const SearchPage = ({ q, go }: any) => {
   const operators = (D.topOperators || D.operators || []).filter(o =>
     (o.handle||"").toLowerCase().includes(ql) || (o.addrShort||"").toLowerCase().includes(ql)
   );
-  const wallets = (D.richList || []).filter(w =>
-    (w.addr||"").toLowerCase().includes(ql) || (w.tag||"").toLowerCase().includes(ql)
-  );
+  const liveHolders = liveRichList.data?.holders ?? [];
+  const liveWalletHits = ql
+    ? liveHolders
+        .filter((h: any) => (h.address || "").toLowerCase().includes(ql))
+        .map((h: any) => ({
+          addr: h.address as string,
+          tag: `live rich list · rank #${h.rank}`,
+          source: "live" as const,
+        }))
+    : [];
+  const liveWalletAddrs = new Set(liveWalletHits.map((w) => w.addr.toLowerCase()));
+  const fixtureWalletHits = ql
+    ? WALLETS
+        .filter((w: any) =>
+          ((w.addr||"").toLowerCase().includes(ql) || (w.tag||"").toLowerCase().includes(ql))
+          && !liveWalletAddrs.has((w.addr || "").toLowerCase()),
+        )
+        .map((w: any) => ({ addr: w.addr, tag: w.tag, source: "fixture" as const }))
+    : [];
+  const wallets = [...liveWalletHits, ...fixtureWalletHits];
   const rpcHits = liveSearch.data?.hits ?? [];
   const liveHits = (liveBlockByHash.data ? 1 : 0) + (liveTx.data ? 1 : 0) + (looksLikeAddress ? 1 : 0) + (looksLikeRound ? 1 : 0);
   const total = rpcHits.length + liveHits + markets.length + clusters.length + operators.length + wallets.length;
@@ -2964,10 +2982,11 @@ const SearchPage = ({ q, go }: any) => {
         </div>
       )}/>
 
-      <Section title="Wallets" items={wallets} render={(w)=>(
-        <div key={w.addr} className="ov-moverow" onClick={()=>go(`#/wallet/${encodeURIComponent(w.addr)}`)}>
-          <span className="mono" style={{color:"var(--gold)",minWidth:200,fontSize:11}}>{w.addr}</span>
+      <Section title="Wallets" items={wallets} render={(w: any)=>(
+        <div key={`${w.source}-${w.addr}`} className="ov-moverow" onClick={()=>go(`#/wallet/${encodeURIComponent(w.addr)}`)}>
+          <span className="mono" style={{color:"var(--gold)",minWidth:200,fontSize:11}}>{_short(w.addr, 18)}</span>
           <span style={{flex:1}}>{w.tag || "—"}</span>
+          <span className="mono" style={{color:w.source==="live"?"var(--gold)":"var(--fg-500)",fontSize:10}}>{w.source}</span>
         </div>
       )}/>
     </div>
