@@ -34,6 +34,7 @@ import {
   useClobOhlc,
   useClobTrades,
   useCapabilities,
+  useIndexerAvailability,
   useNativeMarketEvents,
   useNativeMarketOrderBook,
   useNativeMarketState,
@@ -1441,8 +1442,17 @@ const MarketsPage = ({ go }: any) => {
     });
   }, [liveMarkets.data]);
 
+  const indexerAvailability = useIndexerAvailability();
   const hasLiveMarketResponse = liveMarkets.data !== undefined && liveMarkets.data !== null;
-  const marketRows = hasLiveMarketResponse ? liveRows : MARKETS;
+  // When the node confirms the indexer is disabled, do not silently fall
+  // back to the fixture demo rows — the explorer should render an empty
+  // live state and explain why, per the "live empty must not be hidden"
+  // rule. Fixtures still cover the offline / RPC-unreachable path.
+  const marketRows = indexerAvailability.disabled
+    ? []
+    : hasLiveMarketResponse
+      ? liveRows
+      : MARKETS;
 
   const tabs = [
     { k:"all",    label:"All markets" },
@@ -1480,7 +1490,7 @@ const MarketsPage = ({ go }: any) => {
   const totalMCAP = marketRows.reduce((a,t)=>a+(t.mcap || 0),0);
   const totalVOL  = marketRows.reduce((a,t)=>a+(t.vol24h || 0),0);
   const totalLIQ  = marketRows.reduce((a,t)=>a+(t.liquidity || 0),0);
-  const usingLiveMarkets = hasLiveMarketResponse;
+  const usingLiveMarkets = hasLiveMarketResponse || indexerAvailability.disabled;
 
   return (
     <div className="ms-page ms-markets">
@@ -1564,9 +1574,11 @@ const MarketsPage = ({ go }: any) => {
               <tr>
                 <td colSpan={10}>
                   <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
-                    {usingLiveMarkets
-                      ? "The live CLOB index responded, but it has no indexed markets matching this view yet."
-                      : "No fallback markets matched this filter."}
+                    {indexerAvailability.disabled
+                      ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}. Markets list will populate once a peer with an indexer is reachable.`
+                      : usingLiveMarkets
+                        ? "The live CLOB index responded, but it has no indexed markets matching this view yet."
+                        : "No fallback markets matched this filter."}
                   </div>
                 </td>
               </tr>
@@ -1626,9 +1638,11 @@ const MarketsPage = ({ go }: any) => {
       />
 
       <div className="mono" style={{color:"var(--fg-500)",fontSize:11,textAlign:"center",letterSpacing:"0.04em",padding:"6px 0"}}>
-        {usingLiveMarkets
-          ? "Live CLOB index. Empty rows mean the node has no indexed markets yet."
-          : "Listing policy: top 100 markets by rolling 24h volume · re-ranked every 240 rounds · full list on the Monoscan API"}
+        {indexerAvailability.disabled
+          ? `${indexerAvailability.reason ?? "Indexer disabled on this node"}. Markets read through an indexed peer.`
+          : usingLiveMarkets
+            ? "Live CLOB index. Empty rows mean the node has no indexed markets yet."
+            : "Listing policy: top 100 markets by rolling 24h volume · re-ranked every 240 rounds · full list on the Monoscan API"}
       </div>
     </div>
   );

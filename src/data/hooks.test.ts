@@ -38,6 +38,7 @@ import {
   bridgeTrustDisclosuresFromAddressData,
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
+  deriveIndexerAvailability,
   fetchBridgeRouteDisclosures,
   fetchMrcAccount,
   fetchMrcHoldersForTokenBalances,
@@ -3919,5 +3920,63 @@ describe("API execution-unit transformations", () => {
       decodedCalldata: { method: "transfer(address,uint256)" },
       finalityProof: null,
     } as any, null)).toBeNull();
+  });
+});
+
+describe("deriveIndexerAvailability", () => {
+  const baseStats = {
+    chainId: 69420,
+    schemaVersion: 1,
+    latestHeight: 100n,
+    latestBlockHash: "0xdead",
+    latestTimestamp: 0,
+    genesisHash: "0xbeef",
+    peerCount: 1,
+    mempool: { mailboxDepth: 0, pending: 0, ready: 0 },
+    clusters: { total: 1, pageSize: 1 },
+    indexer: null,
+  } as any;
+
+  it("reports disabled when operator capabilities mark indexer_history disabled", () => {
+    const result = deriveIndexerAvailability({
+      capabilities: { schemaVersion: 2, surfaces: { indexer_history: { status: "disabled" } } } as any,
+      stats: { ...baseStats, indexer: { latestHeight: 100n } } as any,
+    });
+    expect(result.disabled).toBe(true);
+    expect(result.available).toBe(false);
+    expect(result.reason).toMatch(/disabled/);
+  });
+
+  it("reports available when operator capabilities mark indexer_history available", () => {
+    const result = deriveIndexerAvailability({
+      capabilities: { schemaVersion: 2, surfaces: { indexer_history: { status: "available" } } } as any,
+      stats: { ...baseStats, indexer: { latestHeight: 100n } } as any,
+    });
+    expect(result.available).toBe(true);
+    expect(result.disabled).toBe(false);
+    expect(result.reason).toBeNull();
+  });
+
+  it("treats a stats response with indexer=null as disabled", () => {
+    const result = deriveIndexerAvailability({
+      capabilities: null,
+      stats: { ...baseStats, indexer: null } as any,
+    });
+    expect(result.disabled).toBe(true);
+    expect(result.available).toBe(false);
+    expect(result.reason).toMatch(/no indexer|without an indexer/i);
+  });
+
+  it("stays neutral when neither signal has resolved yet", () => {
+    expect(deriveIndexerAvailability({ capabilities: null, stats: null })).toEqual({
+      available: false,
+      disabled: false,
+      reason: null,
+    });
+    expect(deriveIndexerAvailability({ capabilities: undefined, stats: undefined })).toEqual({
+      available: false,
+      disabled: false,
+      reason: null,
+    });
   });
 });

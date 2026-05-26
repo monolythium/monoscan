@@ -4248,6 +4248,75 @@ export function useOperatorCapabilities() {
   });
 }
 
+/** Indexer availability digest for surfaces that depend on indexed history. */
+export interface IndexerAvailability {
+  /** True when the node's indexer is reporting active. */
+  available: boolean;
+  /** True only when we have a positive "disabled" signal from the node. */
+  disabled: boolean;
+  /**
+   * Short human reason. Set when disabled or unknown so callers can
+   * surface why a CLOB/markets/activity panel is empty.
+   */
+  reason: string | null;
+}
+
+/**
+ * Pure derivation of indexer availability from the two live signals the
+ * node publishes:
+ *   1. `lyth_operatorCapabilities.surfaces.indexer_history.status` — explicit
+ *      "disabled" / "available" advertisement.
+ *   2. `lyth_chainStats.indexer` — the indexer block reported alongside chain
+ *      stats. A null block means no indexer is wired up on this peer.
+ *
+ * `available=false` + `disabled=true` is a hard confirmation that
+ * markets/address-activity/NFT-listing endpoints will fail; callers should
+ * render an explanatory empty state instead of falling back to the fixture
+ * demo rows.
+ */
+export function deriveIndexerAvailability(input: {
+  capabilities: OperatorCapabilitiesResponse | null | undefined;
+  capabilitiesLoading?: boolean;
+  stats: ChainStatsResponse | null | undefined;
+  statsLoading?: boolean;
+}): IndexerAvailability {
+  const surfaceStatus = input.capabilities?.surfaces?.indexer_history?.status ?? null;
+
+  if (surfaceStatus === "disabled") {
+    return {
+      available: false,
+      disabled: true,
+      reason: "Indexer is disabled on the connected node",
+    };
+  }
+  if (surfaceStatus === "available") {
+    return { available: true, disabled: false, reason: null };
+  }
+  if (input.stats && input.stats.indexer === null) {
+    return {
+      available: false,
+      disabled: true,
+      reason: "Connected node is running without an indexer",
+    };
+  }
+  return { available: false, disabled: false, reason: null };
+}
+
+/**
+ * Hook form of `deriveIndexerAvailability`. Reads operator capabilities and
+ * chain stats from React Query and projects the merged availability digest.
+ */
+export function useIndexerAvailability(): IndexerAvailability {
+  const capabilities = useOperatorCapabilities();
+  const stats = useChainStats();
+  return deriveIndexerAvailability({
+    capabilities: capabilities.data,
+    capabilitiesLoading: capabilities.isLoading,
+    stats: stats.data,
+    statsLoading: stats.isLoading,
+  });
+}
+
 export function useUpgradeStatus(block?: number | bigint | string | null) {
   return useQuery<LythUpgradeStatusResponse | null>({
     queryKey: QK.upgradeStatus(block ?? null),
