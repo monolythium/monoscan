@@ -1229,12 +1229,14 @@ describe("MrvNativeEvidenceCard", () => {
 describe("BridgeTrustDisclosuresCard", () => {
   const validDisclosure = {
     routeId: "eth-usdc-mainnet",
-    bridge: "ThirdParty Light Client",
+    bridge: "Chainlink CCIP",
+    protocol: "chainlink-ccip",
     asset: "USDC",
+    feeToken: "LINK",
     sourceChain: "ethereum",
     destinationChain: "monolythium",
     verifier: {
-      model: "zk-light-client",
+      model: "CCIP DON",
       participantCount: 12,
       threshold: 8,
     },
@@ -1254,8 +1256,10 @@ describe("BridgeTrustDisclosuresCard", () => {
     const html = renderToStaticMarkup(<BridgeTrustDisclosuresCard disclosures={rows}/>);
 
     expect(html).toContain("Bridge trust disclosures");
-    expect(html).toContain("ThirdParty Light Client");
-    expect(html).toContain("zk-light-client");
+    expect(html).toContain("Chainlink CCIP");
+    expect(html).toContain("CCIP DON");
+    expect(html).toContain("protocol chainlink-ccip");
+    expect(html).toContain("fee LINK");
     expect(html).toContain("threshold 8/12");
     expect(html).toContain("250000000000");
     expect(html).toContain("64 blocks");
@@ -1283,6 +1287,8 @@ describe("BridgeTrustDisclosuresCard", () => {
 
     const html = renderToStaticMarkup(<BridgeTrustDisclosuresCard disclosures={rows}/>);
 
+    expect(html).toContain("protocol chainlink-ccip");
+    expect(html).toContain("fee LINK");
     expect(html).toContain("bridgeId bridge-catalogue-1");
     expect(html).toContain("wrappedAsset mrc:wrapped-usdc");
     expect(html).toContain("Discovery only");

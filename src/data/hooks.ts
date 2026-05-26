@@ -324,7 +324,9 @@ export interface BridgeRouteDisclosure {
   routeId: string;
   bridge: string;
   bridgeId?: string | null;
+  protocol?: string | null;
   asset: string;
+  feeToken: string;
   wrappedAsset?: string | null;
   sourceChain: string;
   destinationChain: string;
@@ -366,6 +368,25 @@ type BridgeRoutesRpcClient = {
   lythBridgeRoutes?: (query?: { limit?: number }) => Promise<unknown>;
   call?: <T>(method: string, params?: unknown) => Promise<T>;
 };
+
+type ExecutionUnitPriceResponseLike = {
+  executionUnitPriceLythoshi?: string | number | bigint;
+  execution_unit_price_lythoshi?: string | number | bigint;
+  basePricePerExecutionUnitLythoshi?: string | number | bigint;
+  base_price_per_execution_unit_lythoshi?: string | number | bigint;
+  priorityTipLythoshi?: string | number | bigint;
+  priority_tip_lythoshi?: string | number | bigint;
+  blockNumber?: number | string | bigint | null;
+  block_number?: number | string | bigint | null;
+  source?: string;
+};
+
+type FeeStatsRpcClient = RpcClient & {
+  lythExecutionUnitPrice?: () => Promise<ExecutionUnitPriceResponseLike>;
+  call?: <T>(method: string, params?: unknown) => Promise<T>;
+};
+
+const BRIDGE_ALLOWED_FEE_TOKEN = "LINK";
 
 /* -------------------------------------------------------------------------- */
 /* bigint → number helpers.                                                    */
@@ -4103,10 +4124,48 @@ export function usePeerSummary() {
 
 export interface FeeStatsLive {
   gasPrice: bigint | null;
-  gasPriceSource: "eth_gasPrice" | "eth_feeHistory" | null;
+  gasPriceSource: "lyth_executionUnitPrice" | "eth_feeHistory" | null;
   oldestBlock: string | null;
   baseFeePerGas: string[];
   gasUsedRatio: number[];
+}
+
+function parseRpcQuantityValue(value: unknown): bigint | null {
+  if (typeof value === "bigint") return value >= 0n ? value : null;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return BigInt(Math.trunc(value));
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+  try {
+    return trimmed.startsWith("0x") || trimmed.startsWith("0X")
+      ? parseQuantityBig(trimmed)
+      : BigInt(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+function executionUnitPriceFromQuote(value: unknown): bigint | null {
+  const row = unknownRecord(value);
+  if (!row) return null;
+  const price = parseRpcQuantityValue(
+    row.executionUnitPriceLythoshi ?? row.execution_unit_price_lythoshi,
+  );
+  return price !== null && price > 0n ? price : null;
+}
+
+async function readExecutionUnitPrice(
+  rpc: FeeStatsRpcClient,
+): Promise<ExecutionUnitPriceResponseLike | null> {
+  if (typeof rpc.lythExecutionUnitPrice === "function") {
+    return rpc.lythExecutionUnitPrice();
+  }
+  if (typeof rpc.call === "function") {
+    return rpc.call<ExecutionUnitPriceResponseLike>("lyth_executionUnitPrice", []);
+  }
+  return null;
 }
 
 export function useFeeStats() {
@@ -4114,7 +4173,7 @@ export function useFeeStats() {
     queryKey: QK.feeStats(),
     queryFn: async () => {
       if (!isRpcConfigured()) return null;
-      const rpc = getRpcClient();
+      const rpc = getRpcClient() as FeeStatsRpcClient;
       const settle = async <T>(p: Promise<T>): Promise<T | null> => {
         try {
           return await p;
@@ -4122,17 +4181,17 @@ export function useFeeStats() {
           return null;
         }
       };
-      const [gasPrice, history] = await Promise.all([
-        settle(rpc.ethGasPrice()),
+      const [nativeQuote, history] = await Promise.all([
+        settle(readExecutionUnitPrice(rpc)),
         settle(rpc.ethFeeHistory(8, "latest", [])),
       ]);
       const feeHistory = history as FeeHistoryResponse | null;
       const latestBaseFeeHex = feeHistory?.baseFeePerGas.at(-1);
       const latestBaseFee = latestBaseFeeHex ? parseQuantityBig(latestBaseFeeHex) : null;
-      const gasPriceUsable = gasPrice !== null && gasPrice > 0n;
+      const nativePrice = executionUnitPriceFromQuote(nativeQuote);
       return {
-        gasPrice: gasPriceUsable ? gasPrice : latestBaseFee,
-        gasPriceSource: gasPriceUsable ? "eth_gasPrice" : latestBaseFee !== null ? "eth_feeHistory" : null,
+        gasPrice: nativePrice ?? latestBaseFee,
+        gasPriceSource: nativePrice !== null ? "lyth_executionUnitPrice" : latestBaseFee !== null ? "eth_feeHistory" : null,
         oldestBlock: feeHistory?.oldestBlock ?? null,
         baseFeePerGas: feeHistory?.baseFeePerGas ?? [],
         gasUsedRatio: feeHistory?.gasUsedRatio ?? [],
@@ -4856,10 +4915,13 @@ function bridgeRouteMarkerPresent(row: Record<string, unknown>): boolean {
     "route_id",
     "id",
     "bridge",
+    "protocol",
+    "routeProtocol",
+    "route_protocol",
     "bridgeId",
     "bridge_id",
-    "trustedBridgeId",
-    "trusted_bridge_id",
+    "feeToken",
+    "fee_token",
     "asset",
     "sourceChain",
     "source_chain",
@@ -5035,7 +5097,7 @@ export function normalizeBridgeRouteDisclosure(value: unknown): BridgeRouteDiscl
 
   const verifier = unknownRecord(readObjectField(row, ["verifier", "verifierConfig", "verifier_config"])) ?? {};
   const lastIncidentDate = readStringField(row, ["lastIncidentDate", "last_incident_date", "incidentDate", "incident_date"]);
-  const bridgeId = readBridgeNullableString(row, ["bridgeId", "bridge_id", "trustedBridgeId", "trusted_bridge_id", "bridgeConfigId", "bridge_config_id"]);
+  const bridgeId = readBridgeNullableString(row, ["bridgeId", "bridge_id", "bridgeConfigId", "bridge_config_id"]);
   const wrappedAsset = readBridgeNullableString(row, ["wrappedAsset", "wrapped_asset", "wrappedAssetId", "wrapped_asset_id", "wrappedToken", "wrapped_token"]);
   const routeSelectionReady = readBooleanField(row, ["routeSelectionReady", "route_selection_ready"]);
   const quoteReady = readBooleanField(row, ["quoteReady", "quote_ready"]);
@@ -5046,7 +5108,9 @@ export function normalizeBridgeRouteDisclosure(value: unknown): BridgeRouteDiscl
   const route: BridgeRouteDisclosure = {
     routeId: readBridgeString(row, ["routeId", "route_id", "id"]),
     bridge: readBridgeString(row, ["bridge", "bridgeName", "bridge_name"]),
+    protocol: readBridgeNullableString(row, ["protocol", "routeProtocol", "route_protocol"]),
     asset: readBridgeString(row, ["asset", "assetId", "asset_id", "tokenId", "token_id"], wrappedAsset ?? ""),
+    feeToken: readBridgeString(row, ["feeToken", "fee_token"]),
     sourceChain: readBridgeString(row, ["sourceChain", "source_chain", "fromChain", "from_chain"]),
     destinationChain: readBridgeString(row, ["destinationChain", "destination_chain", "toChain", "to_chain"]),
     verifier: {
@@ -5093,7 +5157,15 @@ function fallbackAssessBridgeRoute(route: BridgeRouteDisclosure): BridgeRouteAss
 
   if (route.routeId.trim() === "") blockedReasons.push("route id missing");
   if (route.bridge.trim() === "") blockedReasons.push("bridge name missing");
+  if (!isChainlinkCcipRoute(route.protocol, route.bridge, route.verifier.model)) {
+    blockedReasons.push("bridge protocol must be Chainlink CCIP");
+  }
   if (route.asset.trim() === "") blockedReasons.push("asset disclosure missing");
+  if (route.feeToken.trim() === "") {
+    blockedReasons.push("route fee token missing");
+  } else if (route.feeToken.trim().toUpperCase() !== BRIDGE_ALLOWED_FEE_TOKEN) {
+    blockedReasons.push("CCIP route fee token must be LINK");
+  }
   if (route.verifier.model.trim() === "") blockedReasons.push("verifier model missing");
   if (route.verifier.threshold < 2 || route.verifier.participantCount < 2) {
     blockedReasons.push("verifier set must not be 1-of-1");
@@ -5156,10 +5228,61 @@ function fallbackAssessBridgeRoute(route: BridgeRouteDisclosure): BridgeRouteAss
   };
 }
 
+function isChainlinkCcipRoute(
+  protocol: string | null | undefined,
+  bridge: string,
+  verifierModel: string,
+): boolean {
+  const normalizedProtocol = normalizeBridgeProtocol(protocol ?? "");
+  if (normalizedProtocol.length > 0) {
+    return normalizedProtocol === "chainlinkccip" || normalizedProtocol === "ccip";
+  }
+  return bridgeLabelLooksCcip(bridge) || bridgeLabelLooksCcip(verifierModel);
+}
+
+function bridgeLabelLooksCcip(value: string): boolean {
+  return normalizeBridgeProtocol(value).includes("ccip");
+}
+
+function normalizeBridgeProtocol(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function uniqueBridgeMessages(values: readonly string[]): string[] {
+  return [...new Set(values)];
+}
+
+function stricterBridgeRisk(left: BridgeRiskTier, right: BridgeRiskTier): BridgeRiskTier {
+  const order: Record<BridgeRiskTier, number> = {
+    low: 0,
+    medium: 1,
+    high: 2,
+    blocked: 3,
+  };
+  return order[left] >= order[right] ? left : right;
+}
+
+function mergeBridgeRouteAssessment(
+  local: BridgeRouteAssessment,
+  sdk: BridgeRouteAssessment,
+): BridgeRouteAssessment {
+  const blockedReasons = uniqueBridgeMessages([...sdk.blockedReasons, ...local.blockedReasons]);
+  const warnings = uniqueBridgeMessages([...sdk.warnings, ...local.warnings]);
+  const accepted = blockedReasons.length === 0 && sdk.accepted && local.accepted;
+  return {
+    routeId: sdk.routeId || local.routeId,
+    accepted,
+    score: accepted ? Math.min(local.score, sdk.score) : 0,
+    riskTier: accepted ? stricterBridgeRisk(local.riskTier, sdk.riskTier) : "blocked",
+    blockedReasons,
+    warnings,
+  };
+}
+
 function assessBridgeRouteWithSdkFallback(route: BridgeRouteDisclosure): BridgeRouteAssessment {
-  return typeof sdkBridgeHelpers.assessBridgeRoute === "function"
-    ? sdkBridgeHelpers.assessBridgeRoute(route)
-    : fallbackAssessBridgeRoute(route);
+  const local = fallbackAssessBridgeRoute(route);
+  if (typeof sdkBridgeHelpers.assessBridgeRoute !== "function") return local;
+  return mergeBridgeRouteAssessment(local, sdkBridgeHelpers.assessBridgeRoute(route));
 }
 
 function rankBridgeRoutesWithSdkFallback(routes: readonly BridgeRouteDisclosure[]) {
@@ -5193,6 +5316,8 @@ function mergeOptionalBridgeRouteFields(
     ...primary,
     bridgeId: primary.bridgeId ?? secondary.bridgeId,
     wrappedAsset: primary.wrappedAsset ?? secondary.wrappedAsset,
+    protocol: primary.protocol ?? secondary.protocol,
+    feeToken: primary.feeToken || secondary.feeToken,
     routeSelectionReady: primary.routeSelectionReady ?? secondary.routeSelectionReady,
     quoteReady: primary.quoteReady ?? secondary.quoteReady,
     submitReady: primary.submitReady ?? secondary.submitReady,
@@ -5326,6 +5451,14 @@ export function bridgeRouteDisclosureFailureDetails(row: BridgeTrustDisclosureRo
 
   if (!decimalStringIsPositive(row.route.insuranceAtomic) || warningSet.has("slashable insurance pool missing or zero")) {
     details.push(`insurance missing or zero (${row.route.insuranceAtomic})`);
+  }
+
+  if (warningSet.has("bridge protocol must be Chainlink CCIP")) {
+    details.push(`protocol ${row.route.protocol ?? "missing"}`);
+  }
+
+  if (warningSet.has("route fee token missing") || warningSet.has("CCIP route fee token must be LINK")) {
+    details.push(`fee token ${row.route.feeToken || "missing"}`);
   }
 
   return details;

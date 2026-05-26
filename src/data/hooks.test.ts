@@ -7,9 +7,8 @@
  *   1. The long-poll cadence is 2 seconds — the contract that drives
  *      the head ticker until subscription transport is available
  *      transport.
- *   2. The chain-strip query function speaks `lyth_*` (Law §13.2 native
- *      namespace) — not the old `protocore_*` names that pre-dated the
- *      SDK rename.
+ *   2. The chain-strip query function speaks the current `lyth_*` native
+ *      namespace.
  *   3. The WebSocket fallback path stays disabled by default so the
  *      explorer never tries an unimplemented WS transport at runtime
  *      once subscription transport is available.
@@ -1308,12 +1307,14 @@ describe("live-SDK seam", () => {
       limit: 5,
       routes: [{
         routeId: "eth-usdc-mainnet",
-        bridge: "ThirdParty Light Client",
+        bridge: "Chainlink CCIP",
+        protocol: "chainlink-ccip",
         asset: "USDC",
+        feeToken: "LINK",
         sourceChain: "ethereum",
         destinationChain: "monolythium",
         verifier: {
-          model: "zk-light-client",
+          model: "CCIP DON",
           participantCount: 12,
           threshold: 8,
         },
@@ -1344,12 +1345,14 @@ describe("live-SDK seam", () => {
   it("reads mono-core BridgeRoutesResponse envelopes with discovery-only disclosures", async () => {
     const route = {
       routeId: "eth-usdc-mainnet",
-      bridge: "ThirdParty Light Client",
+      bridge: "Chainlink CCIP",
+      protocol: "chainlink-ccip",
       asset: "USDC",
+      feeToken: "LINK",
       sourceChain: "ethereum",
       destinationChain: "monolythium",
       verifier: {
-        model: "zk-light-client",
+        model: "CCIP DON",
         participantCount: 12,
         threshold: 8,
       },
@@ -1421,12 +1424,14 @@ describe("live-SDK seam", () => {
       submitReady: false,
       bridgeRouteDisclosures: [{
         routeId: "base-usdc-mainnet",
-        bridge: "Committee Relay",
+        bridge: "Chainlink CCIP",
+        protocol: "chainlink-ccip",
         asset: "USDC",
+        feeToken: "LINK",
         sourceChain: "base",
         destinationChain: "monolythium",
         verifier: {
-          model: "committee",
+          model: "CCIP DON",
           participantCount: 9,
           threshold: 6,
         },
@@ -1452,12 +1457,14 @@ describe("live-SDK seam", () => {
     const response = {
       routes: [{
         route_id: "sol-usdt-mainnet",
-        bridge_name: "Consensus Relay",
+        bridge_name: "Chainlink CCIP",
+        route_protocol: "chainlink-ccip",
         asset_id: "USDT",
+        fee_token: "LINK",
         from_chain: "solana",
         to_chain: "monolythium",
         verifier_config: {
-          type: "committee",
+          type: "CCIP DON",
           signer_count: 9,
           required_signers: 6,
         },
@@ -1481,7 +1488,7 @@ describe("live-SDK seam", () => {
     expect(apiSpy).toHaveBeenCalledWith("/bridge/routes", { limit: 5 });
     expect(rpcSpy).toHaveBeenCalledWith("lyth_bridgeRoutes", [{ limit: 5 }]);
     expect(result?.[0].route.routeId).toBe("sol-usdt-mainnet");
-    expect(result?.[0].route.bridge).toBe("Consensus Relay");
+    expect(result?.[0].route.bridge).toBe("Chainlink CCIP");
     expect(result?.[0].assessment.accepted).toBe(true);
   });
 
@@ -2139,12 +2146,14 @@ describe("MRC account lookup", () => {
 describe("bridge trust disclosure normalization", () => {
   const validDisclosure = {
     routeId: "eth-usdc-mainnet",
-    bridge: "ThirdParty Light Client",
+    bridge: "Chainlink CCIP",
+    protocol: "chainlink-ccip",
     asset: "USDC",
+    feeToken: "LINK",
     sourceChain: "ethereum",
     destinationChain: "monolythium",
     verifier: {
-      model: "zk-light-client",
+      model: "CCIP DON",
       participantCount: 12,
       threshold: 8,
     },
@@ -2163,7 +2172,9 @@ describe("bridge trust disclosure normalization", () => {
     });
 
     expect(rows).toHaveLength(1);
-    expect(rows[0].route.bridge).toBe("ThirdParty Light Client");
+    expect(rows[0].route.bridge).toBe("Chainlink CCIP");
+    expect(rows[0].route.protocol).toBe("chainlink-ccip");
+    expect(rows[0].route.feeToken).toBe("LINK");
     expect(rows[0].route.verifier.threshold).toBe(8);
     expect(rows[0].route.drainCapAtomic).toBe("250000000000");
     expect(rows[0].route.finalityBlocks).toBe(64);
@@ -2177,13 +2188,15 @@ describe("bridge trust disclosure normalization", () => {
   it("normalizes catalogue binding fields and discovery-only readiness flags", () => {
     const route = normalizeBridgeRouteDisclosure({
       route_id: "catalogue-usdc-mainnet",
-      bridge_name: "Catalogue Relay",
+      bridge_name: "Chainlink CCIP",
+      route_protocol: "chainlink-ccip",
+      fee_token: "LINK",
       bridge_id: "bridge-catalogue-1",
       wrapped_asset: "mrc:wrapped-usdc",
       from_chain: "ethereum",
       to_chain: "monolythium",
       verifier_config: {
-        type: "committee",
+        type: "CCIP DON",
         signer_count: 9,
         required_signers: 6,
       },
@@ -2200,6 +2213,8 @@ describe("bridge trust disclosure normalization", () => {
     });
 
     expect(route?.routeId).toBe("catalogue-usdc-mainnet");
+    expect(route?.protocol).toBe("chainlink-ccip");
+    expect(route?.feeToken).toBe("LINK");
     expect(route?.bridgeId).toBe("bridge-catalogue-1");
     expect(route?.asset).toBe("mrc:wrapped-usdc");
     expect(route?.wrappedAsset).toBe("mrc:wrapped-usdc");
@@ -2270,6 +2285,24 @@ describe("bridge trust disclosure normalization", () => {
     expect(rows[0].assessment.blockedReasons).toContain("route cooldown missing");
     expect(rows[0].assessment.blockedReasons).toContain("route circuit breaker missing");
     expect(rows[0].assessment.blockedReasons).toContain("slashable insurance pool missing or zero");
+  });
+
+  it("blocks non-CCIP or non-LINK route disclosures", () => {
+    const rows = assessBridgeTrustDisclosures([{
+      source: "addressProfile[0]",
+      value: {
+        ...validDisclosure,
+        bridge: "Generic Relay",
+        protocol: "relay",
+        feeToken: "ETH",
+        verifier: { model: "committee", participantCount: 9, threshold: 6 },
+      },
+    }]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0].assessment.accepted).toBe(false);
+    expect(rows[0].assessment.blockedReasons).toContain("bridge protocol must be Chainlink CCIP");
+    expect(rows[0].assessment.blockedReasons).toContain("CCIP route fee token must be LINK");
   });
 
   it("ranks disclosures deterministically and exposes a bounded preferred display slice", () => {
