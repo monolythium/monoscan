@@ -1,5 +1,7 @@
 /* =====================================================
-   Monoscan — public chain explorer for Monolythium.
+   Monoscan — public chain explorer for Monolythium v4.0
+   Three views: Landing · Cluster detail · Operator profile.
+   Hash-routed; data is faked but shape-true to data.tsx.
 ===================================================== */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -7,7 +9,7 @@ import { useState, useEffect, useMemo } from "react";
 import {
   Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
-import { MONOSCAN_DATA, MARKETS } from "./data/fallback";
+import { MONOSCAN_DATA, MARKETS } from "./data/mock";
 import { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
 import {
@@ -60,9 +62,9 @@ const openWalletStakeIntent = (cluster: any) => {
 /* ============== TOP STRIP ============== */
 /**
  * Renders the live top strip. `round` arrives already-resolved by the App
- * (live RPC long-poll first, local fallback second); the rest of the fields
+ * (live RPC long-poll first, mock fallback second); the rest of the fields
  * are best-effort live values from `useChainStrip` and degrade quietly to
- * local values when the node is unreachable.
+ * the mocked values when the node is unreachable.
  */
 const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
   const block = strip?.blockNumber;
@@ -103,7 +105,7 @@ const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
       <span style={{flex:1}}/>
       <Field label="network" value={netVersion ? `chain-id ${netVersion}` : "testnet 69420"}/>
       <Sep/>
-      <Field label="protocol" value="Monolythium"/>
+      <Field label="proto" value="whitepaper v4.0"/>
     </div>
   );
 };
@@ -170,7 +172,7 @@ const Header = ({ go, route }: any) => {
         <img className="ms-brand__mark" src="/brand/monolythium.svg" alt="" width="32" height="32"/>
         <div>
           <b>Monoscan</b>
-          <small>monolythium explorer</small>
+          <small>live · testnet · chain_id 69420</small>
         </div>
       </a>
       <form onSubmit={submit} className="ms-search">
@@ -178,7 +180,7 @@ const Header = ({ go, route }: any) => {
         <input
           value={q}
           onChange={e=>setQ(e.target.value)}
-          placeholder="Round number · cluster C-044 · address mono1… · vertex hash · tx hash"
+          placeholder="Round number · cluster C-044 · operator 0x… · vertex hash · tx hash"
         />
         <span className="ms-search__hint">enter ↵</span>
       </form>
@@ -249,8 +251,12 @@ const Landing = ({ go }: any) => {
   const [rateSeries, setRateSeries]       = useState(()=>Array.from({length:60},(_,i)=>2.8+Math.sin(i*0.3)*0.15+Math.random()*0.08));
   const [showDeep, setShowDeep] = useState(false);
 
-  // Live latest blocks for the on-chain feed strip. Local recent vertices keep
-  // the page populated when a node is offline.
+  // Live latest blocks for the on-chain feed strip. Falls back to the mocked
+  // recent vertices when the node is offline so the page never goes blank.
+  // TODO(monolythium): once mono-core OI-0070 lands the indexer's
+  // per-vertex breakdown (transaction count, BLS-agg ms, DAC coverage, cluster
+  // attribution), swap these block headers for the richer vertex shape the
+  // designs demand.
   const liveBlocks = useLatestBlocks(8);
   const chainStats = useChainStats();
   const liveClobMarkets = useClobMarkets(25);
@@ -341,7 +347,7 @@ const Landing = ({ go }: any) => {
             <span className="mono" style={{fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--fg-300)"}}>
               {hasLiveStats
                 ? `Monolythium · block ${fmt(liveStats.latestHeight)} · ${liveStats.peerCount} peers`
-                : `Monolythium · local feed · ${c.ratePerSec.toFixed(1)} rounds/s`}
+                : `Monolythium · demo feed · ${c.ratePerSec.toFixed(1)} rounds/s`}
             </span>
           </div>
           <h1 className="ov-hero__title">
@@ -394,7 +400,7 @@ const Landing = ({ go }: any) => {
               label="Supply split"
               value="pending"
               sub="no live supply/privacy aggregate yet"
-              delta="local rows hidden in live mode"
+              delta="fixture hidden in live mode"
               tone="neutral"
             />
           ) : (
@@ -488,7 +494,7 @@ const Landing = ({ go }: any) => {
         <section className="ms-card" style={{padding:"18px 20px"}}>
           <div className="cap" style={{color:"var(--gold)",marginBottom:8}}>Markets</div>
           <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-            The live CLOB index responded, but it has no indexed markets yet. Local gainers, losers, and most-traded rows are hidden while the node is live.
+            The live CLOB index responded, but it has no indexed markets yet. Demo gainers, losers, and most-traded rows are hidden while the node is live.
           </div>
         </section>
       ) : (
@@ -931,7 +937,7 @@ const ClusterPage = ({ slot, go }: any) => {
             <KVRow label="Entity ratchet" value={entityRatchet.data ? `${entityRatchet.data.active}/${entityRatchet.data.threshold === 4294967295 ? "unset" : entityRatchet.data.threshold}` : "—"}/>
           </div>
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
-            Cluster status, quorum, and member BLS keys come from public RPC. Rich APY, rewards, and vertex inclusion use local fallback rows until retained aggregates are available.
+            Cluster status, quorum, and member BLS keys come from public RPC. Rich APY, rewards, and vertex inclusion remain indexer-backed mock data.
           </div>
         </Card>
         <Card title="Members · 7 operators">
@@ -1109,7 +1115,7 @@ const OperatorPage = ({ addr, go }: any) => {
             <KVRow label="Next key rotation" value={keyRotationLabel}/>
           </div>
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
-            Live telemetry appears when this page is opened from a live cluster member id. Local operator profile history remains in place until retained reputation and membership aggregates are available.
+            Live telemetry appears when this page is opened from a live cluster member id. Mock operator profiles keep their fixture metrics until the indexer exposes reputation and membership aggregates.
           </div>
         </Card>
         <Card title="Reputation timeline · 12 months">
@@ -1478,9 +1484,13 @@ const MiniRing = ({ members, size=110, threshold=5 }: any) => {
 };
 
 const OperatorsPage = ({go}: any) => {
-  // Live cluster descriptors expose id, pubkey, stake, and active flag. Local
-  // operator rows fill reputation, region, and uptime until retained operator
-  // aggregates are available.
+  // Live cluster descriptors (id + pubkey + stake + active flag). It's a thin
+  // shape compared to the mocked operator profiles below; once the indexer
+  // surfaces operator reputation/region/uptime aggregates we can swap the mock
+  // list entirely.
+  // TODO(monolythium): the SDK does not yet expose operator
+  // memberships, region, reputation, or 90d uptime — see plans/monoscan.md
+  // Stage 3 + mono-core OI-0070.
   const clusters = useClusterSet();
   const healthyClusters = useHealthyClusters();
   const liveCount = clusters.data?.length ?? null;
@@ -1537,16 +1547,22 @@ const App = () => {
   }, []);
   const go = (h) => { window.location.hash = h; setRoute(h); };
 
-  // Live chain head plus chain-strip aggregate. A local timer keeps the strip
-  // readable when the RPC endpoint is unreachable.
+  // Live chain head (2s poll per Stage 3) + chain-strip aggregate (round +
+  // block + peers + version + mempool + indexer). Both fall back to a local
+  // timer-based mock when the RPC endpoint is unreachable so the strip
+  // never freezes during dev.
+  // TODO(monolythium): swap the 2s long-poll for `lyth_subscribe`
+  // over WebSocket once mono-core OI-0069 lands. The seam lives in
+  // `data/hooks.ts::readLatestHeadFromWebSocket` and is feature-flagged
+  // behind `VITE_MONOSCAN_USE_WS` (see `sdk/client.ts::isWebSocketEnabled`).
   const head = useChainHead();
   const strip = useChainStrip();
-  const [fallbackRound, setFallbackRound] = useState(SCAN.consensus.round);
+  const [mockRound, setMockRound] = useState(SCAN.consensus.round);
   useEffect(()=>{
-    const id = setInterval(()=>setFallbackRound(r=>r+1), 380);
+    const id = setInterval(()=>setMockRound(r=>r+1), 380);
     return ()=>clearInterval(id);
   },[]);
-  const round = strip.data?.round ?? head.data?.round ?? fallbackRound;
+  const round = strip.data?.round ?? head.data?.round ?? mockRound;
 
   // Lightweight toast channel (for clipboard copies, preview-only actions, etc.)
   const [toast, setToast] = useState<string | null>(null);
@@ -1597,8 +1613,23 @@ const App = () => {
       <main className="ms-main">{page}</main>
       <footer className="ms-footer">
         <span>monoscan · public read-only explorer</span>
+        <span className="mono ms-footer__entity">Mono Labs R&amp;D LLC · San Francisco</span>
         <span style={{flex:1}}/>
-        <span className="mono">node-pubkey verified · TLS · no tracking</span>
+        <span className="mono ms-footer__guarantees">node-pubkey verified · TLS · no tracking</span>
+        <span className="ms-footer__socials">
+          <a href="https://x.com/monolythium" className="ms-social" style={{['--brand' as any]: '255, 255, 255'}} aria-label="X / Twitter" target="_blank" rel="noopener">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M12.6 0h2.5L9.6 6.3 16 16h-5l-3.9-5.1L2.7 16H.2L6 9.2 0 0h5.1l3.5 4.7L12.6 0zm-.9 14.5h1.4L4.4 1.4H3l8.7 13.1z"/></svg>
+          </a>
+          <a href="https://discord.gg/monolythium" className="ms-social" style={{['--brand' as any]: '88, 101, 242'}} aria-label="Discord" target="_blank" rel="noopener">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 2.5A12.5 12.5 0 0 0 10.3 1.5l-.1.3a10 10 0 0 1 2.8 1.1A11 11 0 0 0 5 3 10 10 0 0 1 7.8 1.8L7.7 1.5A12.5 12.5 0 0 0 4.5 2.5c-2 2.6-2.6 5.2-2.3 7.7A11.6 11.6 0 0 0 5.7 12l.8-1a8 8 0 0 1-1.3-.6l.3-.2c2.5 1.1 5.2 1.1 7.7 0l.3.2a8 8 0 0 1-1.3.6l.8 1a11.6 11.6 0 0 0 3.5-1.8c.4-3-.6-5.5-2.2-7.7zM6.3 8.7c-.8 0-1.4-.7-1.4-1.6S5.5 5.5 6.3 5.5s1.5.7 1.4 1.6c0 .9-.6 1.6-1.4 1.6zm3.4 0c-.8 0-1.4-.7-1.4-1.6S8.9 5.5 9.7 5.5s1.4.7 1.4 1.6-.6 1.6-1.4 1.6z"/></svg>
+          </a>
+          <a href="https://t.me/mono_announcements" className="ms-social" style={{['--brand' as any]: '42, 171, 238'}} aria-label="Telegram · announcements" target="_blank" rel="noopener">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M13.5 1.6 1.3 6.4c-.8.3-.8 1.4 0 1.7l3.1 1 1.2 3.7c.2.7 1.1.9 1.6.4l1.7-1.6 3.2 2.4c.6.4 1.4.1 1.6-.6L14.9 2.5c.1-.7-.6-1.2-1.4-.9zM6.5 9.3l5.1-3.4c.2-.1.3.1.2.2L7.3 10.5l-.1 1.8L6.5 9.3z"/></svg>
+          </a>
+          <a href="https://github.com/monolythium" className="ms-social" style={{['--brand' as any]: '240, 246, 252'}} aria-label="GitHub" target="_blank" rel="noopener">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          </a>
+        </span>
       </footer>
       {toast && (
         <div className="ms-toast">

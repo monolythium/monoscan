@@ -77,15 +77,11 @@ export function MsThemeSwitcher() {
       <button
         className={`ms-theme__btn ${open ? "is-open" : ""}`}
         onClick={() => setOpen((value) => !value)}
-        aria-label="Choose theme"
+        aria-label={`Theme: ${current.label}`}
         title={`Theme: ${current.label}`}
         type="button"
       >
         <span className="ms-theme__swatch" style={{ background: current.swatch }} />
-        <span className="ms-theme__lbl">{current.label}</span>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6">
-          <path d="m2 4 3 3 3-3" />
-        </svg>
       </button>
       {open && (
         <div className="ms-theme__pop" role="menu">
