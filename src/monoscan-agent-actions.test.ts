@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  addressToTypedBech32,
   buildNativeAgentModuleCallEnvelope,
   buildNativeAgentCreateEscrowForwarderInput,
   buildNativeAgentRecordReputationForwarderInput,
@@ -166,13 +167,13 @@ describe("native agent indexed nonce helpers", () => {
 
 describe("native agent wallet request builders", () => {
   const forwarderContractAddress = "0x2222222222222222222222222222222222222222";
-  const owner = "0x1111111111111111111111111111111111111111";
-  const controller = "0x2222222222222222222222222222222222222222";
-  const arbiter = "0x3333333333333333333333333333333333333333";
-  const provider = "0x4444444444444444444444444444444444444444";
-  const subject = "0x5555555555555555555555555555555555555555";
-  const consumer = "0x6666666666666666666666666666666666666666";
-  const reviewer = "0x7777777777777777777777777777777777777777";
+  const owner = addressToTypedBech32("user", "0x1111111111111111111111111111111111111111");
+  const controller = addressToTypedBech32("user", "0x2222222222222222222222222222222222222222");
+  const arbiter = addressToTypedBech32("user", "0x3333333333333333333333333333333333333333");
+  const provider = addressToTypedBech32("user", "0x4444444444444444444444444444444444444444");
+  const subject = addressToTypedBech32("user", "0x5555555555555555555555555555555555555555");
+  const consumer = addressToTypedBech32("user", "0x6666666666666666666666666666666666666666");
+  const reviewer = addressToTypedBech32("user", "0x7777777777777777777777777777777777777777");
   const h32 = (byte: string) => `0x${byte.repeat(32)}`;
 
   function expectedWalletInput(encodedCall: string) {
@@ -508,8 +509,8 @@ describe("native agent wallet request builders", () => {
 
   it("builds spending-policy MRV native forwarder requests", () => {
     const args = {
-      owner: "0x1111111111111111111111111111111111111111",
-      controller: "0x2222222222222222222222222222222222222222",
+      owner,
+      controller,
       nonce: "7",
       assetId: `0x${"33".repeat(32)}`,
       perActionLimit: "125",
@@ -584,9 +585,9 @@ describe("native agent wallet request builders", () => {
 
   it("uses capability-disclosed agent forwarders matching request byte length", () => {
     const args = {
-      buyer: "0x1111111111111111111111111111111111111111",
-      provider: "0x2222222222222222222222222222222222222222",
-      arbiter: "0x3333333333333333333333333333333333333333",
+      buyer: owner,
+      provider: controller,
+      arbiter,
       nonce: 9,
       assetId: `0x${"44".repeat(32)}`,
       amount: "123",
@@ -608,8 +609,8 @@ describe("native agent wallet request builders", () => {
 
   it("builds reputation requests and rejects missing or mismatched forwarders", () => {
     const args = {
-      reviewer: "0x6666666666666666666666666666666666666666",
-      subject: "0x7777777777777777777777777777777777777777",
+      reviewer: consumer,
+      subject: reviewer,
       categoryId: 42,
       scores: { speed: 5, quality: 4, communication: 3, accuracy: 2 },
       payloadHash: `0x${"88".repeat(32)}`,
