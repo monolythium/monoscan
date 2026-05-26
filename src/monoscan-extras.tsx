@@ -29,6 +29,7 @@ import {
   useDagParents,
   useEncryptionKey,
   useFeeStats,
+  useIndexerAvailability,
   useGapRecords,
   useLatestCheckpoint,
   useLatestTransactions,
@@ -1047,11 +1048,16 @@ const HealthRow = ({ label, value, tone }: any) => (
 ===================================================== */
 const WalletsPage = ({ go }: any) => {
   const richList = useRichList(getLythTokenId(), 30);
+  const indexerAvailability = useIndexerAvailability();
   const liveHolders = richList.data?.holders ?? [];
   const wallets = WALLETS;
   const [hover, setHover] = useStateX(null);
   const topSum = wallets.slice(0, 30).reduce((a,w)=>a+w.bal, 0);
   const usingLiveRichList = liveHolders.length > 0;
+  // When the node confirms its indexer is disabled, the rich list will never
+  // resolve. Switch the page into an explanatory empty state instead of
+  // silently rendering the 50-row demo fixture.
+  const richListUnavailable = indexerAvailability.disabled;
 
   return (
     <div className="ms-page ms-wallets">
@@ -1063,9 +1069,17 @@ const WalletsPage = ({ go }: any) => {
           </p>
         </div>
         <div className="mono" style={{fontSize:11,color:"var(--fg-500)",textAlign:"right"}}>
-          <div>{usingLiveRichList ? `${liveHolders.length} live holders` : `${_fmt(NETWORK_STATS.totals.walletsTotal)} total wallets`}</div>
+          <div>{usingLiveRichList
+            ? `${liveHolders.length} live holders`
+            : richListUnavailable
+              ? "rich list unavailable"
+              : `${_fmt(NETWORK_STATS.totals.walletsTotal)} total wallets`}</div>
           <div style={{color:"var(--fg-400)"}}>
-            {usingLiveRichList ? `token ${_short(richList.data?.tokenId, 12)}` : `top 30 hold ${_abbr(topSum)} LYTH`}
+            {usingLiveRichList
+              ? `token ${_short(richList.data?.tokenId, 12)}`
+              : richListUnavailable
+                ? (indexerAvailability.reason ?? "indexer disabled")
+                : `top 30 hold ${_abbr(topSum)} LYTH`}
           </div>
         </div>
       </div>
@@ -1073,6 +1087,12 @@ const WalletsPage = ({ go }: any) => {
       <section className="wl-grid">
         {/* LEFT: pie chart */}
         <Card title="Distribution · top 30 vs. the long tail">
+          {richListUnavailable ? (
+            <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
+              {indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.
+              Holder distribution is computed by the indexer; the chart will populate once an indexed peer is reachable.
+            </div>
+          ) : (
           <div style={{padding:"10px 4px 4px"}}>
             <SupplyPie slices={wallets.pie} hover={hover} setHover={setHover}/>
             <div className="wl-legend">
@@ -1085,6 +1105,7 @@ const WalletsPage = ({ go }: any) => {
               ))}
             </div>
           </div>
+          )}
         </Card>
 
         {/* RIGHT: rich list */}
@@ -1098,7 +1119,16 @@ const WalletsPage = ({ go }: any) => {
               <th style={{textAlign:"right"}}>Tx count</th>
             </tr></thead>
             <tbody>
-              {usingLiveRichList ? liveHolders.map((h:any)=>(
+              {richListUnavailable ? (
+                <tr>
+                  <td colSpan={5}>
+                    <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
+                      {indexerAvailability.reason ?? "Indexer is disabled on the connected node"}.
+                      Rich list will populate once an indexed peer is reachable.
+                    </div>
+                  </td>
+                </tr>
+              ) : usingLiveRichList ? liveHolders.map((h:any)=>(
                 <tr key={h.address} onClick={()=>go(`#/wallet/${encodeURIComponent(h.address)}`)}>
                   <td className="mono" style={{color:h.rank<=3?"var(--gold)":"var(--fg-400)",fontWeight:h.rank<=3?600:400}}>#{h.rank}</td>
                   <td>
