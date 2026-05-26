@@ -1172,13 +1172,26 @@ const ClustersPage = ({go}: any) => {
   const nominal    = active.filter(c=>c.state==="nominal").length;
   const maint      = active.filter(c=>c.state==="maintenance").length;
   const openCount  = active.filter(c=>c.recruiting).length;
-  const liveDescriptorCount = liveClusters.data?.length ?? null;
+  const liveDescriptors = liveClusters.data ?? null;
+  const liveDescriptorCount = liveDescriptors?.length ?? null;
   const liveActiveCount = activeClustersLive.data?.length ?? null;
   const liveHealthyCount = healthyClustersLive.data?.length ?? null;
-  const totalTvs   = active.reduce((a,c)=>a+parseFloat(c.tvs),0);
-  const avgApy     = active.reduce((a,c)=>a+clusterApy(c),0)/active.length;
-  const topApy     = Math.max(...active.map(clusterApy));
-  const minToEnter = parseFloat(active[active.length-1].tvs);
+  // The chain reports live cluster descriptors with id/size/threshold but no
+  // TVS / APY / reward history yet. When live data resolves, surface that
+  // gap instead of showing the fixture's invented economic aggregates.
+  const haveLiveDirectory = liveDescriptors !== null;
+  const fixtureTvs = active.reduce((a,c)=>a+parseFloat(c.tvs),0);
+  const fixtureAvgApy = active.reduce((a,c)=>a+clusterApy(c),0)/active.length;
+  const fixtureTopApy = Math.max(...active.map(clusterApy));
+  const fixtureMinToEnter = parseFloat(active[active.length-1].tvs);
+  const totalTvs   = haveLiveDirectory ? null : fixtureTvs;
+  const avgApy     = haveLiveDirectory ? null : fixtureAvgApy;
+  const topApy     = haveLiveDirectory ? null : fixtureTopApy;
+  const minToEnter = haveLiveDirectory ? null : fixtureMinToEnter;
+  const firstLiveCluster = liveDescriptors && liveDescriptors.length > 0 ? liveDescriptors[0] : null;
+  const liveQuorumLabel = firstLiveCluster
+    ? `${firstLiveCluster.threshold ?? "?"}-of-${firstLiveCluster.size ?? "?"} BFT`
+    : null;
 
   // reset filter when switching tabs so stale "jail" filter doesn't stick on active tab, etc.
   const switchTab = (t) => { setTab(t); setFilter("all"); };
@@ -1213,7 +1226,7 @@ const ClustersPage = ({go}: any) => {
           <div className="ov-hero__tag">
             <span className="ov-livedot"/>
             <span className="mono" style={{fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--fg-300)"}}>
-              {liveActiveCount ?? active.length} active descriptors · {liveHealthyCount ?? nominal} healthy · 5-of-7 BFT
+              {liveActiveCount ?? active.length} active descriptors · {liveHealthyCount ?? nominal} healthy · {liveQuorumLabel ?? "5-of-7 BFT"}
             </span>
           </div>
           <h1 className="ov-hero__title">
@@ -1233,18 +1246,43 @@ const ClustersPage = ({go}: any) => {
         <div className="ov-hero__stats">
           <HeadlineStat label="Active clusters" value={liveActiveCount !== null ? `${liveActiveCount}` : `${active.length}/100`}
             sub={liveDescriptorCount !== null ? `${liveDescriptorCount} descriptors from RPC` : `${inactive.length} inactive · ${jailed.length} jailed`} delta={liveHealthyCount !== null ? `${liveHealthyCount} healthy` : jailed.length===0?"all healthy":`${jailed.length} cooling down`} tone={jailed.length===0?"ok":"err"}/>
-          <HeadlineStat label="Total value staked" value={`${totalTvs.toFixed(0)}M LYTH`}
-            sub="across active clusters" delta="+0.4M · 24h" tone="gold" accent/>
-          <HeadlineStat label="Average APY" value={`${avgApy.toFixed(2)}%`}
-            sub={`top cluster · ${topApy.toFixed(2)}%`} delta="paid in LYTH" tone="ok"/>
-          <HeadlineStat label="Min TVS to enter top 100" value={`${minToEnter.toFixed(2)}M`}
-            sub="ranking updates every epoch" delta={`${openCount} accepting ops`} tone="neutral"/>
+          <HeadlineStat
+            label="Total value staked"
+            value={totalTvs !== null ? `${totalTvs.toFixed(0)}M LYTH` : "—"}
+            sub={totalTvs !== null ? "across active clusters" : "not exposed by live RPC yet"}
+            delta={totalTvs !== null ? "+0.4M · 24h" : ""}
+            tone="gold"
+            accent
+          />
+          <HeadlineStat
+            label="Average APY"
+            value={avgApy !== null ? `${avgApy.toFixed(2)}%` : "—"}
+            sub={avgApy !== null ? `top cluster · ${topApy!.toFixed(2)}%` : "no reward aggregate endpoint"}
+            delta={avgApy !== null ? "paid in LYTH" : ""}
+            tone="ok"
+          />
+          <HeadlineStat
+            label="Min TVS to enter top 100"
+            value={minToEnter !== null ? `${minToEnter.toFixed(2)}M` : "—"}
+            sub={minToEnter !== null ? "ranking updates every epoch" : "no top-100 entry threshold yet"}
+            delta={minToEnter !== null ? `${openCount} accepting ops` : ""}
+            tone="neutral"
+          />
           <HeadlineStat label="Delegation cap" value={delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "off" : `${delegationCap.data.capBps} bps`) : "—"}
             sub={delegationCap.data ? `sampled at block ${Number(delegationCap.data.blockNumber).toLocaleString()}` : "live RPC"} delta="protocol control" tone="neutral"/>
         </div>
       </section>
 
       {/* ---------- FEATURED CLUSTERS ---------- */}
+      {haveLiveDirectory && liveDescriptorCount !== null && liveDescriptorCount < featured.length ? (
+        <section className="ms-card" style={{padding:"18px 20px"}}>
+          <div className="cap" style={{color:"var(--gold)",marginBottom:8}}>Featured clusters</div>
+          <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
+            Live chain reports {liveDescriptorCount} cluster{liveDescriptorCount === 1 ? "" : "s"}.
+            Featured-by-yield rows are hidden until a reward-history aggregate is exposed by the node.
+          </div>
+        </section>
+      ) : (
       <section>
         <div className="ov-feed__head" style={{marginBottom:14}}>
           <div>
@@ -1296,6 +1334,19 @@ const ClustersPage = ({go}: any) => {
           })}
         </div>
       </section>
+      )}
+
+      {/* ---------- LIVE CLUSTER NOTICE ---------- */}
+      {haveLiveDirectory && liveDescriptorCount !== null && liveDescriptorCount !== active.length && (
+        <section className="ms-card" style={{padding:"14px 18px"}}>
+          <div className="cap" style={{color:"var(--gold)",marginBottom:6}}>Live cluster directory</div>
+          <div className="mono" style={{color:"var(--fg-300)",fontSize:12.5,lineHeight:1.55}}>
+            Live RPC reports {liveDescriptorCount} cluster{liveDescriptorCount === 1 ? "" : "s"}
+            {liveQuorumLabel ? ` · ${liveQuorumLabel}` : ""}.
+            The table below preserves the fixture for design reference; only the live cluster ids will resolve when clicked.
+          </div>
+        </section>
+      )}
 
       {/* ---------- ACTIVE / INACTIVE TABBED LIST ---------- */}
       <section>
@@ -1376,7 +1427,7 @@ const ClustersPage = ({go}: any) => {
         ) : (
           <>
             <p className="ov-section-desc" style={{marginBottom:14,maxWidth:720}}>
-              Not earning this epoch. <span style={{color:"var(--state-jail, #ff6b6b)"}}>Jailed</span> clusters were demoted after a slashing event and must stay live for <span style={{color:"var(--fg-200)"}}>100 rounds</span> before they're eligible for re-election. <span style={{color:"var(--fg-300)"}}>Queued</span> clusters are fully formed but sit below the rank-100 threshold of <span style={{color:"var(--fg-200)"}}>{minToEnter.toFixed(2)}M LYTH</span>.
+              Not earning this epoch. <span style={{color:"var(--state-jail, #ff6b6b)"}}>Jailed</span> clusters were demoted after a slashing event and must stay live for <span style={{color:"var(--fg-200)"}}>100 rounds</span> before they're eligible for re-election. <span style={{color:"var(--fg-300)"}}>Queued</span> clusters are fully formed but sit below the rank-100 threshold of <span style={{color:"var(--fg-200)"}}>{minToEnter !== null ? `${minToEnter.toFixed(2)}M LYTH` : "—"}</span>.
             </p>
             <div className="cl-chips">
               <div className="cl-chipgroup">
