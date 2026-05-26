@@ -276,14 +276,18 @@ const Landing = ({ go }: any) => {
     return sum + (Number.isFinite(price) && Number.isFinite(volume) ? price * volume : 0);
   }, 0);
 
+  // Only animate the local fixture ticker when no live chain data is
+  // reaching us. When chain stats / metrics are live the displayed values
+  // come from the polled hooks; the interval would just thrash React.
   useEffect(() => {
+    if (chainStats.data) return;
     const id = setInterval(() => {
       setRound(r => r + 1);
       setLatencySeries(s => [...s.slice(1), 340+Math.sin(Date.now()/4000)*16+Math.random()*14]);
       setRateSeries(s => [...s.slice(1), 2.8+Math.sin(Date.now()/5000)*0.15+Math.random()*0.08]);
     }, 380);
     return () => clearInterval(id);
-  }, []);
+  }, [chainStats.data]);
 
   const mono = markets.find(m=>m.sym==="LYTH") || { price: 8.42, chg24h: 2.4 };
   const vol24h = markets.reduce((a,t)=>a+t.vol24h,0);
@@ -523,7 +527,10 @@ const Landing = ({ go }: any) => {
             <p className="ov-section-desc">Every round commits a batch of encrypted transactions to the DAG. Click any row for its full receipt.</p>
           </div>
           <div className="mono" style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:"var(--fg-400)",letterSpacing:"0.04em"}}>
-            <span className="ov-livedot"/> streaming · {c.ratePerSec.toFixed(1)}/s
+            <span className="ov-livedot"/>
+            {hasLiveStats
+              ? `block ${fmt(liveStats?.latestHeight ?? 0)} · ${liveStats?.peerCount ?? 0} peers`
+              : `streaming · ${c.ratePerSec.toFixed(1)}/s`}
           </div>
         </div>
 
@@ -577,18 +584,22 @@ const Landing = ({ go }: any) => {
                   </div>
                 </div>
               ))
-            ) : SCAN.clusters.slice(0,5).map(cl=>(
-                <div key={cl.slot} className="ov-cluster-row" onClick={()=>go(`#/cluster/${cl.slot}`)}>
-                  <div>
-                    <div className="mono" style={{fontSize:12.5,color:"var(--fg-100)",fontWeight:500}}>C-{String(cl.slot).padStart(3,"0")}</div>
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{cl.members}/{cl.size} live · {cl.tvs}M TVS</div>
+            ) : SCAN.clusters.slice(0,5).map(cl=>{
+                const tvsMono = parseFloat(cl.tvs) * 1_000_000;
+                const apy = tvsMono > 0 ? (cl.reward30d * 12 / tvsMono) * 100 : 0;
+                return (
+                  <div key={cl.slot} className="ov-cluster-row" onClick={()=>go(`#/cluster/${cl.slot}`)}>
+                    <div>
+                      <div className="mono" style={{fontSize:12.5,color:"var(--fg-100)",fontWeight:500}}>C-{String(cl.slot).padStart(3,"0")}</div>
+                      <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{cl.members}/{cl.size} live · {cl.tvs}M TVS</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div className="mono num" style={{fontSize:12.5,color:"var(--gold)"}}>{apy.toFixed(2)}%</div>
+                      <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>APY</div>
+                    </div>
                   </div>
-                  <div style={{textAlign:"right"}}>
-                    <div className="mono num" style={{fontSize:12.5,color:"var(--gold)"}}>{(5.8+Math.random()*1.4).toFixed(2)}%</div>
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>APY</div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             <a href="#/clusters" onClick={()=>go("#/clusters")} className="mono ov-seeall">See all clusters →</a>
           </aside>
         </div>
@@ -621,17 +632,25 @@ const Landing = ({ go }: any) => {
           <div className="ms-denoms">
             <div className="ms-denom">
               <div className="cap" style={{color:"var(--gold)"}}>Public · LYTH</div>
-              <div className="mono" style={{fontSize:22,color:"var(--fg-100)",marginTop:6}}>{SCAN.supply.public}M</div>
-              <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>circulating · introspectable</div>
-              <div className="ms-bar"><div style={{width:`${SCAN.supply.publicPct}%`, background:"var(--gold)"}}/></div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>{SCAN.supply.publicPct}% of total</div>
+              <div className="mono" style={{fontSize:22,color:"var(--fg-100)",marginTop:6}}>
+                {hasLiveStats ? "—" : `${SCAN.supply.public}M`}
+              </div>
+              <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>
+                {hasLiveStats ? "no live supply endpoint yet" : "circulating · introspectable"}
+              </div>
+              <div className="ms-bar"><div style={{width:`${hasLiveStats ? 0 : SCAN.supply.publicPct}%`, background:"var(--gold)"}}/></div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+                {hasLiveStats ? "split unavailable until lyth_supply lands" : `${SCAN.supply.publicPct}% of total`}
+              </div>
             </div>
             <div className="ms-denom ms-denom--private">
               <div className="cap">Private · LYTH-p</div>
               <div className="mono" style={{fontSize:22,color:"var(--fg-200)",marginTop:6}}>
                 — <span style={{fontSize:11,color:"var(--fg-500)"}}>opaque</span>
               </div>
-              <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>{fmt(SCAN.supply.privateTxs30d)} private txs · 30d</div>
+              <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>
+                {hasLiveStats ? "private-tx aggregate requires indexer" : `${fmt(SCAN.supply.privateTxs30d)} private txs · 30d`}
+              </div>
               <div className="ms-bar"><div style={{width:"100%",background:"repeating-linear-gradient(135deg, rgba(255,255,255,0.18) 0 4px, transparent 4px 8px)"}}/></div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>amounts protocol-hidden</div>
             </div>
