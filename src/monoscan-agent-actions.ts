@@ -44,7 +44,10 @@ import {
   type EncodeNativeAgentSetSpendingPolicyArgs,
   type NativeAgentStateResponse,
 } from "@monolythium/core-sdk";
-import { getNativeAgentForwarderAddress } from "./sdk/client";
+import {
+  getNativeAgentForwarderAddress,
+  normalizeNativeForwarderContractAddress,
+} from "./sdk/client";
 
 const NATIVE_AGENT_FORWARDER_MAX_CYCLES = "22000";
 const NATIVE_AGENT_MRV_EXECUTION_UNIT_LIMIT_HEX = "0x200000";
@@ -418,7 +421,7 @@ function resolveNativeAgentForwarderAddress(
   if ((capabilities?.nativeModuleForwarders?.agent ?? []).length > 0) {
     throw new Error(`MRV native agent forwarder for ${requestBytes} request bytes is not configured.`);
   }
-  const fallback = fallbackAddress?.trim();
+  const fallback = normalizeNativeForwarderContractAddress(fallbackAddress);
   if (fallback) return fallback;
   throw new Error("MRV native agent forwarder address is not configured.");
 }

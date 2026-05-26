@@ -24,6 +24,8 @@ import {
   ownerStateAccount,
 } from "./monoscan-markets";
 
+const typedContract = (address: string) => addressToTypedBech32("contract", address);
+
 function capabilitiesWithMarketForwarder(
   requestBytes: number,
   contractAddress = "0x3333333333333333333333333333333333333333",
@@ -78,7 +80,7 @@ describe("buildMarketOrderWalletRequest", () => {
     expect(request.method).toBe("monolythium_submitMrvNativeCall");
     expect(request.params).toHaveLength(1);
     expect(request.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedForwarder.input,
       executionUnitLimitHex: "0x200000",
       valueWeiHex: "0x0",
@@ -112,7 +114,7 @@ describe("buildMarketOrderWalletRequest", () => {
       expiryBlock: "999",
     });
 
-    expect(request.params[0].contractAddress).toBe(capabilityAddress);
+    expect(request.params[0].contractAddress).toBe(typedContract(capabilityAddress));
     expect(request.params[0].input).toBe(expectedForwarder.input);
   });
 
@@ -193,7 +195,7 @@ describe("buildNftListingBuyWalletRequest", () => {
     expect(request.method).toBe("monolythium_submitMrvNativeCall");
     expect(request.params).toHaveLength(1);
     expect(request.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedForwarder.input,
       executionUnitLimitHex: "0x200000",
       valueWeiHex: "0x0",
@@ -260,7 +262,7 @@ describe("native NFT listing create/cancel wallet requests", () => {
     }, "22000");
 
     expect(request.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedForwarder.input,
       executionUnitLimitHex: "0x200000",
       valueWeiHex: "0x0",
@@ -280,7 +282,7 @@ describe("native NFT listing create/cancel wallet requests", () => {
     }, "22000");
 
     expect(request.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedForwarder.input,
       executionUnitLimitHex: "0x200000",
       valueWeiHex: "0x0",
@@ -328,7 +330,7 @@ describe("native NFT listing create/cancel wallet requests", () => {
     }, "22000");
 
     expect(request.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedForwarder.input,
       executionUnitLimitHex: "0x200000",
       valueWeiHex: "0x0",
@@ -378,7 +380,7 @@ describe("native NFT auction wallet requests", () => {
       currentBlock: 888,
     }, "22000");
     expect(bidRequest.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedBid.input,
       executionUnitLimitHex: "0x200000",
       valueWeiHex: "0x0",
@@ -394,7 +396,7 @@ describe("native NFT auction wallet requests", () => {
       currentBlock: 999,
     }, "22000");
     expect(settleRequest.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedSettle.input,
       executionUnitLimitHex: "0x200000",
       valueWeiHex: "0x0",
@@ -410,7 +412,7 @@ describe("native NFT auction wallet requests", () => {
       currentBlock: 777,
     }, "22000");
     expect(sweepRequest.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedSweep.input,
       executionUnitLimitHex: "0x200000",
       valueWeiHex: "0x0",

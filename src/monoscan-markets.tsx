@@ -38,7 +38,12 @@ import {
   useNativeMarketOrderBook,
   useNativeMarketState,
 } from "./data/hooks";
-import { getApiBaseUrl, getMarketIdForSymbol, getNativeMarketForwarderAddress } from "./sdk/client";
+import {
+  getApiBaseUrl,
+  getMarketIdForSymbol,
+  getNativeMarketForwarderAddress,
+  normalizeNativeForwarderContractAddress,
+} from "./sdk/client";
 
 /* ----- formatters ----- */
 const mkFmt = (n: any, dp?: any) => {
@@ -366,7 +371,7 @@ function _resolveNativeMarketForwarderAddress(
   if ((capabilities?.nativeModuleForwarders?.market ?? []).length > 0) {
     throw new Error(`MRV native market forwarder for ${requestBytes} request bytes is not configured.`);
   }
-  const fallback = fallbackAddress?.trim();
+  const fallback = normalizeNativeForwarderContractAddress(fallbackAddress);
   if (fallback) return fallback;
   throw new Error("MRV native market forwarder address is not configured.");
 }

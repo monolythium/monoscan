@@ -61,6 +61,8 @@ import {
   type NativeAgentWalletRequest,
 } from "./monoscan-agent-actions";
 
+const typedContract = (address: string) => addressToTypedBech32("contract", address);
+
 function capabilitiesWithAgentForwarder(
   requestBytes: number,
   contractAddress = "0x3333333333333333333333333333333333333333",
@@ -526,7 +528,7 @@ describe("native agent wallet request builders", () => {
 
     expect(request.method).toBe("monolythium_submitMrvNativeCall");
     expect(request.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedForwarder.input,
       executionUnitLimitHex: "0x200000",
       valueWeiHex: "0x0",
@@ -540,7 +542,7 @@ describe("native agent wallet request builders", () => {
 
     expect(actual.method).toBe("monolythium_submitMrvNativeCall");
     expect(actual.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedForwarder.input,
       executionUnitLimitHex: "0x200000",
       valueWeiHex: "0x0",
@@ -558,7 +560,7 @@ describe("native agent wallet request builders", () => {
     const request = buildNativeAgentCallWalletRequest(encodedCall, { forwarderContractAddress });
 
     expect(request.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedForwarder.input,
     });
   });
@@ -574,7 +576,7 @@ describe("native agent wallet request builders", () => {
       );
 
       expect(request.method).toBe("monolythium_submitMrvNativeCall");
-      expect(request.params[0].contractAddress).toBe(forwarderContractAddress);
+      expect(request.params[0].contractAddress).toBe(typedContract(forwarderContractAddress));
       expect(request.params[0].input).toMatch(/^0x[0-9a-f]+$/i);
     }
 
@@ -601,7 +603,7 @@ describe("native agent wallet request builders", () => {
     });
 
     expect(request.params[0]).toMatchObject({
-      contractAddress: "0x3333333333333333333333333333333333333333",
+      contractAddress: typedContract("0x3333333333333333333333333333333333333333"),
       input: expectedForwarder.input,
     });
     expect((request.params[0].input.length - 2) / 2).toBe(228);
@@ -623,7 +625,7 @@ describe("native agent wallet request builders", () => {
       executionUnitLimitHex: "0x1234",
     });
     expect(request.params[0]).toMatchObject({
-      contractAddress: forwarderContractAddress,
+      contractAddress: typedContract(forwarderContractAddress),
       input: expectedForwarder.input,
       executionUnitLimitHex: "0x1234",
     });
