@@ -48,7 +48,7 @@ describe("buildMarketOrderWalletRequest", () => {
   const baseTokenId = `0x${"11".repeat(32)}`;
   const quoteTokenId = `0x${"22".repeat(32)}`;
   const marketId = deriveClobMarketId(baseTokenId, quoteTokenId);
-  const ownerAddress = "0xabcdef0123456789abcdef0123456789abcdef01";
+  const ownerAddress = addressToTypedBech32("user", "0xabcdef0123456789abcdef0123456789abcdef01");
   const forwarderContractAddress = "0x2222222222222222222222222222222222222222";
 
   it("builds an MRV native forwarder call request for the wallet provider", () => {
@@ -173,7 +173,7 @@ describe("buildMarketOrderWalletRequest", () => {
 
 describe("buildNftListingBuyWalletRequest", () => {
   const listingId = `0x${"55".repeat(32)}`;
-  const buyerAddress = "0xabcdef0123456789abcdef0123456789abcdef01";
+  const buyerAddress = addressToTypedBech32("user", "0xabcdef0123456789abcdef0123456789abcdef01");
   const forwarderContractAddress = "0x2222222222222222222222222222222222222222";
 
   it("builds an MRV native NFT buy request for the wallet provider", () => {
@@ -225,7 +225,7 @@ describe("buildNftListingBuyWalletRequest", () => {
 });
 
 describe("native NFT listing create/cancel wallet requests", () => {
-  const sellerAddress = "0xabcdef0123456789abcdef0123456789abcdef01";
+  const sellerAddress = addressToTypedBech32("user", "0xabcdef0123456789abcdef0123456789abcdef01");
   const listingId = `0x${"55".repeat(32)}`;
   const collectionId = `0x${"22".repeat(32)}`;
   const tokenId = `0x${"33".repeat(32)}`;
@@ -360,7 +360,7 @@ describe("native NFT listing create/cancel wallet requests", () => {
 describe("native NFT auction wallet requests", () => {
   const listingId = `0x${"77".repeat(32)}`;
   const otherListingId = `0x${"88".repeat(32)}`;
-  const bidderAddress = "0xabcdef0123456789abcdef0123456789abcdef01";
+  const bidderAddress = addressToTypedBech32("user", "0xabcdef0123456789abcdef0123456789abcdef01");
   const forwarderContractAddress = "0x2222222222222222222222222222222222222222";
 
   it("builds auction bid, settle, and sweep forwarder requests", () => {
