@@ -2973,22 +2973,31 @@ const RoundPage = ({ round, go }: any) => {
               )}
             </div>
           )}
-          <div className="ms-card" style={{padding:0}}>
-            <table className="ms-table">
-              <thead><tr><th>Cluster</th><th>Txs</th><th>BLS agg</th><th>DAC</th><th></th></tr></thead>
-              <tbody>
-                {(verts.length ? verts : (MONOSCAN_DATA?.recentVertices || []).slice(0,6)).map((v,i)=>(
-                  <tr key={i} onClick={()=>go(`#/cluster/${v.clusterSlot}`)} style={{cursor:"pointer"}}>
-                    <td className="mono">C-{String(v.clusterSlot).padStart(3,"0")}</td>
-                    <td className="mono">{v.txCount} settled</td>
-                    <td className="mono">{v.blsAggMs.toFixed(1)}ms</td>
-                    <td><span className={`pill ${v.dac?"ok":"warn"}`}>{v.dac?"committed":"pending"}</span></td>
-                    <td className="mono" style={{color:"var(--fg-500)"}}>→</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/*
+            When live block / certificate / vertex data exists, the cards
+            above already show the truth. Only render the fixture cluster
+            vertex sample when monoscan is in offline / design-preview
+            mode so a fresh testnet does not see invented BLS-agg and DAC
+            numbers under live data.
+          */}
+          {!(liveHeader || liveCert || liveVertices.length > 0 || (liveParents?.length ?? 0) > 0) && (
+            <div className="ms-card" style={{padding:0}}>
+              <table className="ms-table">
+                <thead><tr><th>Cluster</th><th>Txs</th><th>BLS agg</th><th>DAC</th><th></th></tr></thead>
+                <tbody>
+                  {(verts.length ? verts : (MONOSCAN_DATA?.recentVertices || []).slice(0,6)).map((v,i)=>(
+                    <tr key={i} onClick={()=>go(`#/cluster/${v.clusterSlot}`)} style={{cursor:"pointer"}}>
+                      <td className="mono">C-{String(v.clusterSlot).padStart(3,"0")}</td>
+                      <td className="mono">{v.txCount} settled</td>
+                      <td className="mono">{v.blsAggMs.toFixed(1)}ms</td>
+                      <td><span className={`pill ${v.dac?"ok":"warn"}`}>{v.dac?"committed":"pending"}</span></td>
+                      <td className="mono" style={{color:"var(--fg-500)"}}>→</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </div>
