@@ -9,6 +9,7 @@
 import {
   ApiClient,
   RpcClient,
+  apiEndpointFromRpcEndpoint,
   type ApiClientOptions,
   type CapabilitiesResponse,
   type RpcClientOptions,
@@ -39,6 +40,30 @@ const DEFAULT_LYTH_TOKEN_ID = `0x${"00".repeat(32)}`;
 
 export function isRpcConfigured(): boolean {
   return RPC_URL.trim().length > 0;
+}
+
+/**
+ * Best-effort indexer base URL for "Try API" affordances.
+ *
+ * The browser uses a relative `/rpc` path during dev and behind Caddy, in
+ * which case the API path is `/api/v1` on the same origin. For absolute RPC
+ * endpoints, hand the URL to the SDK's `apiEndpointFromRpcEndpoint` helper.
+ * Returns `null` if the result is not openable in a browser tab.
+ */
+export function getApiBaseUrl(): string | null {
+  const trimmed = RPC_URL.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.startsWith("/")) {
+    if (typeof window === "undefined") return null;
+    const path = trimmed.replace(/\/+$/, "");
+    const apiPath = path === "/rpc" || path === "" ? "/api/v1" : `${path.replace(/\/rpc$/, "")}/api/v1`;
+    return `${window.location.origin}${apiPath}`;
+  }
+  try {
+    return apiEndpointFromRpcEndpoint(trimmed);
+  } catch {
+    return null;
+  }
 }
 
 /**

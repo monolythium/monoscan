@@ -38,7 +38,7 @@ import {
   useNativeMarketOrderBook,
   useNativeMarketState,
 } from "./data/hooks";
-import { getMarketIdForSymbol, getNativeMarketForwarderAddress } from "./sdk/client";
+import { getApiBaseUrl, getMarketIdForSymbol, getNativeMarketForwarderAddress } from "./sdk/client";
 
 /* ----- formatters ----- */
 const mkFmt = (n: any, dp?: any) => {
@@ -55,6 +55,57 @@ const mkDec = (value: any, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 const _shortMarketId = (id: string) => `${id.slice(0, 10)}…${id.slice(-6)}`;
+
+/**
+ * Write `text` to the clipboard and flash a "copied" pill for one second.
+ * Renders a no-op span when the browser does not expose navigator.clipboard.
+ */
+const CopyToClipboard = ({ text, title }: { text: string | null | undefined; title: string }) => {
+  const [copied, setCopied] = useState(false);
+  if (!text) return null;
+  const onClick = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1000);
+    } catch {
+      // Browsers may refuse without a user gesture context; surface nothing.
+    }
+  };
+  return (
+    <span
+      role="button"
+      onClick={onClick}
+      title={title}
+      style={{cursor:"pointer",color:copied ? "var(--gold)" : "var(--fg-300)"}}
+    >
+      {copied ? "copied" : "⎘"}
+    </span>
+  );
+};
+
+/**
+ * Anchor that opens the live indexer URL for the current market in a new
+ * tab. Hidden when no API base or no live market id is available.
+ */
+const TryApiLink = ({ marketId }: { marketId: string | null | undefined }) => {
+  if (!marketId) return null;
+  const base = getApiBaseUrl();
+  if (!base) return null;
+  const href = `${base.replace(/\/+$/, "")}/markets/${encodeURIComponent(marketId)}`;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      style={{cursor:"pointer",color:"var(--fg-300)",textDecoration:"none"}}
+      title={href}
+    >
+      Try API ↗
+    </a>
+  );
+};
 const _shortAddr = (id: string, head = 8, tail = 4) =>
   id && id.length > head + tail + 3 ? `${id.slice(0, head)}…${id.slice(-tail)}` : id;
 const _shortHash = (id: string | null | undefined, head = 10, tail = 6) =>
@@ -1821,8 +1872,8 @@ const MarketPage = ({ sym, go }: any) => {
           <div className="mono" style={{display:"flex",alignItems:"center",gap:10,marginTop:6,color:"var(--fg-400)",fontSize:11.5,letterSpacing:"0.02em"}}>
             <span style={{padding:"3px 8px",background:"rgba(255,255,255,0.04)",border:"1px solid var(--fg-700)",borderRadius:4}}>{tkn.contract}</span>
             {marketId && <span title={marketId}>market {_shortMarketId(marketId)}</span>}
-            <span style={{cursor:"pointer",color:"var(--fg-300)"}} title="copy">⎘</span>
-            <span style={{cursor:"pointer",color:"var(--fg-300)"}}>Try API ↗</span>
+            <CopyToClipboard text={marketId ?? tkn.contract} title={marketId ? `copy ${marketId}` : `copy ${tkn.contract}`}/>
+            <TryApiLink marketId={marketId}/>
             <span>·</span>
             <span>listed {tkn.age.days}d ago</span>
           </div>
