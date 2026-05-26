@@ -808,6 +808,7 @@ const StatsPage = ({ go }: any) => {
   };
   const finalityLag = latestMetricSample("finality_lag");
   const attestationRate = latestMetricSample("attestation_rate");
+  const proposerLatency = latestMetricSample("proposer_latency");
   const formatMetricValue = (sample: any) => sample
     ? `${Number(sample.value).toLocaleString(undefined, { maximumFractionDigits: 2 })}${sample.unit ? ` ${sample.unit}` : ""}`
     : "—";
@@ -891,7 +892,14 @@ const StatsPage = ({ go }: any) => {
           sub={liveChainId !== null ? `chain ${liveChainId} · lyth_chainStats` : "lyth_chainStats"}
           tone="neutral"
         />
-        <StatCounter label="Smart contracts deployed" value={_fmt(t.contracts)} sub={`${t.tokensListed} listed tokens`} tone="neutral"/>
+        <StatCounter
+          label="Smart contracts deployed"
+          value={indexerAvailability.disabled ? "—" : _fmt(t.contracts)}
+          sub={indexerAvailability.disabled
+            ? "deploy counter requires an indexed peer"
+            : `${t.tokensListed} listed tokens`}
+          tone="neutral"
+        />
         <StatCounter label="Execution price" value={executionUnitPrice ?? "—"} sub={feeStats.data?.baseFeePerGas.length ? `${feePriceSub} · ${feeStats.data.baseFeePerGas.length} samples` : feePriceSub} tone="neutral"/>
         <StatCounter label="Protocol surfaces" value={activePrecompiles !== null ? `${activePrecompiles}` : "—"} sub={precompiles.data ? `${precompiles.data.length} precompiles reported` : "live precompile registry"} tone="neutral"/>
         <StatCounter
@@ -944,6 +952,14 @@ const StatsPage = ({ go }: any) => {
       <section>
         <h3 className="ov-section-title">Economy · issuance, rewards, slashing</h3>
         <p className="ov-section-desc">MONO minted as staking rewards, burned via base fees, slashed for operator misbehavior, and still waiting to be claimed.</p>
+        {indexerAvailability.disabled ? (
+          <div className="ms-card" style={{padding:"18px 20px"}}>
+            <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
+              {indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.
+              Economy aggregates (net inflation, accrued rewards, all-time slashing) are computed by the indexer; the cards will populate once an indexed peer is reachable.
+            </div>
+          </div>
+        ) : (
         <div className="stats-econ-grid">
           <StatBig
             label="Net inflation · since genesis"
@@ -973,6 +989,7 @@ const StatsPage = ({ go }: any) => {
             footer={S.slashing.lastEvent}
           />
         </div>
+        )}
       </section>
 
       {/* Secondary tables */}
@@ -980,6 +997,12 @@ const StatsPage = ({ go }: any) => {
         <div>
           <h3 className="ov-section-title">Activity · last 30 days</h3>
           <Card title="">
+            {indexerAvailability.disabled ? (
+              <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
+                {indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.
+                30-day activity rollups (transactions, rewards paid, slashing, new contracts, new wallets) come from the indexer.
+              </div>
+            ) : (
             <table className="ms-table stats-table">
               <thead><tr><th>Metric</th><th style={{textAlign:"right"}}>30d total</th><th style={{textAlign:"right"}}>Daily avg</th><th style={{textAlign:"right"}}>Trend</th></tr></thead>
               <tbody>
@@ -1015,21 +1038,69 @@ const StatsPage = ({ go }: any) => {
                 </tr>
               </tbody>
             </table>
+            )}
           </Card>
         </div>
         <div>
           <h3 className="ov-section-title">Health · right now</h3>
           <Card title="">
             <div className="stats-health">
-              <HealthRow label="Rounds produced / day" value={_fmtI(S.network.avgRoundsPerDay)} tone="ok"/>
-              <HealthRow label="Clusters in jail cooldown" value={`${MONOSCAN_DATA.clusters.filter(c=>c.inactiveReason==="jailed").length}`} tone="warn"/>
-              <HealthRow label="Clusters recruiting ops" value={`${MONOSCAN_DATA.clusters.filter(c=>c.recruiting && c.active).length}`} tone="neutral"/>
-              <HealthRow label="Avg commit latency (p95)" value="342ms" tone="ok"/>
-              <HealthRow label="Last slashing event" value="3 rounds ago" tone="warn"/>
+              <HealthRow
+                label="Rounds produced / day"
+                value={liveLatestBlock !== null
+                  ? `${_fmtI(liveLatestBlock)} total rounds`
+                  : _fmtI(S.network.avgRoundsPerDay)}
+                tone="ok"
+              />
+              <HealthRow
+                label="Clusters in jail cooldown"
+                value={indexerAvailability.disabled
+                  ? "—"
+                  : `${MONOSCAN_DATA.clusters.filter(c=>c.inactiveReason==="jailed").length}`}
+                tone={indexerAvailability.disabled ? "neutral" : "warn"}
+              />
+              <HealthRow
+                label="Clusters recruiting ops"
+                value={indexerAvailability.disabled
+                  ? "—"
+                  : `${MONOSCAN_DATA.clusters.filter(c=>c.recruiting && c.active).length}`}
+                tone="neutral"
+              />
+              <HealthRow
+                label="Proposer latency (p95)"
+                value={proposerLatency
+                  ? formatMetricValue(proposerLatency)
+                  : indexerAvailability.disabled ? "—" : "342ms"}
+                tone="ok"
+              />
+              <HealthRow
+                label="Attestation rate"
+                value={attestationRate
+                  ? formatMetricValue(attestationRate)
+                  : indexerAvailability.disabled ? "—" : "97.8%"}
+                tone="ok"
+              />
+              <HealthRow
+                label="Last slashing event"
+                value={indexerAvailability.disabled ? "—" : "3 rounds ago"}
+                tone={indexerAvailability.disabled ? "neutral" : "warn"}
+              />
               <HealthRow label="Last halted (emergency)" value="never" tone="ok"/>
-              <HealthRow label="Private tx DAC coverage" value="91.4%" tone="ok"/>
-              <HealthRow label="Bridge queue · CCIP" value="41 pending" tone="neutral"/>
-              <HealthRow label="Bridge fees · LINK" value="ready" tone="ok"/>
+              <HealthRow
+                label="Private tx DAC coverage"
+                value={indexerAvailability.disabled ? "—" : "91.4%"}
+                tone={indexerAvailability.disabled ? "neutral" : "ok"}
+              />
+              <HealthRow
+                label="Bridge queue · CCIP"
+                value={indexerAvailability.disabled ? "—" : "41 pending"}
+                tone="neutral"
+              />
+              <HealthRow
+                label="Bridge fees · LINK"
+                value={indexerAvailability.disabled ? "—" : "ready"}
+                tone={indexerAvailability.disabled ? "neutral" : "ok"}
+              />
             </div>
           </Card>
         </div>
@@ -1257,6 +1328,7 @@ const SupplyPie = ({ slices, hover, setHover }: any) => {
    WALLET DETAIL PAGE
 ===================================================== */
 const WalletPage = ({ addr, go }: any) => {
+  const indexerAvailability = useIndexerAvailability();
   const live = useAccountHistory(addr);
   const profile = useAddressProfile(addr);
   const addressFlow = useAddressFlow(addr, 250);
@@ -1353,11 +1425,19 @@ const WalletPage = ({ addr, go }: any) => {
       {/* Hero */}
       <section className="wd-hero">
         <div className="wd-hero__meta">
-          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em"}}>WALLET · #{w.rank} OF {WALLETS.length}</div>
+          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em"}}>
+            WALLET{fallbackWallet ? ` · #${w.rank} OF ${WALLETS.length}` : indexerAvailability.disabled ? " · live · rank requires indexer" : " · live"}
+          </div>
           <h1 className="wd-hero__title">{liveLabel?.displayName || w.tag || "Unlabeled wallet"}</h1>
           <div className="mono wd-hero__addr">{w.addr}</div>
           <div className="wd-hero__facts mono">
-            <span>First seen · {w.firstSeenAgo}</span>
+            <span>
+              {fallbackWallet
+                ? `First seen · ${w.firstSeenAgo}`
+                : indexerAvailability.disabled
+                  ? "First seen · indexer required"
+                  : `First seen · ${w.firstSeenAgo}`}
+            </span>
             <span className="sep"/>
             <span>{liveNonce !== null ? `${liveNonce} confirmed sends` : `${_fmt(w.txCount)} transactions`}</span>
             {liveActivityKind && <><span className="sep"/><span>Activity · {liveActivityKind.kind}</span></>}
@@ -1371,7 +1451,15 @@ const WalletPage = ({ addr, go }: any) => {
           <div className="wd-bal wd-bal--primary">
             <div className="mono wd-bal__label">MONO · public</div>
             <div className="mono num wd-bal__value">{liveBalance ?? _fmt(w.bal)}</div>
-            <div className="mono wd-bal__sub">{liveBalance ? "live RPC balance" : `${w.pct.toFixed(3)}% of supply`}</div>
+            <div className="mono wd-bal__sub">
+              {liveBalance
+                ? "live RPC balance"
+                : fallbackWallet
+                  ? `${w.pct.toFixed(3)}% of supply`
+                  : indexerAvailability.disabled
+                    ? "% of supply requires indexer"
+                    : "—"}
+            </div>
           </div>
           {w.extras.map((e,i)=>(
             <div key={i} className="wd-bal">
@@ -1607,17 +1695,28 @@ const WalletPage = ({ addr, go }: any) => {
       {/* Flow diagram */}
       <section>
         <h3 className="ov-section-title">30-day flow</h3>
-        <p className="ov-section-desc">
-          {flowTotals ? `Indexed sample flow from ${addressFlow.data?.sampleSize ?? 0} retained rows.` : "Inflow, outflow, staking delegations, and rewards earned."}
-          {" "}Net position {displayedNet >= 0 ? "grew" : "shrank"} by {_fmt(Math.abs(displayedNet))} LYTH over the period.
-        </p>
-        <div className="wd-flow-grid">
-          <FlowCard label="In" value={flowIn} unit="LYTH" tone="ok" series={w.flow30d.map(d=>d.in)}/>
-          <FlowCard label="Out" value={flowOut} unit="LYTH" tone="err" series={w.flow30d.map(d=>d.out)}/>
-          <FlowCard label="Staked" value={flowStake} unit="LYTH" tone="neutral" series={w.flow30d.map(d=>d.stake)}/>
-          <FlowCard label="Rewards" value={flowRewards} unit="LYTH" tone="gold" series={w.flow30d.map(d=>d.reward)}/>
-        </div>
-        <FlowDiagram wallet={w} totalIn={flowIn} totalOut={flowOut} totalRw={flowRewards}/>
+        {indexerAvailability.disabled && !fallbackWallet ? (
+          <div className="ms-card" style={{padding:"16px 18px"}}>
+            <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
+              {indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.
+              30-day inflow/outflow, staking activity, and rewards-earned aggregates require an indexed peer.
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="ov-section-desc">
+              {flowTotals ? `Indexed sample flow from ${addressFlow.data?.sampleSize ?? 0} retained rows.` : "Inflow, outflow, staking delegations, and rewards earned."}
+              {" "}Net position {displayedNet >= 0 ? "grew" : "shrank"} by {_fmt(Math.abs(displayedNet))} LYTH over the period.
+            </p>
+            <div className="wd-flow-grid">
+              <FlowCard label="In" value={flowIn} unit="LYTH" tone="ok" series={w.flow30d.map(d=>d.in)}/>
+              <FlowCard label="Out" value={flowOut} unit="LYTH" tone="err" series={w.flow30d.map(d=>d.out)}/>
+              <FlowCard label="Staked" value={flowStake} unit="LYTH" tone="neutral" series={w.flow30d.map(d=>d.stake)}/>
+              <FlowCard label="Rewards" value={flowRewards} unit="LYTH" tone="gold" series={w.flow30d.map(d=>d.reward)}/>
+            </div>
+            <FlowDiagram wallet={w} totalIn={flowIn} totalOut={flowOut} totalRw={flowRewards}/>
+          </>
+        )}
       </section>
 
       {(addressFlow.data?.topCounterparties?.length ?? 0) > 0 && (

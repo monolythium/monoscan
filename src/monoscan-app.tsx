@@ -33,6 +33,7 @@ import {
   useEntityRatchet,
   useMetricsRange,
   useIndexerAvailability,
+  useLiveOperatorRoster,
   useOperatorCapabilities,
 } from "./data/hooks";
 import { AskPage } from "./nl/AskPage";
@@ -779,6 +780,12 @@ const ClusterPage = ({ slot, go }: any) => {
   const delegationCap = useDelegationCap();
   const clusterEntity = useClusterEntity(liveClusterId);
   const entityRatchet = useEntityRatchet();
+  const indexerAvailability = useIndexerAvailability();
+  // When the live cluster directory resolves, the chain has not yet
+  // exposed TVS / reward / vertex inclusion aggregates. Suppress the
+  // fixture-derived hero stats so the page does not lie about economic
+  // performance for a real cluster.
+  const showLiveHero = liveCluster !== null || liveStatus !== null && liveStatus !== undefined;
   const apy = clusterApy(cl);
   const liveRingMembers = liveStatus?.members?.length
     ? liveStatus.members.map((m, i) => ({
@@ -900,23 +907,39 @@ const ClusterPage = ({ slot, go }: any) => {
           <div className="cl-hero__stats">
             <div className="cl-bigstat cl-bigstat--gold">
               <div className="cap">Current APY</div>
-              <div className="cl-bigstat__num mono num">{apy.toFixed(2)}%</div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>paid in LYTH · per delegated stake</div>
+              <div className="cl-bigstat__num mono num">{showLiveHero ? "—" : `${apy.toFixed(2)}%`}</div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+                {showLiveHero
+                  ? "no reward aggregate exposed"
+                  : "paid in LYTH · per delegated stake"}
+              </div>
             </div>
             <div className="cl-bigstat">
               <div className="cap">TVS</div>
-              <div className="cl-bigstat__num mono num">{cl.tvs}M</div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>MONO delegated</div>
+              <div className="cl-bigstat__num mono num">{showLiveHero ? "—" : `${cl.tvs}M`}</div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+                {showLiveHero
+                  ? (indexerAvailability.disabled ? indexerAvailability.reason ?? "indexer disabled" : "no TVS endpoint yet")
+                  : "MONO delegated"}
+              </div>
             </div>
             <div className="cl-bigstat">
               <div className="cap">Reward · 30d</div>
-              <div className="cl-bigstat__num mono num" style={{color:"var(--gold)"}}>+{fmt(cl.reward30d)}</div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>MONO distributed</div>
+              <div className="cl-bigstat__num mono num" style={{color:"var(--gold)"}}>
+                {showLiveHero ? "—" : `+${fmt(cl.reward30d)}`}
+              </div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+                {showLiveHero ? "no reward history yet" : "MONO distributed"}
+              </div>
             </div>
             <div className="cl-bigstat">
               <div className="cap">Vertex inclusion</div>
-              <div className="cl-bigstat__num mono num" style={{color: cl.vertexInclude>0.98 ? "var(--ok)" : "var(--warn)"}}>{pct(cl.vertexInclude,1)}</div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>clusters tracked</div>
+              <div className="cl-bigstat__num mono num" style={{color: showLiveHero ? "var(--fg-300)" : (cl.vertexInclude>0.98 ? "var(--ok)" : "var(--warn)")}}>
+                {showLiveHero ? "—" : pct(cl.vertexInclude,1)}
+              </div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+                {showLiveHero ? "metric requires indexed vertex history" : "clusters tracked"}
+              </div>
             </div>
           </div>
 
@@ -1046,8 +1069,18 @@ const KVRow = ({ label, value, mono }: any) => (
 
 /* ============== OPERATOR PROFILE ============== */
 const OperatorPage = ({ addr, go }: any) => {
-  const op = SCAN.operators.find(o => o.addrShort===addr) || SCAN.operators[0];
   const liveOperatorId = /^0x[0-9a-fA-F]{64}$/.test(addr) ? addr : undefined;
+  const fixtureMatch = SCAN.operators.find(o => o.addrShort===addr);
+  const op = fixtureMatch ?? SCAN.operators[0];
+  // Drive the page from live data when the URL carries a real 32-byte
+  // operator id. The fixture profile only renders when monoscan is in
+  // offline / design-preview mode (no live operator handle).
+  const useLiveProfile = liveOperatorId !== undefined;
+  const indexerAvailability = useIndexerAvailability();
+  const roster = useLiveOperatorRoster();
+  const liveMembership = liveOperatorId
+    ? roster.operators.find((row) => row.operatorId === liveOperatorId) ?? null
+    : null;
   const operatorInfo = useOperatorInfo(liveOperatorId);
   const authority = useOperatorAuthority(liveOperatorId);
   const authorityIndex = authority.data?.authorityIndex;
@@ -1076,27 +1109,64 @@ const OperatorPage = ({ addr, go }: any) => {
       <div className="ms-crumb">
         <a href="#/operators" onClick={()=>go("#/operators")}>Operators</a>
         <span>›</span>
-        <b>{op.handle}</b>
+        <b>{useLiveProfile ? (liveOperatorId ? `${liveOperatorId.slice(0,10)}…${liveOperatorId.slice(-4)}` : addr) : op.handle}</b>
       </div>
       <section className="ms-op-hero">
-        <span className="ms-avatar ms-avatar--lg" style={{background:`oklch(0.62 0.16 ${op.handle.charCodeAt(0)*9%360})`}}/>
+        <span
+          className="ms-avatar ms-avatar--lg"
+          style={{background:`oklch(0.62 0.16 ${(useLiveProfile ? (liveOperatorId ?? addr) : op.handle).charCodeAt(2)*9%360})`}}
+        />
         <div style={{flex:1}}>
           <div className="cap">Operator · stable across clusters</div>
-          <h1 className="ms-h1">{op.handle}</h1>
+          <h1 className={useLiveProfile ? "ms-h1 mono" : "ms-h1"}>
+            {useLiveProfile ? (liveOperatorId ? `${liveOperatorId.slice(0,12)}…${liveOperatorId.slice(-6)}` : addr) : op.handle}
+          </h1>
           <div className="mono" style={{color:"var(--fg-300)",marginTop:4}}>
-            {op.addrShort} · {op.region} · active since {op.activeSince}
+            {useLiveProfile
+              ? `${liveMembership ? `cluster ${liveMembership.clusterId} · state ${liveMembership.state}` : "membership unresolved"}${authorityIndex !== undefined && authorityIndex !== null ? ` · authority #${authorityIndex}` : ""}`
+              : `${op.addrShort} · ${op.region} · active since ${op.activeSince}`}
           </div>
         </div>
         <div className="ms-cluster-stats">
-          <Stat label="Reputation" value={op.reputation.toFixed(3)}/>
-          <Stat label="Uptime · 90d" value={pct(op.uptime,2)} tone="ok"/>
-          <Stat label="Bonded" value={`${fmt(op.bonded)} LYTH`}/>
-          <Stat label="Slash" value={op.slashes===0 ? "0 · clean" : `${op.slashes}`} tone={op.slashes===0?"ok":"warn"}/>
+          {useLiveProfile ? (
+            <>
+              <Stat label="Reputation" value="—"/>
+              <Stat label="Uptime · 90d" value="—"/>
+              <Stat label="Bonded" value={operatorInfo.data?.bondedAmount ?? "—"}/>
+              <Stat label="Slash" value={risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}% miss` : "—"}/>
+            </>
+          ) : (
+            <>
+              <Stat label="Reputation" value={op.reputation.toFixed(3)}/>
+              <Stat label="Uptime · 90d" value={pct(op.uptime,2)} tone="ok"/>
+              <Stat label="Bonded" value={`${fmt(op.bonded)} LYTH`}/>
+              <Stat label="Slash" value={op.slashes===0 ? "0 · clean" : `${op.slashes}`} tone={op.slashes===0?"ok":"warn"}/>
+            </>
+          )}
         </div>
       </section>
 
       <section className="ms-grid-2">
         <Card title="Cluster memberships">
+          {useLiveProfile && liveMembership ? (
+            <table className="ms-table">
+              <thead><tr><th>Cluster</th><th>State</th><th style={{textAlign:"right"}}>BLS pubkey</th></tr></thead>
+              <tbody>
+                <tr onClick={()=>go(`#/cluster/${liveMembership.clusterId + 1}`)}>
+                  <td className="mono" style={{fontWeight:500}}>cluster {liveMembership.clusterId}</td>
+                  <td><span className={`pill ${liveMembership.state==="active" ? "ok" : "warn"}`} style={{fontSize:10}}>{liveMembership.state}</span></td>
+                  <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-300)"}}>
+                    {liveMembership.blsPubkey ? `${liveMembership.blsPubkey.slice(0,14)}…` : "—"}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          ) : useLiveProfile ? (
+            <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"10px 4px"}}>
+              No live cluster membership resolved for this operator id. Reward / joined-round / role aggregates require an indexed peer
+              {indexerAvailability.disabled ? ` (${indexerAvailability.reason ?? "indexer disabled"})` : ""}.
+            </div>
+          ) : (
           <table className="ms-table">
             <thead><tr><th>Cluster</th><th>Role</th><th style={{textAlign:"right"}}>Joined</th><th style={{textAlign:"right"}}>Reward 30d</th></tr></thead>
             <tbody>
@@ -1110,6 +1180,7 @@ const OperatorPage = ({ addr, go }: any) => {
               ))}
             </tbody>
           </table>
+          )}
         </Card>
         <Card title="Live operator telemetry">
           <div className="tx-kv">
@@ -1128,23 +1199,39 @@ const OperatorPage = ({ addr, go }: any) => {
           </div>
         </Card>
         <Card title="Reputation timeline · 12 months">
-          <Sparkline data={op.repHist} width={520} height={140} color="var(--ok)"/>
-          <div className="mono" style={{fontSize:11,color:"var(--fg-400)",marginTop:10,lineHeight:1.6}}>
-            Reputation is a global, slowly-decaying metric — not cluster-bound.
-            It moves with vertex inclusion rate, peer RTT, and committed duty completion.
-          </div>
+          {useLiveProfile ? (
+            <div className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,padding:"6px 2px"}}>
+              Reputation history requires an indexed peer{indexerAvailability.disabled ? ` (${indexerAvailability.reason ?? "indexer disabled"})` : ""}.
+              The reputation surface is global and slowly-decaying; it tracks vertex inclusion rate, peer RTT, and committed duty completion.
+            </div>
+          ) : (
+            <>
+              <Sparkline data={op.repHist} width={520} height={140} color="var(--ok)"/>
+              <div className="mono" style={{fontSize:11,color:"var(--fg-400)",marginTop:10,lineHeight:1.6}}>
+                Reputation is a global, slowly-decaying metric — not cluster-bound.
+                It moves with vertex inclusion rate, peer RTT, and committed duty completion.
+              </div>
+            </>
+          )}
         </Card>
       </section>
 
       <Card title="Service capabilities advertised">
-        <div className="ms-caps">
-          {Object.entries(op.caps).map(([k,v])=>(
-            <div key={k} className={`ms-cap ${v?"is-on":""}`}>
-              <span className="ms-cap__check">{v?"✓":"—"}</span>
-              <span>{k}</span>
-            </div>
-          ))}
-        </div>
+        {useLiveProfile ? (
+          <div className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,padding:"6px 2px"}}>
+            Service-capability advertisements live in the node-registry precompile and surface here once an operator publishes its capability mask.
+            Live operators on this chain have not registered profiles yet.
+          </div>
+        ) : (
+          <div className="ms-caps">
+            {Object.entries(op.caps).map(([k,v])=>(
+              <div key={k} className={`ms-cap ${v?"is-on":""}`}>
+                <span className="ms-cap__check">{v?"✓":"—"}</span>
+                <span>{k}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -1544,20 +1631,24 @@ const MiniRing = ({ members, size=110, threshold=5 }: any) => {
 };
 
 const OperatorsPage = ({go}: any) => {
-  // Live cluster descriptors (id + pubkey + stake + active flag). It's a thin
-  // shape compared to the mocked operator profiles below; once the indexer
-  // surfaces operator reputation/region/uptime aggregates we can swap the mock
-  // list entirely.
-  // TODO(monolythium): the SDK does not yet expose operator
-  // memberships, region, reputation, or 90d uptime — see plans/monoscan.md
-  // Stage 3 + mono-core OI-0070.
   const clusters = useClusterSet();
   const healthyClusters = useHealthyClusters();
+  const roster = useLiveOperatorRoster();
+  const indexerAvailability = useIndexerAvailability();
   const liveCount = clusters.data?.length ?? null;
   const healthyCount = healthyClusters.data?.length ?? null;
+  // The chain publishes per-cluster member rosters but no rich operator
+  // profile yet (lyth_operatorInfo returns "not registered" until an
+  // operator opts in via the node registry precompile). Fall back to the
+  // fixture roster only when the cluster directory is unreachable — show
+  // a typed empty/operator-id row whenever the live data resolves.
+  const useLiveRoster = roster.loaded && roster.operators.length > 0;
   return (
     <div className="ms-page">
-      <h1 className="ms-h1">Operators · {SCAN.operators.length}</h1>
+      <h1 className="ms-h1">
+        Operators · {useLiveRoster ? roster.operators.length : SCAN.operators.length}
+        {useLiveRoster ? <span className="mono" style={{fontSize:12,color:"var(--fg-500)",marginLeft:10}}>live</span> : null}
+      </h1>
       <div className="mono" style={{color:"var(--fg-400)",marginBottom:18,fontSize:13}}>
         Operators carry stable identity across clusters · reputation follows the address, not the seat.
       </div>
@@ -1565,13 +1656,35 @@ const OperatorsPage = ({go}: any) => {
         <div className="mono" style={{color:"var(--fg-500)",marginBottom:14,fontSize:11,letterSpacing:"0.06em"}}>
           live cluster descriptors · {liveCount} descriptor{liveCount===1?"":"s"}
           {healthyCount !== null ? ` · ${healthyCount} healthy` : ""}
+          {roster.failedClusters.length > 0 ? ` · ${roster.failedClusters.length} unreachable` : ""}
         </div>
       )}
       <Card title="">
         <table className="ms-table">
-          <thead><tr><th>Operator</th><th>Region</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Uptime 90d</th><th style={{textAlign:"right"}}>Bonded</th><th style={{textAlign:"right"}}>Clusters</th><th style={{textAlign:"right"}}>Slash</th></tr></thead>
+          <thead><tr><th>Operator</th><th>State</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Uptime 90d</th><th style={{textAlign:"right"}}>Bonded</th><th style={{textAlign:"right"}}>Clusters</th><th style={{textAlign:"right"}}>Slash</th></tr></thead>
           <tbody>
-            {SCAN.operators.map(op=>(
+            {useLiveRoster ? roster.operators.map((op)=>{
+              const opShort = `${op.operatorId.slice(0, 10)}…${op.operatorId.slice(-4)}`;
+              return (
+                <tr key={op.operatorId} onClick={()=>go(`#/operator/${encodeURIComponent(op.operatorId)}`)}>
+                  <td>
+                    <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                      <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${op.operatorId.charCodeAt(2)*9%360})`}}/>
+                      <div>
+                        <div style={{fontWeight:500,fontSize:13}} className="mono">{opShort}</div>
+                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>cluster {op.clusterId} · BLS {op.blsPubkey ? `${op.blsPubkey.slice(0, 10)}…` : "—"}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span className={`pill ${op.state==="active" ? "ok" : "warn"}`} style={{fontSize:10}}>{op.state}</span></td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                  <td className="mono num" style={{textAlign:"right"}}>1</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                </tr>
+              );
+            }) : SCAN.operators.map(op=>(
               <tr key={op.addrShort} onClick={()=>go(`#/operator/${op.addrShort}`)}>
                 <td>
                   <div style={{display:"flex",gap:10,alignItems:"center"}}>
@@ -1592,6 +1705,13 @@ const OperatorsPage = ({go}: any) => {
             ))}
           </tbody>
         </table>
+        {useLiveRoster && (
+          <div className="mono" style={{color:"var(--fg-500)",fontSize:11,padding:"10px 14px",lineHeight:1.55,borderTop:"1px solid var(--fg-700)"}}>
+            Reputation / uptime / bonded / slash aggregates require an indexed peer
+            {indexerAvailability.disabled ? ` (${indexerAvailability.reason ?? "indexer disabled"})` : ""}.
+            Rows are sourced from live cluster statuses; identity columns are authoritative.
+          </div>
+        )}
       </Card>
     </div>
   );

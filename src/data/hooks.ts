@@ -17,7 +17,7 @@
  * Reset side: tests can call `queryClient.clear()` on the exported singleton.
  */
 
-import { QueryClient, useQuery } from "@tanstack/react-query";
+import { QueryClient, useQueries, useQuery } from "@tanstack/react-query";
 import * as CoreSdk from "@monolythium/core-sdk";
 import { keccak256Hex as keccak256 } from "../hash";
 import {
@@ -3951,6 +3951,94 @@ export function useClusterStatus(cluster: number | undefined) {
 }
 
 const OPERATOR_ID_RE = /^0x[0-9a-fA-F]{64}$/;
+
+/** One row in `useLiveOperatorRoster`. */
+export interface LiveOperatorRosterEntry {
+  /** 32-byte hex operator id (the addressable identity). */
+  operatorId: string;
+  /** BLS aggregate public key registered with this cluster slot. */
+  blsPubkey: string;
+  /** Reported per-cluster state (active / standby / jailed / etc.). */
+  state: string;
+  /** Cluster id this operator is currently sitting in. */
+  clusterId: number;
+}
+
+/** Aggregate operator roster digest. */
+export interface LiveOperatorRoster {
+  /** True when every reachable cluster status returned a result. */
+  loaded: boolean;
+  /** True when one or more cluster statuses are still resolving. */
+  loading: boolean;
+  /** Deduped operator rows across every cluster fetched. */
+  operators: LiveOperatorRosterEntry[];
+  /** Cluster ids the roster could not resolve (RPC error etc.). */
+  failedClusters: number[];
+  /** Total cluster count published by the directory. */
+  clusterCount: number | null;
+  /** Cluster ids fetched. May be a subset when `clusterCount > limit`. */
+  fetchedClusters: number[];
+}
+
+/**
+ * Aggregate operator membership across every cluster currently advertised by
+ * the chain. Cap defaults to 50 clusters per render to keep the fan-out
+ * bounded; the explorer falls back to fixture data above the cap.
+ */
+export function useLiveOperatorRoster(maxClusters = 50): LiveOperatorRoster {
+  const clusters = useClusterSet();
+  const directory = clusters.data ?? null;
+  const clusterIds = (directory ?? []).map((c) => c.id).filter((id): id is number => typeof id === "number");
+  const fetchIds = clusterIds.slice(0, Math.max(0, Math.trunc(maxClusters)));
+  const statuses = useQueries({
+    queries: fetchIds.map((id) => ({
+      queryKey: QK.clusterStatus(id),
+      enabled: isRpcConfigured(),
+      queryFn: async (): Promise<ClusterStatusResponse | null> => {
+        try {
+          return await getApiClient()
+            .cluster(id)
+            .then((response) => apiClusterStatusToRpcStatus(response.data.cluster))
+            .catch(() => getRpcClient().lythClusterStatus(id));
+        } catch {
+          return null;
+        }
+      },
+      staleTime: 30_000,
+    })),
+  });
+  const operatorsById = new Map<string, LiveOperatorRosterEntry>();
+  const failedClusters: number[] = [];
+  for (let i = 0; i < fetchIds.length; i++) {
+    const id = fetchIds[i];
+    const result = statuses[i];
+    if (result.data === null || result.data === undefined) {
+      if (!result.isLoading && !result.isFetching) failedClusters.push(id);
+      continue;
+    }
+    for (const member of result.data.members ?? []) {
+      const operatorId = member?.operatorId;
+      if (typeof operatorId !== "string" || !OPERATOR_ID_RE.test(operatorId)) continue;
+      if (operatorsById.has(operatorId)) continue;
+      operatorsById.set(operatorId, {
+        operatorId,
+        blsPubkey: typeof member.blsPubkey === "string" ? member.blsPubkey : "",
+        state: typeof member.state === "string" ? member.state : "unknown",
+        clusterId: id,
+      });
+    }
+  }
+  const loaded = directory !== null && fetchIds.every((_, i) => !statuses[i].isLoading);
+  const loading = directory === null || fetchIds.some((_, i) => statuses[i].isLoading);
+  return {
+    loaded,
+    loading,
+    operators: Array.from(operatorsById.values()),
+    failedClusters,
+    clusterCount: directory?.length ?? null,
+    fetchedClusters: fetchIds,
+  };
+}
 
 export function useOperatorAuthority(operatorId: string | undefined) {
   return useQuery<OperatorAuthorityResponse | null>({
