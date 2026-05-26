@@ -2142,7 +2142,9 @@ const TxPage = ({ hash, go }: any) => {
           <div className="tx-flow__end" onClick={()=>go(`#/wallet/${encodeURIComponent(tx.from)}`)}>
             <div className="mono tx-flow__label">FROM</div>
             <div className="mono tx-flow__addr">{_short(tx.from, 16)}</div>
-            <div className="mono tx-flow__note">{tagFor(tx.from) || "unlabeled"}</div>
+            <div className="mono tx-flow__note">
+              <LiveAddressLabel addr={tx.from} fallback={tagFor(tx.from)}/>
+            </div>
           </div>
           <div className="tx-flow__arrow">
             <svg width="100%" height="24" viewBox="0 0 100 24" preserveAspectRatio="none">
@@ -2154,7 +2156,9 @@ const TxPage = ({ hash, go }: any) => {
           <div className="tx-flow__end" onClick={()=>go(`#/wallet/${encodeURIComponent(tx.to)}`)}>
             <div className="mono tx-flow__label">TO</div>
             <div className="mono tx-flow__addr">{_short(tx.to, 16)}</div>
-            <div className="mono tx-flow__note">{tagFor(tx.to) || "unlabeled"}</div>
+            <div className="mono tx-flow__note">
+              <LiveAddressLabel addr={tx.to} fallback={tagFor(tx.to)}/>
+            </div>
           </div>
         </div>
       </section>
@@ -3340,6 +3344,17 @@ const ProtocolPage = ({ go }: any) => {
 const tagFor = (addr) => {
   const w = WALLETS && WALLETS.find(w => w.addr === addr);
   return w?.tag || null;
+};
+
+/**
+ * Render an address label live (via lyth_getAddressLabel) with a fixture
+ * fallback. Returns plain text — wrap in the caller's preferred element.
+ */
+const LiveAddressLabel = ({ addr, fallback }: { addr: string | null | undefined; fallback?: string | null }) => {
+  const label = useAddressLabel(addr || undefined);
+  const live = label.data;
+  const liveText = live?.displayName ?? (live?.category ? live.category : null);
+  return <>{liveText ?? fallback ?? "unlabeled"}</>;
 };
 
 
