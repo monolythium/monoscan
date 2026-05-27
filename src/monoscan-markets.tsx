@@ -36,6 +36,7 @@ import {
   useCapabilities,
   useIndexerAvailability,
   useNativeMarketEvents,
+  useClobOrderBook,
   useNativeMarketOrderBook,
   useNativeMarketState,
 } from "./data/hooks";
@@ -1646,6 +1647,24 @@ const MarketsPage = ({ go }: any) => {
 };
 
 /* ---------- MARKET DETAIL ---------- */
+/** Translate the chart's range button (`1H`, `1D`, …) into the
+ *  block-window + bucket-size params `lyth_clobOhlc` expects, sized
+ *  against the ADR-0031 3 s round cadence so a typical range produces
+ *  ~30-100 candles for a chart that doesn't look flat. */
+function clobOhlcRangeParams(range: string): { lookbackBlocks: number; bucket: number } {
+  // 1 hour ≈ 1200 blocks at 3 s rounds.
+  switch (range) {
+    case "1H":  return { lookbackBlocks:    1_200, bucket:    12 };
+    case "4H":  return { lookbackBlocks:    4_800, bucket:    48 };
+    case "1D":  return { lookbackBlocks:   28_800, bucket:   288 };
+    case "7D":  return { lookbackBlocks:  201_600, bucket: 2_016 };
+    case "1M":  return { lookbackBlocks:  864_000, bucket: 8_640 };
+    case "1Y":  return { lookbackBlocks: 10_512_000, bucket: 105_120 };
+    case "All": return { lookbackBlocks: 100_000_000, bucket: 100 };
+    default:    return { lookbackBlocks:   28_800, bucket:   288 };
+  }
+}
+
 const MarketPage = ({ sym, go }: any) => {
   const routeKey = decodeURIComponent(sym ?? "");
   const configuredMarketId = getMarketIdForSymbol(routeKey);
@@ -1658,8 +1677,11 @@ const MarketPage = ({ sym, go }: any) => {
   const marketId = configuredMarketId ?? (/^0x[0-9a-fA-F]{64}$/.test(routeKey) ? routeKey : matchedLiveSummary?.marketId);
   const clob = useClobMarket(marketId);
   const liveTrades = useClobTrades(marketId, 50);
-  const liveOhlc = useClobOhlc(marketId);
-  const liveBook = useNativeMarketOrderBook(marketId, 9, { toBlock: head.data?.blockNumber ?? null });
+  // CLOB depth comes from the precompile via `lyth_clobOrderBook`;
+  // `useNativeMarketOrderBook` was the wrong upstream — that hook
+  // queries the native_spot_markets layer which is a different
+  // market system. Mid-page chart + book now reflect the actual CLOB.
+  const liveBook = useClobOrderBook(marketId, 9);
   const nativeMarketState = useNativeMarketState({ primaryId: marketId ?? null });
   const nativeStateRows = useMemo(() => nativeMarketStateRows(nativeMarketState.data), [nativeMarketState.data]);
   const nativeMarketEvents = useNativeMarketEvents({ latestBlock: head.data?.blockNumber ?? null, limit: 25, primaryId: marketId ?? null });
@@ -1680,6 +1702,25 @@ const MarketPage = ({ sym, go }: any) => {
     verified: Boolean(matchedLiveSummary),
   };
   const [range, setRange] = useState("1D");
+  // Range -> (lookback-in-blocks, bucket-size-in-blocks) under the
+  // ADR-0031 3 s round cadence. Buckets are sized so a typical range
+  // resolves to ~30-100 candles; the testnet's sparse volume looks
+  // less synthetic at smaller buckets.
+  const headBlock = head.data?.blockNumber ?? null;
+  const ohlcParams = useMemo(() => {
+    const params = clobOhlcRangeParams(range);
+    if (headBlock == null) {
+      return { fromBlock: undefined, toBlock: undefined, bucketBlocks: params.bucket };
+    }
+    const from = Math.max(0, headBlock - params.lookbackBlocks);
+    return { fromBlock: from, toBlock: headBlock, bucketBlocks: params.bucket };
+  }, [headBlock, range]);
+  const liveOhlc = useClobOhlc(
+    marketId,
+    ohlcParams.fromBlock,
+    ohlcParams.toBlock,
+    ohlcParams.bucketBlocks,
+  );
   const [orderSide, setOrderSide] = useState<SpotLimitOrderSide>("buy");
   const [orderType, setOrderType] = useState<"swap" | "limit" | "market">("limit");
   const [orderPrice, setOrderPrice] = useState("1");
@@ -1804,7 +1845,20 @@ const MarketPage = ({ sym, go }: any) => {
       endBlock: c.endBlock,
     }))
     .filter((c: any) => c.o > 0 || c.h > 0 || c.l > 0 || c.c > 0);
-  const ohlc = liveCandles.length > 1 ? liveCandles : tkn.ohlc;
+  // When the chain has at least one indexed trade, render the live
+  // candles even if the series is sparse — a flat line at the
+  // last-trade price is honest data, where the synthetic `tkn.ohlc`
+  // sparkline drawn from the seed-string is not. Only fall back to
+  // the fixture when the indexer has zero candles AND the live RPC
+  // is offline / pre-trade.
+  const ohlc = liveCandles.length > 0
+    ? (liveCandles.length === 1
+        ? [
+            { ...liveCandles[0], startBlock: liveCandles[0].startBlock },
+            { ...liveCandles[0], startBlock: liveCandles[0].endBlock + 1 },
+          ]
+        : liveCandles)
+    : tkn.ohlc;
   const closes = ohlc.map(c=>c.c);
   const chartLo = Math.min(...closes)*0.996;
   const chartHi = Math.max(...closes)*1.004;
@@ -1835,6 +1889,10 @@ const MarketPage = ({ sym, go }: any) => {
   const liveBookResponded = liveBook.data !== undefined && liveBook.data !== null;
   const liveAsks = _cumLevels(liveBook.data?.asks ?? []);
   const liveBids = _cumLevels(liveBook.data?.bids ?? []);
+  // Once the chain's CLOB-order-book RPC has responded for this market
+  // (even with an empty book — that's a real "nothing to display"
+  // signal), show the live depth. The synthetic ladder is only for the
+  // offline / pre-launch demo state when the RPC is unreachable.
   const asks = liveBookResponded ? liveAsks : syntheticAsks;
   const bids = liveBookResponded ? liveBids : syntheticBids;
   const maxT = Math.max(
