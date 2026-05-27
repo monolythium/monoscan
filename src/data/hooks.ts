@@ -6307,8 +6307,40 @@ export function useNativeMarketOrderBook(
   });
 }
 
+/** CLOB precompile (0x1001) order book depth via `lyth_clobOrderBook`.
+ *
+ *  The native_spot_markets system at `lyth_nativeMarketOrderBook` is a
+ *  separate market layer; conflating them via `useNativeMarketOrderBook`
+ *  was a documentation bug — the CLOB has its own depth RPC and the
+ *  market detail page should hit that one. */
 export function useClobOrderBook(marketId: string | undefined, levels = 20) {
-  return useNativeMarketOrderBook(marketId, levels);
+  const depth = Math.max(1, Math.min(50, Math.trunc(levels)));
+  return useQuery<ClobOrderBookResponse | null>({
+    queryKey: QK.clobOrderBook(marketId ?? "", depth),
+    enabled: Boolean(marketId) && isRpcConfigured(),
+    queryFn: async () => {
+      const rpc = getRpcClient() as { call?: <T>(method: string, params: unknown[]) => Promise<T> };
+      if (typeof rpc.call !== "function") return null;
+      try {
+        return await rpc.call<ClobOrderBookResponse>("lyth_clobOrderBook", [
+          marketId as string,
+          depth,
+        ]);
+      } catch (err) {
+        // -32601 method-not-found means the chain is older than the
+        // RPC surface; surface null so the consumer falls back to the
+        // best-bid/ask single-tick view rather than crashing.
+        if (
+          err instanceof Error &&
+          /-32601|method not found/i.test(err.message)
+        ) {
+          return null;
+        }
+        throw err;
+      }
+    },
+    staleTime: 5_000,
+  });
 }
 
 export const NATIVE_MARKET_EVENTS_LIMIT = 25;
