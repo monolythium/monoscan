@@ -13,20 +13,20 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@monolythium/core-sdk": "0.2.2",
-    "@noble/hashes": "^2.2.0",
-    "@tanstack/react-query": "^5.62.0",
-    "@tanstack/react-router": "^1.95.0",
+    "@monolythium/core-sdk": "0.3.1",
+    "@noble/hashes": "2.2.0",
+    "@tanstack/react-query": "5.100.1",
+    "@tanstack/react-router": "1.168.24",
     "react": "19.2.5",
     "react-dom": "19.2.5"
   },
   "devDependencies": {
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.6.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "typescript": "5.6.3",
     "vite": "6.4.2",
-    "vitest": "^4.1.5"
+    "vitest": "4.1.5"
   },
   "packageManager": "pnpm@9.15.0"
 }
