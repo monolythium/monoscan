@@ -2354,3 +2354,73 @@ html[data-theme="light"] .ms-theme__pop {
   .cl-hero { padding: 22px 18px !important; }
 }
 
+/* =====================================================
+   BROWSER-STORAGE NOTICE
+   Bottom strip, dismissible. Matches the website + docs
+   pattern so all three surfaces feel identical.
+===================================================== */
+.cookie-notice {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 100;
+  padding: 14px 24px;
+  background: rgba(13, 14, 24, 0.96);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: var(--f-sans);
+  animation: cookie-rise 220ms var(--e-out, ease-out);
+}
+@keyframes cookie-rise {
+  from { transform: translateY(12px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.cookie-notice__inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg-300);
+}
+.cookie-notice__body { flex: 1; min-width: 0; }
+.cookie-notice__body strong {
+  color: var(--fg-100);
+  display: block;
+  margin-bottom: 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.cookie-notice__body a {
+  color: var(--gold);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.cookie-notice__body a:hover { color: var(--gold-hi); }
+.cookie-notice__ok {
+  flex-shrink: 0;
+  padding: 9px 18px;
+  background: var(--gold);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 8px;
+  border: 0;
+  cursor: pointer;
+  transition: filter 120ms, transform 120ms;
+}
+.cookie-notice__ok:hover { filter: brightness(1.08); }
+.cookie-notice__ok:active { transform: translateY(1px); }
+@media (max-width: 720px) {
+  .cookie-notice { padding: 12px 16px 14px; }
+  .cookie-notice__inner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .cookie-notice__ok { width: 100%; padding: 10px 18px; }
+}
+
