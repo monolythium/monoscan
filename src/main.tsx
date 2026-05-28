@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { router } from "./router";
 import { queryClient } from "./data/hooks";
+import { CookieNotice } from "./CookieNotice";
 
 // Self-hosted typography — matches monolythium.com + docs.monolythium.com
 // so the three surfaces share the same font cascade. Replaces the previous
@@ -29,6 +30,7 @@ createRoot(container).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
+      <CookieNotice />
     </QueryClientProvider>
   </StrictMode>,
 );
