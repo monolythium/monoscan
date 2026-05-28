@@ -4,6 +4,11 @@
    attest-bar, pills, buttons from app.css so both surfaces
    feel like the same product.
 ===================================================== */
+/* tokens.css zeroes `--attest-h` because the website + docs have no
+   chain-status strip; restore the monoscan-specific height so the top
+   ChainStrip renders. */
+:root { --attest-h: 32px; }
+
 *, *::before, *::after { box-sizing: border-box; }
 html, body, #root { margin:0; padding:0; min-height:100%; }
 body {
@@ -137,7 +142,7 @@ body::after {
 
 /* ============ HEADER ============ */
 .ms-header {
-  display: flex; align-items: center; gap: 14px 20px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px 16px;
   padding: 16px 24px;
   width: 100%;
   max-width: 1440px;
@@ -176,7 +181,14 @@ body::after {
 .ms-search input::placeholder { color: var(--fg-400); }
 .ms-search__hint { font-family: var(--f-mono); font-size: 11.5px; color: var(--fg-400); letter-spacing: 0.05em; flex-shrink: 0; }
 
-.ms-nav { display: flex; flex-wrap: wrap; gap: 2px; }
+/* Nav contains all 8 routes inline. On narrow widths the parent
+   .ms-header is itself flex-wrap, so the nav drops to its own row
+   below the search/Ask cluster — all links stay visible without a
+   "More" dropdown. */
+.ms-nav { display: flex; flex-wrap: wrap; gap: 2px; flex: 1 1 auto; justify-content: flex-end; }
+@media (max-width: 1080px) {
+  .ms-nav { flex-basis: 100%; order: 9; justify-content: flex-start; }
+}
 .ms-nav__item {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 8px 12px; border-radius: 10px;
@@ -198,40 +210,8 @@ body::after {
   box-shadow: 0 0 10px rgba(var(--gold-glow), 0.8);
   border-radius: 2px;
 }
-.ms-nav__more { position: relative; }
-.ms-nav__more-btn { height: 34px; }
-.ms-nav__menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  min-width: 190px;
-  padding: 6px;
-  border: 1px solid var(--glass-stroke-hi);
-  border-radius: 8px;
-  background: var(--ink-100);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  box-shadow: 0 24px 50px -28px rgba(0,0,0,0.75), inset 0 1px 0 var(--glass-inner);
-  z-index: 50;
-}
-.ms-nav__menu-item {
-  display: flex;
-  align-items: center;
-  min-height: 34px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  color: var(--fg-200);
-  font-size: 13px;
-  white-space: nowrap;
-}
-.ms-nav__menu-item:hover,
-.ms-nav__menu-item.is-active {
-  color: var(--fg-100);
-  background: rgba(255,255,255,0.10);
-}
-.ms-nav__menu-item.is-active {
-  box-shadow: inset 2px 0 0 var(--gold);
-}
+/* Overflow-dropdown styles retired: all eight nav items render inline
+   and the header wraps below 1080px so the nav owns its own row.  */
 
 /* ============ MAIN + PAGE ============ */
 .ms-main { flex: 1; padding: 28px 28px 48px; max-width: 1440px; width: 100%; margin: 0 auto; position: relative; z-index: 1; }

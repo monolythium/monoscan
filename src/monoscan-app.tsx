@@ -122,13 +122,13 @@ const Field = ({label, value, accent}: any) => (
 /* ============== HEADER NAV ============== */
 const Header = ({ go, route }: any) => {
   const [q, setQ] = useState("");
-  const [moreOpen, setMoreOpen] = useState(false);
-  const primaryNav = [
+  // All eight routes render inline — no overflow dropdown. On narrow
+  // viewports the .ms-header wraps so the nav drops to its own row;
+  // either way every link is reachable in one tap.
+  const navItems: ReadonlyArray<readonly [string, string]> = [
     ["#/", "Overview"],
     ["#/transactions", "Transactions"],
     ["#/markets", "Markets"],
-  ];
-  const moreNav = [
     ["#/wallets", "Wallets"],
     ["#/clusters", "Clusters"],
     ["#/operators", "Operators"],
@@ -142,23 +142,6 @@ const Header = ({ go, route }: any) => {
     (h === "#/wallets" && route.startsWith("#/wallet")) ||
     (h === "#/clusters" && route.startsWith("#/cluster")) ||
     (h === "#/operators" && route.startsWith("#/operator"));
-  const moreActive = moreNav.some(([h]) => routeMatches(h));
-  useEffect(() => {
-    if (!moreOpen) return undefined;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setMoreOpen(false);
-    };
-    const onPointer = (e: MouseEvent) => {
-      const target = e.target instanceof Element ? e.target : null;
-      if (!target?.closest(".ms-nav__more")) setMoreOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("pointerdown", onPointer);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("pointerdown", onPointer);
-    };
-  }, [moreOpen]);
   const submit = (e) => {
     e.preventDefault();
     const v = q.trim();
@@ -198,37 +181,16 @@ const Header = ({ go, route }: any) => {
         <span className="ms-ask-btn__hint mono">NL</span>
       </button>
       <nav className="ms-nav">
-        {primaryNav.map(([h, l]) => (
-          <a key={h} href={h} onClick={()=>{ setMoreOpen(false); go(h); }}
-            className={`ms-nav__item ${routeMatches(h) ? "is-active" : ""}`}>{l}</a>
-        ))}
-        <div className="ms-nav__more">
-          <button
-            type="button"
-            className={`ms-nav__item ms-nav__more-btn ${moreActive ? "is-active" : ""}`}
-            onClick={()=>setMoreOpen(v=>!v)}
-            aria-haspopup="menu"
-            aria-expanded={moreOpen}
+        {navItems.map(([h, l]) => (
+          <a
+            key={h}
+            href={h}
+            onClick={() => go(h)}
+            className={`ms-nav__item ${routeMatches(h) ? "is-active" : ""}`}
           >
-            <span>More</span>
-            <Icon name="chevron" size={13} style={{transform: moreOpen ? "rotate(-90deg)" : "rotate(90deg)"}}/>
-          </button>
-          {moreOpen && (
-            <div className="ms-nav__menu" role="menu">
-              {moreNav.map(([h, l]) => (
-                <a
-                  key={h}
-                  href={h}
-                  role="menuitem"
-                  className={`ms-nav__menu-item ${routeMatches(h) ? "is-active" : ""}`}
-                  onClick={()=>{ setMoreOpen(false); go(h); }}
-                >
-                  {l}
-                </a>
-              ))}
-            </div>
-          )}
-        </div>
+            {l}
+          </a>
+        ))}
       </nav>
       <MsThemeSwitcher/>
     </header>
