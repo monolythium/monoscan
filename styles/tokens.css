@@ -1,110 +1,112 @@
 /* =====================================================
-   Monoscan — Design tokens
+   Monarch Desktop — Design tokens
+   Single source of truth. Theme variants live in themes.css.
 ===================================================== */
 :root {
-  /* Typography */
-  --f-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --f-sansc: "IBM Plex Sans Condensed", "IBM Plex Sans", sans-serif;
-  --f-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* ---------- Typography ---------- */
+  --f-sans:  "Inter", "General Sans", ui-sans-serif, system-ui, sans-serif;
+  --f-sansc: "Inter", "General Sans", ui-sans-serif, system-ui, sans-serif;
+  --f-mono:  "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* canvas */
-  --ink: #06060c;
-  --ink-000: #06060c;
-  --ink-050: #0a0a14;
-  --ink-100: #0f0e1a;
-  --ink-200: #151324;
-  --ink-300: #1c1930;
-  --ink-400: #26223f;
-  --ink-500: #332c52;
+  /* ---------- Canvas: cool near-black with blue undertone ---------- */
+  --ink:     #0a0b14;
+  --ink-000: #0a0b14;
+  --ink-050: #0d0e18;
+  --ink-100: #10121c;
+  --ink-200: #151723;   /* card surface */
+  --ink-300: #1b1e2c;   /* elevated card / hover */
+  --ink-400: #232638;   /* divider / stronger hover */
+  --ink-500: #2c3044;
 
-  /* foreground */
+  /* ---------- Foreground ---------- */
   --fg-000: #ffffff;
-  --fg-100: rgba(255,255,255,0.96);
-  --fg-200: rgba(255,255,255,0.78);
-  --fg-300: rgba(255,255,255,0.68);
-  --fg-400: rgba(255,255,255,0.56);
-  --fg-500: rgba(255,255,255,0.42);
-  --fg-600: rgba(255,255,255,0.12);
-  --fg-700: rgba(255,255,255,0.06);
-  --fg-800: rgba(255,255,255,0.03);
+  --fg-100: #ecedf3;    /* primary text */
+  --fg-200: #c9ccd8;    /* secondary */
+  --fg-300: #8c90a3;    /* tertiary */
+  --fg-400: #646879;    /* quiet labels */
+  --fg-500: #464a5c;
+  --fg-600: #2d3040;    /* subtle stroke */
+  --fg-700: #1a1c28;    /* divider */
+  --fg-800: #12131c;
 
-  /* glass */
-  --glass: rgba(22, 20, 38, 0.42);
-  --glass-fill: rgba(22, 20, 38, 0.42);
-  --glass-fill-strong: rgba(22, 20, 38, 0.62);
-  --glass-fill-hover: rgba(28, 25, 48, 0.55);
-  --glass-hi: rgba(28, 25, 48, 0.55);
-  --glass-stroke: rgba(255,255,255,0.08);
-  --glass-stroke-hi: rgba(255,255,255,0.14);
-  --glass-border: rgba(255,255,255,0.08);
-  --glass-inner: rgba(255,255,255,0.06);
-  --glass-blur: 28px;
+  /* ---------- Semantic surfaces ---------- */
+  --surface-0: var(--ink-050);   /* body */
+  --surface-1: var(--ink-200);   /* card */
+  --surface-2: var(--ink-300);   /* hover / elevated */
+  --surface-3: #262a3e;
 
-  /* brand */
-  --gold: #F2B441;
-  --gold-hi: #f8cd6b;
-  --gold-lo: #d29a33;
-  --gold-soft: #f2b441cc;
-  --gold-glow: 242, 180, 65;
-  --gold-bg: rgba(242,180,65,0.10);
+  /* ---------- Brand: indigo / periwinkle ----------
+     Historical token name "gold" retained to avoid a
+     sweeping rename; actual value is indigo. */
+  --gold:      #7c7fff;
+  --gold-hi:   #9a9dff;
+  --gold-lo:   #5a5ee0;
+  --gold-soft: rgba(124, 127, 255, 0.18);
+  --gold-glow: 124, 127, 255;
+  --gold-bg:   rgba(124, 127, 255, 0.14);
 
-  /* status */
-  --ok:    oklch(0.78 0.16 155);
-  --warn:  oklch(0.82 0.17 78);
-  --alert: oklch(0.70 0.22 22);
-  --err:   oklch(0.70 0.22 22);
-  --info:  oklch(0.78 0.13 255);
-  --accent: oklch(0.75 0.18 300);
+  /* Semantic aliases for new code */
+  --indigo:    #7c7fff;
+  --indigo-hi: #9a9dff;
+  --indigo-lo: #5a5ee0;
+  --indigo-bg: rgba(124, 127, 255, 0.14);
 
-  /* State-machine palette */
-  --state-nominal:     oklch(0.78 0.14 155);
-  --state-maintenance: oklch(0.82 0.16 78);
-  --state-jail:        oklch(0.70 0.22 30);
-  --state-collapsed:   oklch(0.48 0.18 20);
+  /* ---------- Secondary accents ---------- */
+  --mint:    #7ee3c1;  --mint-bg:  rgba(126, 227, 193, 0.14);
+  --lilac:   #b8aaff;  --lilac-bg: rgba(184, 170, 255, 0.14);
+  --coral:   #ff8a9a;  --coral-bg: rgba(255, 138, 154, 0.14);
 
-  /* Two-denomination */
-  --denom-public-fg: var(--gold);
-  --denom-public-bg: rgba(242,180,65,0.08);
-  --denom-private-fg: oklch(0.86 0.02 260);
-  --denom-private-bg: oklch(0.18 0.02 260 / 0.6);
-  --denom-private-ring: oklch(0.62 0.04 260);
+  /* ---------- Status ---------- */
+  --ok:     #7ee3c1;
+  --warn:   #f4c97a;
+  --alert:  #ff8a9a;
+  --err:    #ff8a9a;
+  --info:   #7c7fff;
+  --accent: var(--gold);
 
-  /* Crypto algos */
-  --algo-slhdsa: oklch(0.78 0.13 255);
-  --algo-mldsa:  oklch(0.74 0.12 220);
-  --algo-bls:    oklch(0.80 0.14 40);
-  --algo-ed25519:oklch(0.70 0.10 320);
-  --algo-passkey:oklch(0.75 0.16 150);
+  /* State machine palette */
+  --state-nominal:     #7ee3c1;
+  --state-maintenance: #f4c97a;
+  --state-jail:        #ff8a9a;
+  --state-collapsed:   #8a5a62;
 
-  /* Ambient bleed */
-  --hue-a: 312;
-  --hue-b: 268;
-  --bleed: 0.55;
-  --grad-alpha: 0.18;
+  /* ---------- Two-denomination ---------- */
+  --denom-public-fg:   var(--gold);
+  --denom-public-bg:   var(--gold-bg);
+  --denom-private-fg:  #c9ccd8;
+  --denom-private-bg:  #15172d;
+  --denom-private-ring:#2c3044;
 
-  /* radii */
-  --r-2: 2px; --r-4: 4px; --r-6: 6px; --r-8: 8px; --r-10: 10px;
-  --r-sm: 10px; --r-md: 14px; --r-14: 14px; --r-lg: 20px; --r-20: 20px; --r-xl: 28px;
+  /* ---------- Crypto algos ---------- */
+  --algo-slhdsa:  #7c7fff;
+  --algo-mldsa:   #7ec7d8;
+  --algo-bls:     #f4c97a;
+  --algo-ed25519: #b8aaff;
+  --algo-passkey: #7ee3c1;
+
+  /* ---------- Radii ---------- */
+  --r-2: 4px; --r-4: 6px; --r-6: 8px; --r-8: 12px; --r-10: 14px;
+  --r-sm: 14px; --r-md: 18px; --r-14: 18px; --r-lg: 22px; --r-20: 24px; --r-xl: 30px;
   --r-pill: 999px;
 
-  /* type scale */
-  --fs-10: 11px; --fs-11: 11.5px; --fs-12: 12.5px; --fs-13: 13px; --fs-14: 14px;
-  --fs-16: 16px; --fs-18: 18px; --fs-20: 20px; --fs-24: 24px; --fs-32: 32px;
-  --fs-44: 44px; --fs-64: 64px; --fs-96: 96px;
+  /* ---------- Type scale ---------- */
+  --fs-10: 11px; --fs-11: 12px; --fs-12: 13px; --fs-13: 14px; --fs-14: 15px;
+  --fs-16: 16px; --fs-18: 18px; --fs-20: 20px; --fs-24: 26px; --fs-32: 36px;
+  --fs-44: 52px; --fs-64: 72px; --fs-96: 112px;
 
-  /* shadows */
-  --shadow-1: 0 1px 2px rgba(0,0,0,0.4);
-  --shadow-2: 0 8px 24px rgba(0,0,0,0.4), 0 2px 6px rgba(0,0,0,0.3);
-  --shadow-3: 0 30px 60px -20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.08);
+  /* ---------- Shadows ---------- */
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.25);
+  --shadow-2: 0 6px 20px -8px rgba(0,0,0,0.45);
+  --shadow-3: 0 24px 48px -16px rgba(0,0,0,0.55);
 
-  /* motion */
-  --e-out: cubic-bezier(.22,.61,.36,1);
+  /* ---------- Motion ---------- */
+  --e-out:    cubic-bezier(.22,.61,.36,1);
   --e-in-out: cubic-bezier(.65,0,.35,1);
-  --e-std: cubic-bezier(0.4, 0, 0.2, 1);
+  --e-std:    cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* layout */
-  --sidebar-w: 220px;
-  --attest-h: 32px;
-  --topbar-h: 56px;
-  --ask-w: 360px;
+  /* ---------- Layout ---------- */
+  --sidebar-w: 232px;
+  --attest-h:  0px;
+  --topbar-h:  64px;
+  --ask-w:     0px;
 }
