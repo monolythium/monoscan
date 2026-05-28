@@ -2265,3 +2265,92 @@ html[data-theme="light"] .ms-theme__pop {
 .ms-theme__opt.is-active .ms-theme__opt-text b { color: var(--gold); }
 .ms-theme__opt-check { color: var(--gold); }
 
+/* =====================================================
+   MOBILE RESPONSIVE CASCADE
+   Breakpoint cadence mirrors the website (1080 / 720 / 480).
+   Existing per-section media queries above stay authoritative for
+   the rules they own; this block only collapses grids and tames
+   typography that the original sheet left desktop-only.
+===================================================== */
+
+/* ---------- ≤ 1080px: tablet / small laptop ---------- */
+@media (max-width: 1080px) {
+  /* Landing hero stacks instead of side-by-side. */
+  .ms-hero {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "round"
+      "vitals"
+      "hist";
+    gap: 18px;
+  }
+  /* Overview hero (Stats, Markets, etc.) stacks above 880 too. */
+  .ov-hero {
+    grid-template-columns: 1fr;
+    gap: 24px;
+    padding: 32px 28px 28px;
+  }
+  .ov-hero__title { font-size: 40px; }
+  /* Cap-grids drop a column. */
+  .ms-cluster-stats { grid-template-columns: repeat(3, 1fr); }
+  .ms-op-hero .ms-cluster-stats {
+    min-width: 0;
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .ms-caps { grid-template-columns: repeat(2, 1fr); }
+  /* Wide deep-grid lanes. */
+  .ov-deep { grid-template-columns: repeat(2, 1fr); }
+  .ov-moving { grid-template-columns: repeat(2, 1fr); }
+  /* Side-feed lane reflows under the main feed. */
+  .ov-feed__grid { grid-template-columns: 1fr; }
+}
+
+/* ---------- ≤ 720px: large phone landscape / small tablet portrait ---------- */
+@media (max-width: 720px) {
+  /* Topbar wraps so the search input gets a full row on its own. */
+  .ms-topbar { flex-wrap: wrap; gap: 10px; padding: 10px 14px; }
+  .ms-brand small { display: none; }
+  .ms-search { order: 3; flex-basis: 100%; max-width: none; }
+  .ms-nav { width: 100%; }
+  /* Hero vitals + denoms collapse to a 2-up. */
+  .ms-hero__vitals { grid-template-columns: repeat(2, 1fr); }
+  .ms-denoms { grid-template-columns: 1fr; }
+  .ms-grid-2 { grid-template-columns: 1fr; }
+  .ms-cluster-stats { grid-template-columns: repeat(2, 1fr); }
+  .ms-caps { grid-template-columns: repeat(2, 1fr); }
+  /* Card-grid sections used by Stats / Wallets / Network detail. */
+  .stats-counters,
+  .stats-econ-grid,
+  .wd-flow-grid { grid-template-columns: repeat(2, 1fr); }
+  /* Overview hero title further trims so it fits one line. */
+  .ov-hero { padding: 28px 22px 24px; }
+  .ov-hero__title { font-size: 32px; }
+  /* Deep / moving lanes go to 1-up so cards aren't squashed. */
+  .ov-deep { grid-template-columns: 1fr; }
+  .ov-moving { grid-template-columns: 1fr; }
+  /* Cluster overview tier grid. */
+  .get-tier-grid { grid-template-columns: 1fr; }
+  /* `min-width: 540px` on the op-hero stats was forcing horizontal scroll. */
+  .ms-op-hero .ms-cluster-stats { min-width: 0; }
+}
+
+/* ---------- ≤ 480px: phones (portrait) ---------- */
+@media (max-width: 480px) {
+  body { font-size: 13.5px; }
+  .ms-topbar { padding: 8px 10px; }
+  .ms-brand b { font-size: 14px; }
+  /* Single-column everywhere data isn't tabular. */
+  .ms-hero__vitals { grid-template-columns: 1fr; }
+  .ms-cluster-stats,
+  .ms-op-hero .ms-cluster-stats { grid-template-columns: 1fr; }
+  .ms-caps { grid-template-columns: 1fr; }
+  .stats-counters,
+  .stats-econ-grid,
+  .wd-flow-grid { grid-template-columns: 1fr; }
+  .ov-hero { padding: 22px 18px 20px; border-radius: 14px; }
+  .ov-hero__title { font-size: 26px; letter-spacing: -0.02em; }
+  /* Tighter horizontal padding on big card containers. */
+  .ms-hero { padding: 22px 18px; }
+  .cl-hero { padding: 22px 18px !important; }
+}
+
