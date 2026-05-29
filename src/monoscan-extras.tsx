@@ -79,6 +79,7 @@ import {
 } from "./data/hooks";
 import { getLythTokenId } from "./sdk/client";
 import { getNativeAgentForwarderAddress } from "./sdk/client";
+import { fmtAddr, fmtAddrShort, fmtHashShort } from "./sdk/format";
 import {
   buildNativeAgentActionWalletRequest,
   nativeAgentActionIndexedNonce,
@@ -243,15 +244,15 @@ function tokenBalanceHolderLines(holders: MrcHoldersResponse | undefined): strin
   return holders.holders.slice(0, holders.limit).map((holder) => {
     const block = Number(holder.updatedAtBlock);
     const blockText = Number.isFinite(block) ? block.toLocaleString() : String(holder.updatedAtBlock);
-    return `#${holder.rank} ${_short(holder.address, 10)} · ${holder.balance} · block ${blockText}`;
+    return `#${holder.rank} ${fmtAddrShort(holder.address)} · ${holder.balance} · block ${blockText}`;
   });
 }
 function mrcAccountRecordSummary(record: MrcAccountRecord | null): string {
   if (!record) return "—";
   const parts = [
     record.kind,
-    record.controller ? `controller ${_short(record.controller, 10)}` : "controller —",
-    record.recovery ? `recovery ${_short(record.recovery, 10)}` : "recovery —",
+    record.controller ? `controller ${fmtAddrShort(record.controller)}` : "controller —",
+    record.recovery ? `recovery ${fmtAddrShort(record.recovery)}` : "recovery —",
     record.policyHash ? `policy ${_short(record.policyHash, 10)}` : "policy —",
     record.nonce !== null ? `nonce ${record.nonce}` : "nonce —",
     `block ${Number(record.updatedAtBlock).toLocaleString()}`,
@@ -345,7 +346,7 @@ export const AgentReputationCard = ({
       <div className="tx-kv">
         <KV label="Category scope" value={categoryLabel} mono/>
         <KV label="Samples" value={hasSamples && record ? record.sampleCount.toLocaleString() : reputation ? "0" : "—"} mono/>
-        <KV label="Provider" value={providerLabel ? _short(providerLabel, 18) : "—"} mono/>
+        <KV label="Provider" value={providerLabel ? fmtAddrShort(providerLabel) : "—"} mono/>
         <KV label="Block height" value={record ? Number(record.blockHeight).toLocaleString() : "—"} mono/>
       </div>
       {loading ? (
@@ -425,8 +426,8 @@ const NativeAgentStateCard = ({
               <tr key={`${row.kind}-${row.primaryId ?? index}-${row.blockHeight ?? "pending"}`}>
                 <td>{nativeAgentKindLabel(row.kind)}</td>
                 <td className="mono" title={row.primaryId ?? ""}>{row.primaryId ? _short(row.primaryId, 10) : "—"}</td>
-                <td className="mono" title={row.account ?? ""}>{row.account ? _short(row.account, 12) : "—"}</td>
-                <td className="mono" title={row.counterparty ?? ""}>{row.counterparty ? _short(row.counterparty, 12) : "—"}</td>
+                <td className="mono" title={row.account ?? ""}>{row.account ? fmtAddrShort(row.account) : "—"}</td>
+                <td className="mono" title={row.counterparty ?? ""}>{row.counterparty ? fmtAddrShort(row.counterparty) : "—"}</td>
                 <td className="mono num" style={{textAlign:"right"}}>{row.nonce ?? "—"}</td>
                 <td className="mono">{row.status ?? "—"}</td>
                 <td className="mono num" style={{textAlign:"right"}}>{row.amount ?? "—"}</td>
@@ -1285,7 +1286,7 @@ const WalletsPage = ({ go }: any) => {
                 <tr key={h.address} onClick={()=>go(`#/wallet/${encodeURIComponent(h.address)}`)}>
                   <td className="mono" style={{color:h.rank<=3?"var(--gold)":"var(--fg-400)",fontWeight:h.rank<=3?600:400}}>#{h.rank}</td>
                   <td>
-                    <div style={{fontWeight:500,fontSize:13,color:"var(--fg-200)",fontFamily:"var(--f-mono)"}}>{_short(h.address,14)}</div>
+                    <div style={{fontWeight:500,fontSize:13,color:"var(--fg-200)",fontFamily:"var(--f-mono)"}}>{fmtAddrShort(h.address)}</div>
                     <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>live rich list · updated block {Number(h.updatedAtBlock).toLocaleString()}</div>
                   </td>
                   <td className="mono num" style={{textAlign:"right"}}>{_fmtRawToken(h.balance)} <span style={{color:"var(--fg-500)",fontSize:10}}>LYTH</span></td>
@@ -1298,8 +1299,8 @@ const WalletsPage = ({ go }: any) => {
                   <td>
                     {w.tag
                       ? <div style={{fontWeight:500,fontSize:13,color:"var(--fg-100)"}}>{w.tag}</div>
-                      : <div style={{fontWeight:500,fontSize:13,color:"var(--fg-200)",fontFamily:"var(--f-mono)"}}>{_short(w.addr,14)}</div>}
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{w.tag ? _short(w.addr,18) : (w.note || "unlabeled")}</div>
+                      : <div style={{fontWeight:500,fontSize:13,color:"var(--fg-200)",fontFamily:"var(--f-mono)"}}>{fmtAddrShort(w.addr)}</div>}
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{w.tag ? fmtAddrShort(w.addr) : (w.note || "unlabeled")}</div>
                   </td>
                   <td className="mono num" style={{textAlign:"right"}}>{_fmt(w.bal)} <span style={{color:"var(--fg-500)",fontSize:10}}>LYTH</span></td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--gold)"}}>{w.pct.toFixed(2)}%</td>
@@ -1489,7 +1490,7 @@ const WalletPage = ({ addr, go }: any) => {
                 : " · live"}
           </div>
           <h1 className="wd-hero__title">{liveLabel?.displayName || w.tag || "Unlabeled wallet"}</h1>
-          <div className="mono wd-hero__addr">{w.addr}</div>
+          <div className="mono wd-hero__addr">{fmtAddr(w.addr)}</div>
           <div className="wd-hero__facts mono">
             <span>
               {fallbackWallet
@@ -1790,7 +1791,7 @@ const WalletPage = ({ addr, go }: any) => {
               <tbody>
                 {addressFlow.data?.topCounterparties.map((row:any)=>(
                   <tr key={row.address} onClick={()=>go(`#/wallet/${encodeURIComponent(row.address)}`)}>
-                    <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(row.address, 16)}</td>
+                    <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{fmtAddrShort(row.address)}</td>
                     <td className="mono num" style={{textAlign:"right"}}>{Number(row.eventCount).toLocaleString()}</td>
                     <td className="mono num" style={{textAlign:"right",color:"var(--ok)"}}>{_fmtRawToken(row.inbound)}</td>
                     <td className="mono num" style={{textAlign:"right",color:"var(--err)"}}>{_fmtRawToken(row.outbound)}</td>
@@ -1846,7 +1847,7 @@ const WalletPage = ({ addr, go }: any) => {
                         onClick={()=>go(`#/wallet/${encodeURIComponent(counterpartyAddress)}`)}
                         style={{cursor:"pointer",color:"var(--fg-300)"}}
                       >
-                        {_short(counterpartyAddress, 14)}
+                        {fmtAddrShort(counterpartyAddress)}
                       </a>
                     ) : clusterSlot ? (
                       <a
@@ -1887,13 +1888,13 @@ const WalletPage = ({ addr, go }: any) => {
                     </span>
                   </td>
                   <td>
-                    <div className="mono" style={{fontSize:12,color:"var(--fg-100)"}}>{_short(t.hash, 12)}</div>
+                    <div className="mono" style={{fontSize:12,color:"var(--fg-100)"}}>{fmtHashShort(t.hash)}</div>
                     <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>
                       {t.kind}
                       {t.status === "failed" && <span style={{color:"var(--err)",marginLeft:6}}>· failed</span>}
                     </div>
                   </td>
-                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(t.counterparty, 14)}</td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{fmtAddrShort(t.counterparty)}</td>
                   <td className="mono num" style={{textAlign:"right",color: t.direction==="out" ? "var(--err, #ff6b6b)" : "var(--ok, #73d13d)"}}>
                     {t.direction==="out" ? "−" : "+"}{_fmt(t.amount)} <span style={{color:"var(--fg-500)",fontSize:10}}>{t.denom}</span>
                   </td>
@@ -1944,7 +1945,7 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
         {topIn.map(([addr, amt])=>(
           <div key={addr} className="wd-flow-node">
             <div className="wd-flow-node__bar" style={{width:`${(amt/maxIn)*100}%`, background:"var(--ok, #73d13d)"}}/>
-            <div className="mono wd-flow-node__addr">{_short(addr, 12)}</div>
+            <div className="mono wd-flow-node__addr">{fmtAddrShort(addr)}</div>
             <div className="mono num wd-flow-node__amt">+{_fmt(amt)}</div>
           </div>
         ))}
@@ -1976,7 +1977,7 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
         {topOut.map(([addr, amt])=>(
           <div key={addr} className="wd-flow-node">
             <div className="wd-flow-node__bar" style={{width:`${(amt/maxOut)*100}%`, background:"var(--err, #ff6b6b)"}}/>
-            <div className="mono wd-flow-node__addr">{_short(addr, 12)}</div>
+            <div className="mono wd-flow-node__addr">{fmtAddrShort(addr)}</div>
             <div className="mono num wd-flow-node__amt">−{_fmt(amt)}</div>
           </div>
         ))}
@@ -2199,7 +2200,7 @@ const TransactionsPage = ({ go }: any) => {
                     </span>
                   </td>
                   <td>
-                    <div className="mono" style={{fontSize:12,color:"var(--fg-100)"}}>{_short(tx.hash, 14)}</div>
+                    <div className="mono" style={{fontSize:12,color:"var(--fg-100)"}}>{fmtHashShort(tx.hash)}</div>
                     <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{tx.methodLabel}</div>
                   </td>
                   <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
@@ -2209,12 +2210,12 @@ const TransactionsPage = ({ go }: any) => {
                   </td>
                   <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
                     <a onClick={(e)=>{ e.stopPropagation(); go(`#/wallet/${encodeURIComponent(tx.from)}`); }} style={{cursor:"pointer"}}>
-                      {_short(tx.from, 13)}
+                      {fmtAddrShort(tx.from)}
                     </a>
                   </td>
                   <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
                     <a onClick={(e)=>{ e.stopPropagation(); go(`#/wallet/${encodeURIComponent(tx.to)}`); }} style={{cursor:"pointer"}}>
-                      {_short(tx.to, 13)}
+                      {fmtAddrShort(tx.to)}
                     </a>
                   </td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)"}}>{tx.valueLabel}</td>
@@ -2478,7 +2479,7 @@ const TxPage = ({ hash, go }: any) => {
         <div className="tx-flow">
           <div className="tx-flow__end" onClick={()=>go(`#/wallet/${encodeURIComponent(tx.from)}`)}>
             <div className="mono tx-flow__label">FROM</div>
-            <div className="mono tx-flow__addr">{_short(tx.from, 16)}</div>
+            <div className="mono tx-flow__addr">{fmtAddrShort(tx.from)}</div>
             <div className="mono tx-flow__note">
               <LiveAddressLabel addr={tx.from} fallback={tagFor(tx.from)}/>
             </div>
@@ -2492,7 +2493,7 @@ const TxPage = ({ hash, go }: any) => {
           </div>
           <div className="tx-flow__end" onClick={()=>go(`#/wallet/${encodeURIComponent(tx.to)}`)}>
             <div className="mono tx-flow__label">TO</div>
-            <div className="mono tx-flow__addr">{_short(tx.to, 16)}</div>
+            <div className="mono tx-flow__addr">{fmtAddrShort(tx.to)}</div>
             <div className="mono tx-flow__note">
               <LiveAddressLabel addr={tx.to} fallback={tagFor(tx.to)}/>
             </div>
@@ -2556,7 +2557,7 @@ const TxPage = ({ hash, go }: any) => {
             <div className="tx-kv">
               <KV label="BLS attestation" value={liveDecoded.blsAttestation ? "present" : "—"}/>
               <KV label="PQ checkpoint" value={liveDecoded.pqAttestation ? `#${Number(liveDecoded.pqAttestation.checkpointHeight).toLocaleString()}` : "—"} mono/>
-              <KV label="PQ signer" value={liveDecoded.pqAttestation?.signerId ? _short(liveDecoded.pqAttestation.signerId, 18) : "—"} mono/>
+              <KV label="PQ signer" value={liveDecoded.pqAttestation?.signerId ? fmtHashShort(liveDecoded.pqAttestation.signerId) : "—"} mono/>
               <KV label="Finality proof" value={liveDecoded.finalityProof ? "present" : "—"}/>
             </div>
           </Card>
@@ -2568,7 +2569,7 @@ const TxPage = ({ hash, go }: any) => {
           <Card title="Native RISC-V receipt">
             <div className="tx-kv">
               <KV label="Schema" value={liveNativeReceipt.schema} mono/>
-              <KV label="Artifact hash" value={_short(liveNativeReceipt.artifactHash, 18)} mono/>
+              <KV label="Artifact hash" value={fmtHashShort(liveNativeReceipt.artifactHash)} mono/>
               <KV label="Result" value={liveNativeReceipt.reverted ? "Reverted" : "Committed"}/>
               <KV label="Events" value={`${liveNativeReceipt.eventCount}`} mono/>
               <KV label="Native deltas" value={`${liveNativeReceipt.nativeDeltaCount}`} mono/>
@@ -3051,7 +3052,7 @@ const RoundPage = ({ round, go }: any) => {
                   <tbody>
                     {liveParents.map((p:any)=>(
                       <tr key={p.vertexHash}>
-                        <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(p.vertexHash, 24)}</td>
+                        <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{fmtHashShort(p.vertexHash, 24, 6)}</td>
                         <td className="mono num" style={{textAlign:"right"}}>{Number(p.round).toLocaleString()}</td>
                       </tr>
                     ))}
@@ -3090,10 +3091,10 @@ const RoundPage = ({ round, go }: any) => {
                           style={{cursor:"pointer"}}
                         >
                           <td className="mono num" style={{color:"var(--fg-400)"}}>{tx.txIndex}</td>
-                          <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(tx.txHash, 14)}</td>
-                          <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(tx.from, 13)}</td>
+                          <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{fmtHashShort(tx.txHash)}</td>
+                          <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{fmtAddrShort(tx.from)}</td>
                           <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
-                            {tx.to ? _short(tx.to, 13) : "contract creation"}
+                            {tx.to ? fmtAddrShort(tx.to) : "contract creation"}
                           </td>
                           <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)"}}>
                             {_fmtRawToken(tx.valueLythoshi ?? "0")} LYTH
@@ -3132,7 +3133,7 @@ const RoundPage = ({ round, go }: any) => {
                     {liveVertices.map((v:any)=>(
                       <tr key={v.vertexHash}>
                         <td className="mono">operator {Number(v.author).toLocaleString()}</td>
-                        <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{_short(v.vertexHash, 24)}</td>
+                        <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{fmtHashShort(v.vertexHash, 24, 6)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -3263,7 +3264,7 @@ const SearchPage = ({ q, go }: any) => {
               {rpcHits.map((hit:any)=>(
                 <div key={`${hit.type}-${hit.id}`} className="ov-moverow" onClick={()=>go(hitRoute(hit.route))}>
                   <span className="mono" style={{color:"var(--gold)",minWidth:100}}>{hit.type}</span>
-                  <span className="mono" style={{flex:1}}>{_short(hit.id, 18)}</span>
+                  <span className="mono" style={{flex:1}}>{hit.type === "address" || hit.type === "account" || hit.type === "wallet" ? fmtAddrShort(hit.id) : fmtHashShort(hit.id, 14, 6)}</span>
                   <span style={{color:"var(--fg-400)"}}>{hit.label}</span>
                 </div>
               ))}
@@ -3287,7 +3288,7 @@ const SearchPage = ({ q, go }: any) => {
             {looksLikeAddress && (
               <div className="ov-moverow" onClick={()=>go(`#/wallet/${encodeURIComponent(q)}`)}>
                 <span className="mono" style={{color:"var(--gold)",minWidth:120}}>address</span>
-                <span className="mono" style={{flex:1}}>{q}</span>
+                <span className="mono" style={{flex:1}}>{fmtAddr(q)}</span>
               </div>
             )}
             {liveTx.data && (
@@ -3334,7 +3335,7 @@ const SearchPage = ({ q, go }: any) => {
 
       <Section title="Wallets" items={wallets} render={(w: any)=>(
         <div key={`${w.source}-${w.addr}`} className="ov-moverow" onClick={()=>go(`#/wallet/${encodeURIComponent(w.addr)}`)}>
-          <span className="mono" style={{color:"var(--gold)",minWidth:200,fontSize:11}}>{_short(w.addr, 18)}</span>
+          <span className="mono" style={{color:"var(--gold)",minWidth:200,fontSize:11}}>{fmtAddrShort(w.addr)}</span>
           <span style={{flex:1}}>{w.tag || "—"}</span>
           <span className="mono" style={{color:w.source==="live"?"var(--gold)":"var(--fg-500)",fontSize:10}}>{w.source}</span>
         </div>
@@ -3491,7 +3492,7 @@ const NativeAgentActionsCard = ({
           <div className="tx-kv" style={{marginTop:12}}>
             <KV label="Group" value={action.group}/>
             <KV label="Forwarder" value={selectedForwarderLabel} mono/>
-            <KV label="Fallback" value={forwarderAddress ? _short(forwarderAddress, 12) : "—"} mono/>
+            <KV label="Fallback" value={forwarderAddress ? fmtAddrShort(forwarderAddress, "contract") : "—"} mono/>
           </div>
         </div>
         <div>
@@ -3517,7 +3518,7 @@ const NativeAgentActionsCard = ({
                 style={{fontSize:11,color:submit.state === "error" ? "var(--err)" : submit.state === "success" ? "var(--ok)" : "var(--fg-400)"}}
               >
                 {submit.state === "success" && submit.txHash
-                  ? `${submit.message} ${_short(submit.txHash, 12)}`
+                  ? `${submit.message} ${fmtHashShort(submit.txHash)}`
                   : submit.message}
               </span>
             )}
@@ -3629,7 +3630,7 @@ const ProtocolPage = ({ go }: any) => {
           <div className="tx-kv">
             <KV label="Algorithm" value={key.algo}/>
             <KV label="Epoch" value={Number(key.epoch).toLocaleString()} mono/>
-            <KV label="Encapsulation key" value={_short(key.encapsulationKey, 28)} mono/>
+            <KV label="Encapsulation key" value={fmtHashShort(key.encapsulationKey, 28, 6)} mono/>
           </div>
         </Card>
       )}
@@ -3690,9 +3691,9 @@ const ProtocolPage = ({ go }: any) => {
               {checkpointRows.map((row:any, i:number)=>(
                 <tr key={`${row.signerPubkeyHex ?? row.signer_pubkey_hex}-${i}`}>
                   <td className="mono">{Number(row.blockHeight ?? row.block_height).toLocaleString()}</td>
-                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{_short(row.stateRoot ?? row.state_root, 18)}</td>
-                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{_short(row.signerPubkeyHex ?? row.signer_pubkey_hex, 18)}</td>
-                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{_short(row.signatureHex ?? row.signature_hex, 18)}</td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{fmtHashShort(row.stateRoot ?? row.state_root, 18, 6)}</td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{fmtHashShort(row.signerPubkeyHex ?? row.signer_pubkey_hex, 18, 6)}</td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{fmtHashShort(row.signatureHex ?? row.signature_hex, 18, 6)}</td>
                 </tr>
               ))}
             </tbody>
@@ -3710,7 +3711,7 @@ const ProtocolPage = ({ go }: any) => {
             {registryRows.map((p:any)=>(
               <tr key={p.address ?? p.capabilityId}>
                 <td style={{fontWeight:500}}>{p.capabilityName ?? p.name}</td>
-                <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{p.address}</td>
+                <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{fmtAddr(p.address, "systemModule")}</td>
                 <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{p.kind ?? "—"}</td>
                 <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>
                   {p.activationHeight !== null && p.activationHeight !== undefined ? Number(p.activationHeight).toLocaleString() : "genesis"}
@@ -3749,7 +3750,7 @@ const ProtocolPage = ({ go }: any) => {
             <tbody>
               {resignationRows.map((row:any, i:number)=>(
                 <tr key={`${row.operator}-${row.nonce}-${i}`}>
-                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{_short(row.operator, 18)}</td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{fmtHashShort(row.operator, 18, 6)}</td>
                   <td><span className={`pill ${row.status === "applied" ? "ok" : "warn"}`}>{row.status}</span></td>
                   <td className="mono">{row.submitted_at_height !== undefined ? Number(row.submitted_at_height).toLocaleString() : "—"}</td>
                   <td className="mono">{row.effective_at_height !== undefined ? Number(row.effective_at_height).toLocaleString() : "—"}</td>

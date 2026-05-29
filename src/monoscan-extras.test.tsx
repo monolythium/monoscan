@@ -538,7 +538,8 @@ describe("AgentReputationCard", () => {
     expect(html).toContain("Category 12");
     expect(html).toContain("Reputation unavailable");
     expect(html).toContain("No lyth_agentReputation aggregate returned for this provider category.");
-    expect(html).toContain("mono1zg69v7y6hn00q…vdc4");
+    // bech32m provider address, middle-truncated by fmtAddrShort (12/6).
+    expect(html).toContain("mono1zg69v7y…ajvdc4");
   });
 });
 

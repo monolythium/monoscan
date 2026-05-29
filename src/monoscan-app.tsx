@@ -40,14 +40,13 @@ import {
 import { AskPage } from "./nl/AskPage";
 import { MsThemeSwitcher } from "./monoscan-theme";
 import { SearchModal } from "./SearchModal";
+import { fmtAddr, fmtHashShort } from "./sdk/format";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const fmt = (n) => n.toLocaleString();
 const pct = (x, d=2) => `${(x*100).toFixed(d)}%`;
 const ago = (s) => s; // already strings
-const shortHex = (value = "", head = 8, tail = 4) =>
-  value.length > head + tail + 3 ? `${value.slice(0, head)}…${value.slice(-tail)}` : value;
 
 const SCAN = MONOSCAN_DATA;
 const CHAIN_ID = 69420;
@@ -843,7 +842,7 @@ const ClusterPage = ({ slot, go }: any) => {
   const liveRingMembers = liveStatus?.members?.length
     ? liveStatus.members.map((m, i) => ({
         id: m.operatorId,
-        handle: shortHex(m.operatorId, 10, 6),
+        handle: fmtHashShort(m.operatorId, 10, 6),
         addrShort: m.operatorId,
         role: m.state,
         rep: 0,
@@ -870,7 +869,7 @@ const ClusterPage = ({ slot, go }: any) => {
             : `Below quorum. ${cl.members} of ${cl.size} operators signing — delegated stake is safe but not earning until quorum is restored.`;
   const memberRows = liveStatus?.members?.length
     ? liveStatus.members.map((m) => ({
-        handle: shortHex(m.operatorId, 10, 6),
+        handle: fmtHashShort(m.operatorId, 10, 6),
         addrShort: m.operatorId,
         role: m.state,
         rep: null,
@@ -1021,9 +1020,9 @@ const ClusterPage = ({ slot, go }: any) => {
               Copy cluster key
             </button>
             <span className="mono" style={{fontSize:10,color:"var(--fg-500)",marginLeft:"auto"}}>
-              {showLiveHero
+              {fmtHashShort(showLiveHero
                 ? (liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? cl.aggKey)
-                : cl.aggKey}
+                : cl.aggKey)}
             </span>
           </div>
         </div>
@@ -1037,7 +1036,7 @@ const ClusterPage = ({ slot, go }: any) => {
             <KVRow label="Live operators" value={liveStatus ? `${liveStatus.live}/${liveStatus.size}` : "—"}/>
             <KVRow label="Active" value={liveStatus ? (liveStatus.live > 0 ? "yes" : "no") : liveCluster ? (liveCluster.active ? "yes" : "no") : "not reported"}/>
             <KVRow label="Stake weight" value={liveCluster?.stake ?? "—"}/>
-            <KVRow label="First BLS key" value={liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? "—"} mono/>
+            <KVRow label="First BLS key" value={fmtHashShort(liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? "—")} mono/>
             <KVRow label="Last update" value={liveStatus ? `${liveStatus.lastUpdateHeight}` : "—"}/>
             <KVRow label="Delegators" value={delegators.data ? `${delegators.data.count}` : "—"}/>
             <KVRow label="Delegation cap" value={delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "disabled" : `${delegationCap.data.capBps} bps`) : "—"}/>
@@ -1060,7 +1059,7 @@ const ClusterPage = ({ slot, go }: any) => {
                       <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${m.handle.charCodeAt(0)*7%360})`,flexShrink:0}}/>
                       <div style={{minWidth:0}}>
                         <div style={{fontWeight:500,fontSize:13}}>{m.handle}</div>
-                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"min(58vw,340px)"}}>{m.addrShort}</div>
+                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"min(58vw,340px)"}}>{fmtHashShort(m.addrShort)}</div>
                       </div>
                     </div>
                   </td>
@@ -1100,7 +1099,7 @@ const ClusterPage = ({ slot, go }: any) => {
               <div className="mono" style={{flex:1,fontSize:11,color:"var(--fg-300)"}}>
                 {v.txCount} txs · DAC {v.dac?"✓":"✗"} · agg {v.blsAggMs.toFixed(1)}ms
               </div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>{v.hashShort}</div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>{fmtHashShort(v.hashShort)}</div>
             </div>
           ))}
         </Card>
@@ -1187,7 +1186,7 @@ const OperatorPage = ({ addr, go }: any) => {
       <div className="ms-crumb">
         <a href="#/operators" onClick={()=>go("#/operators")}>Operators</a>
         <span>›</span>
-        <b>{useLiveProfile ? (liveOperatorId ? `${liveOperatorId.slice(0,10)}…${liveOperatorId.slice(-4)}` : addr) : op.handle}</b>
+        <b>{useLiveProfile ? (liveOperatorId ? fmtHashShort(liveOperatorId) : addr) : op.handle}</b>
       </div>
       <section className="ms-op-hero">
         <span
@@ -1197,7 +1196,7 @@ const OperatorPage = ({ addr, go }: any) => {
         <div style={{flex:1}}>
           <div className="cap">Operator · stable across clusters</div>
           <h1 className={useLiveProfile ? "ms-h1 mono" : "ms-h1"}>
-            {useLiveProfile ? (liveOperatorId ? `${liveOperatorId.slice(0,12)}…${liveOperatorId.slice(-6)}` : addr) : op.handle}
+            {useLiveProfile ? (liveOperatorId ? fmtHashShort(liveOperatorId, 12, 6) : addr) : op.handle}
           </h1>
           <div className="mono" style={{color:"var(--fg-300)",marginTop:4}}>
             {useLiveProfile
@@ -1234,7 +1233,7 @@ const OperatorPage = ({ addr, go }: any) => {
                   <td className="mono" style={{fontWeight:500}}>cluster {liveMembership.clusterId}</td>
                   <td><span className={`pill ${liveMembership.state==="active" ? "ok" : "warn"}`} style={{fontSize:10}}>{liveMembership.state}</span></td>
                   <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-300)"}}>
-                    {liveMembership.blsPubkey ? `${liveMembership.blsPubkey.slice(0,14)}…` : "—"}
+                    {liveMembership.blsPubkey ? fmtHashShort(liveMembership.blsPubkey, 14, 0) : "—"}
                   </td>
                 </tr>
               </tbody>
@@ -1262,11 +1261,12 @@ const OperatorPage = ({ addr, go }: any) => {
         </Card>
         <Card title="Live operator telemetry">
           <div className="tx-kv">
-            <KVRow label="Operator id" value={liveOperatorId ?? op.addrShort} mono/>
+            <KVRow label="Operator id" value={liveOperatorId ? fmtHashShort(liveOperatorId) : op.addrShort} mono/>
+            <KVRow label="Chain address" value={operatorInfo.data?.chainAddress ? fmtAddr(operatorInfo.data.chainAddress, "user") : "—"} mono/>
             <KVRow label="Authority index" value={authorityIndex ?? "—"}/>
             <KVRow label="Lifecycle" value={operatorInfo.data?.lifecycleState ?? "—"}/>
             <KVRow label="Bonded amount" value={operatorInfo.data?.bondedAmount ?? "—"} mono/>
-            <KVRow label="BLS key" value={authority.data?.blsPubkey ?? operatorInfo.data?.blsKeyFingerprint ?? "—"} mono/>
+            <KVRow label="BLS key" value={authority.data?.blsPubkey ? fmtHashShort(authority.data.blsPubkey) : operatorInfo.data?.blsKeyFingerprint ?? "—"} mono/>
             <KVRow label="Recent signed/missed" value={signedCount === null ? "—" : `${signedCount}/${missedCount ?? 0}`}/>
             <KVRow label="Miss rate" value={risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}%` : "—"}/>
             <KVRow label="Jail status" value={jailStatus ?? "—"}/>
@@ -1781,7 +1781,7 @@ const OperatorsPage = ({go}: any) => {
           <thead><tr><th>Operator</th><th>State</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Uptime 90d</th><th style={{textAlign:"right"}}>Bonded</th><th style={{textAlign:"right"}}>Clusters</th><th style={{textAlign:"right"}}>Slash</th></tr></thead>
           <tbody>
             {useLiveRoster ? roster.operators.map((op)=>{
-              const opShort = `${op.operatorId.slice(0, 10)}…${op.operatorId.slice(-4)}`;
+              const opShort = fmtHashShort(op.operatorId, 10, 4);
               return (
                 <tr key={op.operatorId} onClick={()=>go(`#/operator/${encodeURIComponent(op.operatorId)}`)}>
                   <td>
@@ -1789,7 +1789,7 @@ const OperatorsPage = ({go}: any) => {
                       <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${op.operatorId.charCodeAt(2)*9%360})`}}/>
                       <div>
                         <div style={{fontWeight:500,fontSize:13}} className="mono">{opShort}</div>
-                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>cluster {op.clusterId} · BLS {op.blsPubkey ? `${op.blsPubkey.slice(0, 10)}…` : "—"}</div>
+                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>cluster {op.clusterId} · BLS {op.blsPubkey ? fmtHashShort(op.blsPubkey, 10, 0) : "—"}</div>
                       </div>
                     </div>
                   </td>

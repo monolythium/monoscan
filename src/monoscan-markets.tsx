@@ -24,6 +24,7 @@ import {
   type NativeNftListingKind,
   type SpotLimitOrderSide,
 } from "@monolythium/core-sdk";
+import { fmtAddr, fmtAddrShort, fmtHashShort } from "./sdk/format";
 import { MARKETS } from "./data/fallback";
 import {
   fetchNativeMarketState,
@@ -701,7 +702,7 @@ const NativeMarketEventsCard = ({ rows, latestBlock, loading, scope }: any) => (
                   {_shortHash(event.primaryId)}
                   {event.relatedId && <div title={event.relatedId} style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>rel {_shortHash(event.relatedId, 8, 4)}</div>}
                 </td>
-                <td className="mono" title={event.address} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(event.address, 9, 5)}</td>
+                <td className="mono" title={fmtAddr(event.address, "contract")} style={{fontSize:11,color:"var(--fg-300)"}}>{fmtAddrShort(event.address, "contract", 9, 5)}</td>
                 <td className="mono" style={{fontSize:10.5,color:"var(--fg-400)",maxWidth:360}}>
                   {event.decodedFields.slice(0, 4).map(([k, v]: [string, string])=>`${k}=${v}`).join(" · ") || "decoded payload unavailable"}
                 </td>
@@ -741,7 +742,7 @@ const NativeMarketStateTable = ({ title, rows, empty }: any) => (
                 {row.marketId ? <span title={row.marketId}>{_shortHash(row.marketId, 8, 5)}</span> : row.collectionId ? <span title={row.collectionId}>{_shortHash(row.collectionId, 8, 5)}</span> : "—"}
                 {row.tokenId && <div title={row.tokenId} style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>token {_shortHash(row.tokenId, 7, 4)}</div>}
               </td>
-              <td className="mono" title={row.account ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.account, 8, 5)}</td>
+              <td className="mono" title={row.account ? fmtAddr(row.account, "user") : undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{fmtAddrShort(row.account, "user", 8, 5)}</td>
               <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{row.side ?? "—"}</td>
               <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-200)"}}>{row.price ?? "—"}</td>
               <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-300)"}}>{row.amount ?? "—"}</td>
@@ -1211,7 +1212,7 @@ const NativeNftListingsTable = ({
                 <tr key={`${row.kind}-${row.primaryId ?? row.collectionId ?? i}`}>
                   <td className="mono" title={row.primaryId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.primaryId, 8, 5)}</td>
                   <td className="mono" title={row.collectionId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.collectionId, 8, 5)}</td>
-                  <td className="mono" title={row.account ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.account, 8, 5)}</td>
+                  <td className="mono" title={row.account ? fmtAddr(row.account, "user") : undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{fmtAddrShort(row.account, "user", 8, 5)}</td>
                   <td className="mono" title={row.tokenId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.tokenId, 7, 4)}</td>
                   <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-200)"}}>{row.price ?? "—"}</td>
                   <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{row.status ?? "—"}</td>
@@ -1925,8 +1926,8 @@ const MarketPage = ({ sym, go }: any) => {
       px,
       sz,
       value: px * sz,
-      maker: _shortAddr(row.maker, 7, 4),
-      taker: _shortAddr(row.taker, 7, 4),
+      maker: fmtAddrShort(row.maker, "user", 7, 4),
+      taker: fmtAddrShort(row.taker, "user", 7, 4),
       venue: "clob",
       round: row.blockHeight,
       attest: "indexed",
@@ -1994,7 +1995,7 @@ const MarketPage = ({ sym, go }: any) => {
             {liveMarket && <span className="pill ok" style={{fontSize:10.5}}>live CLOB</span>}
           </div>
           <div className="mono" style={{display:"flex",alignItems:"center",gap:10,marginTop:6,color:"var(--fg-400)",fontSize:11.5,letterSpacing:"0.02em"}}>
-            <span style={{padding:"3px 8px",background:"rgba(255,255,255,0.04)",border:"1px solid var(--fg-700)",borderRadius:4}}>{tkn.contract}</span>
+            <span style={{padding:"3px 8px",background:"rgba(255,255,255,0.04)",border:"1px solid var(--fg-700)",borderRadius:4}}>{fmtAddr(tkn.contract, "contract")}</span>
             {marketId && <span title={marketId}>market {_shortMarketId(marketId)}</span>}
             <CopyToClipboard text={marketId ?? tkn.contract} title={marketId ? `copy ${marketId}` : `copy ${tkn.contract}`}/>
             <TryApiLink marketId={marketId}/>
@@ -2432,7 +2433,7 @@ const MarketPage = ({ sym, go }: any) => {
           <div className="ms-card" style={{padding:"12px 14px"}}>
             <h3 style={{margin:"0 0 10px",fontSize:13,fontWeight:500}}>Contract & supply</h3>
             <div className="mono" style={{fontSize:11,color:"var(--fg-400)",display:"grid",gridTemplateColumns:"auto 1fr",gap:"6px 12px"}}>
-              <span>Contract</span><span style={{color:"var(--fg-200)",wordBreak:"break-all"}}>{tkn.contract}</span>
+              <span>Contract</span><span style={{color:"var(--fg-200)",wordBreak:"break-all"}}>{fmtAddr(tkn.contract, "contract")}</span>
               {marketId && <><span>Market id</span><span style={{color:"var(--fg-200)",wordBreak:"break-all"}}>{marketId}</span></>}
               {liveMarket && <><span>Registered</span><span style={{color:"var(--fg-200)"}}>block {Number(liveMarket.registeredAtBlock).toLocaleString()}</span></>}
               {/* TODO: missing base-token supply endpoint to return circulating supply for a CLOB market */}
