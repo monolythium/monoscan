@@ -166,20 +166,129 @@ body::after {
 .ms-brand b { display: block; font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
 .ms-brand small { display: block; font-family: var(--f-mono); font-size: var(--fs-10); color: var(--fg-400); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 1px; }
 
-.ms-search {
-  flex: 1; max-width: 720px;
-  display: flex; align-items: center; gap: 10px;
-  padding: 7px 14px;
+/* Header search now opens the SearchModal (full input + examples) on
+   click or ⌘K. The compact button shape mirrors the Ask button — gold
+   accent reserved for primary actions, gentle hover for everything
+   else. */
+.ms-search-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 7px 14px; height: 34px;
   border-radius: var(--r-pill);
   background: rgba(255,255,255,0.04);
   border: 1px solid var(--fg-700);
   color: var(--fg-300);
+  font-size: 12.5px; font-weight: 500;
   transition: all 180ms var(--e-out);
+  flex-shrink: 0;
 }
-.ms-search:focus-within { background: rgba(255,255,255,0.07); border-color: var(--fg-500); color: var(--fg-100); }
-.ms-search input { font-size: 12.5px; }
-.ms-search input::placeholder { color: var(--fg-400); }
-.ms-search__hint { font-family: var(--f-mono); font-size: 11.5px; color: var(--fg-400); letter-spacing: 0.05em; flex-shrink: 0; }
+.ms-search-btn:hover {
+  background: rgba(255,255,255,0.07);
+  border-color: var(--fg-500);
+  color: var(--fg-100);
+}
+.ms-search-btn__kbd {
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--fg-500);
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--fg-700);
+  line-height: 1.2;
+}
+.ms-search-btn:hover .ms-search-btn__kbd { color: var(--fg-300); }
+
+/* Centred search modal — opens on Search button click or ⌘K. */
+.ms-searchmodal {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 18px 18px;
+  background: rgba(6, 7, 14, 0.6);
+  backdrop-filter: blur(8px) saturate(120%);
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  animation: ms-searchmodal-fade 140ms var(--e-out);
+}
+@keyframes ms-searchmodal-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.ms-searchmodal__card {
+  width: min(640px, 100%);
+  background: rgba(15, 16, 28, 0.96);
+  border: 1px solid var(--fg-700);
+  border-radius: 14px;
+  box-shadow:
+    0 28px 70px -16px rgba(0, 0, 0, 0.75),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  animation: ms-searchmodal-rise 180ms var(--e-out);
+}
+@keyframes ms-searchmodal-rise {
+  from { transform: translateY(-8px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+.ms-searchmodal__form {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--fg-700);
+}
+.ms-searchmodal__input {
+  flex: 1;
+  font-family: var(--f-sans);
+  font-size: 15px;
+  color: var(--fg-100);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  padding: 4px 0;
+}
+.ms-searchmodal__input::placeholder { color: var(--fg-400); }
+.ms-searchmodal__hint {
+  font-size: 11px;
+  color: var(--fg-500);
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+.ms-searchmodal__examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px 14px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--fg-500);
+  letter-spacing: 0.04em;
+}
+.ms-searchmodal__examples > span { text-transform: uppercase; }
+.ms-searchmodal__examples button {
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--fg-700);
+  color: var(--fg-300);
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all 140ms var(--e-out);
+}
+.ms-searchmodal__examples button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--fg-500);
+  color: var(--fg-100);
+}
+@media (max-width: 560px) {
+  .ms-searchmodal { padding: 8vh 12px 12px; }
+  .ms-search-btn { padding: 7px 12px; }
+  .ms-search-btn__kbd { display: none; }
+}
 
 /* Nav contains all 8 routes inline. On narrow widths the parent
    .ms-header is itself flex-wrap, so the nav drops to its own row
