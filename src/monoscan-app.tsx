@@ -1,7 +1,8 @@
 /* =====================================================
-   Monoscan — public chain explorer for Monolythium v4.0
-   Three views: Landing · Cluster detail · Operator profile.
-   Hash-routed; data is faked but shape-true to data.tsx.
+   Monoscan — public chain explorer for Monolythium v2 (LythiumDAG-BFT).
+   Hash-routed SPA. Live data flows through @monolythium/core-sdk against a
+   public node's JSON-RPC + indexer; fixture data renders only when no node
+   is reachable (offline/static preview).
 ===================================================== */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -285,12 +286,12 @@ const Landing = ({ go }: any) => {
   const [rateSeries, setRateSeries]       = useState(()=>Array.from({length:60},(_,i)=>2.8+Math.sin(i*0.3)*0.15+Math.random()*0.08));
   const [showDeep, setShowDeep] = useState(false);
 
-  // Live latest blocks for the on-chain feed strip. Falls back to the mocked
-  // recent vertices when the node is offline so the page never goes blank.
-  // TODO(monolythium): once mono-core OI-0070 lands the indexer's
-  // per-vertex breakdown (transaction count, BLS-agg ms, DAC coverage, cluster
-  // attribution), swap these block headers for the richer vertex shape the
-  // designs demand.
+  // Live latest blocks for the on-chain feed strip. Falls back to the fixture
+  // recent vertices only when no node is reachable so the offline preview
+  // never goes blank.
+  // TODO: missing indexer endpoint to return per-vertex breakdown (transaction
+  // count, BLS-agg ms, DAC coverage, cluster attribution) — swap these block
+  // headers for the richer vertex shape once it lands.
   const liveBlocks = useLatestBlocks(8);
   const chainStats = useChainStats();
   const liveClobMarkets = useClobMarkets(25);
@@ -654,6 +655,9 @@ const Landing = ({ go }: any) => {
           ))}
         </Card>
 
+        {/* TODO: missing lyth_supply endpoint to return {publicAmount, privateAmount, publicPct}.
+            On a live chain the split renders as "—"; the fixture percentages show only in the
+            offline preview (hasLiveStats === false). */}
         <Card title="Two denominations" right={<span className="cap">irreversible · by design</span>}>
           <p className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,margin:"0 0 14px"}}>
             Public LYTH is fully transparent. Private LYTH‑p hides amounts at the protocol layer —
@@ -1837,14 +1841,14 @@ const App = () => {
   }, []);
   const go = (h) => { window.location.hash = h; setRoute(h); };
 
-  // Live chain head (2s poll per Stage 3) + chain-strip aggregate (round +
-  // block + peers + version + mempool + indexer). Both fall back to a local
-  // timer-based mock when the RPC endpoint is unreachable so the strip
-  // never freezes during dev.
-  // TODO(monolythium): swap the 2s long-poll for `lyth_subscribe`
-  // over WebSocket once mono-core OI-0069 lands. The seam lives in
-  // `data/hooks.ts::readLatestHeadFromWebSocket` and is feature-flagged
-  // behind `VITE_MONOSCAN_USE_WS` (see `sdk/client.ts::isWebSocketEnabled`).
+  // Live chain head (2s long-poll) + chain-strip aggregate (round + block +
+  // peers + version + mempool + indexer). Both fall back to a local
+  // timer-based fixture when no RPC endpoint is reachable so the strip never
+  // freezes in the offline preview.
+  // TODO: missing lyth_subscribe WebSocket endpoint to replace the 2s
+  // long-poll. The seam lives in `data/hooks.ts::readLatestHeadFromWebSocket`
+  // and is feature-flagged behind `VITE_MONOSCAN_USE_WS` (see
+  // `sdk/client.ts::isWebSocketEnabled`).
   const head = useChainHead();
   const strip = useChainStrip();
   const [mockRound, setMockRound] = useState(SCAN.consensus.round);

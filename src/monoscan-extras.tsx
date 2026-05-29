@@ -960,6 +960,7 @@ const StatsPage = ({ go }: any) => {
       <section>
         <h3 className="ov-section-title">Economy · issuance, rewards, slashing</h3>
         <p className="ov-section-desc">MONO minted as staking rewards, burned via base fees, slashed for operator misbehavior, and still waiting to be claimed.</p>
+        {/* TODO: missing endpoint to return inflation rate, rewards, and slashing aggregates */}
         {indexerAvailability.liveChain ? (
           <div className="ms-card" style={{padding:"18px 20px"}}>
             <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
@@ -1007,6 +1008,7 @@ const StatsPage = ({ go }: any) => {
         <div>
           <h3 className="ov-section-title">Activity · last 30 days</h3>
           <Card title="">
+            {/* TODO: missing endpoint to return 30-day rollup of tx count, contract deployments, new wallets */}
             {indexerAvailability.liveChain ? (
               <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
                 {indexerAvailability.disabled
@@ -1064,6 +1066,7 @@ const StatsPage = ({ go }: any) => {
                   : _fmtI(S.network.avgRoundsPerDay)}
                 tone="ok"
               />
+              {/* TODO: missing endpoint to return cluster inactiveReason (jailed) and recruiting flag */}
               <HealthRow
                 label="Clusters in jail cooldown"
                 value={indexerAvailability.liveChain
@@ -1092,6 +1095,7 @@ const StatsPage = ({ go }: any) => {
                   : indexerAvailability.liveChain ? "—" : "97.8%"}
                 tone="ok"
               />
+              {/* TODO: missing endpoints for last-slashing block, DAC coverage %, bridge queue depth, bridge fee status */}
               <HealthRow
                 label="Last slashing event"
                 value={indexerAvailability.liveChain ? "—" : "3 rounds ago"}
@@ -1867,7 +1871,15 @@ const WalletPage = ({ addr, go }: any) => {
                   </td>
                 </tr>
                 );
-              }) : w.txs.map(t=>(
+              }) : indexerAvailability.liveChain ? (
+                <tr>
+                  <td colSpan={6} className="mono" style={{color:"var(--fg-500)",fontSize:11,padding:"14px 8px"}}>
+                    {indexerAvailability.disabled
+                      ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
+                      : "No transactions indexed for this address yet."}
+                  </td>
+                </tr>
+              ) : w.txs.map(t=>(
                 <tr key={t.hash} onClick={()=>go(`#/tx/${encodeURIComponent(t.hash)}`)} className={t.status==="failed"?"wd-tx-failed":""}>
                   <td>
                     <span className={`wd-dir wd-dir--${t.direction}`}>
@@ -3035,10 +3047,11 @@ const RoundPage = ({ round, go }: any) => {
             When live block / certificate / vertex data exists, the cards
             above already show the truth. Only render the fixture cluster
             vertex sample when monoscan is in offline / design-preview
-            mode so a fresh testnet does not see invented BLS-agg and DAC
-            numbers under live data.
+            mode (no live head reachable) so a live chain never sees
+            invented BLS-agg and DAC numbers — including for a live round
+            whose header/cert/vertices are simply not yet exposed.
           */}
-          {!(liveHeader || liveCert || liveVertices.length > 0 || (liveParents?.length ?? 0) > 0) && (
+          {!curIsLive && !(liveHeader || liveCert || liveVertices.length > 0 || (liveParents?.length ?? 0) > 0) && (
             <div className="ms-card" style={{padding:0}}>
               <table className="ms-table">
                 <thead><tr><th>Cluster</th><th>Txs</th><th>BLS agg</th><th>DAC</th><th></th></tr></thead>
@@ -3067,6 +3080,7 @@ const RoundPage = ({ round, go }: any) => {
    operators, wallets, and markets.
 ===================================================== */
 const SearchPage = ({ q, go }: any) => {
+  const indexerAvailability = useIndexerAvailability();
   const ql = (q || "").toLowerCase();
   const looksLikeHash = /^0x[0-9a-fA-F]{64}$/.test(q || "");
   const looksLikeAddress = /^0x[0-9a-fA-F]{40}$/.test(q || "");
@@ -3075,8 +3089,11 @@ const SearchPage = ({ q, go }: any) => {
   const liveTx = useTxByHashLive(looksLikeHash ? q : undefined);
   const liveSearch = useSearch(q, 12);
   const liveRichList = useRichList(getLythTokenId(), 30);
-  const D: any = MONOSCAN_DATA || {};
-  const markets = (MARKETS || []).filter(m =>
+  // On a reachable chain, search is live-only: fixture markets/clusters/operators
+  // (and the fixture wallet hits below) are suppressed so a near-empty testnet
+  // never surfaces invented results. The fixture hits stay for offline preview.
+  const D: any = indexerAvailability.liveChain ? {} : (MONOSCAN_DATA || {});
+  const markets = indexerAvailability.liveChain ? [] : (MARKETS || []).filter(m =>
     m.sym.toLowerCase().includes(ql) || (m.name||"").toLowerCase().includes(ql)
   );
   const clusters = (D.clusters || []).filter(c =>
@@ -3097,7 +3114,7 @@ const SearchPage = ({ q, go }: any) => {
         }))
     : [];
   const liveWalletAddrs = new Set(liveWalletHits.map((w) => w.addr.toLowerCase()));
-  const fixtureWalletHits = ql
+  const fixtureWalletHits = ql && !indexerAvailability.liveChain
     ? WALLETS
         .filter((w: any) =>
           ((w.addr||"").toLowerCase().includes(ql) || (w.tag||"").toLowerCase().includes(ql))
