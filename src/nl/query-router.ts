@@ -26,7 +26,17 @@ interface Match {
     | "address"
     | "gaps"
     | "tokens"
-    | "cluster";
+    | "cluster"
+    // New-surface navigational templates (PF-6 / MB-6 / PF-4 / MB-5 / MB-4 / MB-2).
+    // These resolve to a factual answer that names the route; the surfaces
+    // render the live data themselves. No tool fan-out yet — the NL tool
+    // catalog gains typed tools in the @monolythium/core-sdk 0.3.10 pass.
+    | "oracle"
+    | "prover"
+    | "directory"
+    | "diversity"
+    | "bridge"
+    | "operatorFee";
   args: Record<string, string | number>;
 }
 
@@ -59,6 +69,35 @@ export function matchQuery(q: string): Match | null {
   // 3) "Are there any recent gap records?" / "gap records" / "any gaps"
   if (/\bgap[s]?\b/.test(ql) || /\bempty block/.test(ql) || /heartbeat/.test(ql)) {
     return { template: "gaps", args: { range: "24h" } };
+  }
+
+  // New-surface matchers — placed before the lenient token matchers so a word
+  // like "oracle" or "prover" routes to its surface rather than a token search.
+
+  // Operator fees — monoscan is the neutral transparency surface for the
+  // on-chain operator-fee facts (the operator-router landing soon defers here).
+  if (/operator\s+fee/.test(ql) || /\bfee\s+floor/.test(ql)) {
+    return { template: "operatorFee", args: {} };
+  }
+  // Oracle / price feeds (MB-6).
+  if (/\boracle[s]?\b/.test(ql) || /price\s+feed/.test(ql) || /\bfeed[s]?\b/.test(ql)) {
+    return { template: "oracle", args: {} };
+  }
+  // Prover market (MB-4).
+  if (/\bprover[s]?\b/.test(ql) || /proof\s+request/.test(ql) || /prover\s+market/.test(ql)) {
+    return { template: "prover", args: {} };
+  }
+  // Cluster directory (MB-5).
+  if (/cluster\s+directory/.test(ql) || /\bdirectory\b/.test(ql)) {
+    return { template: "directory", args: {} };
+  }
+  // Node diversity (PF-6).
+  if (/\bdivers\w*\b/.test(ql) || /\basn\b/.test(ql) || /correlated\s+failure/.test(ql)) {
+    return { template: "diversity", args: {} };
+  }
+  // Bridge health + circuit breaker (MB-2).
+  if (/\bbridge[s]?\b/.test(ql) || /circuit\s+breaker/.test(ql) || /drain\s+cap/.test(ql)) {
+    return { template: "bridge", args: {} };
   }
 
   // 4) "Find tokens matching MONO" / "search tokens X" / "tokens like X"
@@ -198,6 +237,80 @@ function explainCluster(r: GetClusterResult): string {
 }
 
 /* -------------------------------------------------------------------------- */
+/* New-surface navigational explainers                                        */
+/*                                                                            */
+/* These name the surface + its route in plain English. The surfaces render   */
+/* the live, factual chain data themselves; the NL layer just routes the      */
+/* reader there. Typed tool fan-out lands with the @monolythium/core-sdk      */
+/* 0.3.10 NL-tool catalog.                                                     */
+/* -------------------------------------------------------------------------- */
+
+function explainOracle(): string {
+  return [
+    "**Oracle dashboard** — open `#/oracle`.",
+    "",
+    "Each price feed closes a round when at least its **k-of-n** signers agree within",
+    "the deviation bound. The dashboard lists every configured feed (decimals,",
+    "heartbeat, deviation bps, min-signers), the authorized signer roster, and the",
+    "latest median + finalized block.",
+  ].join("\n");
+}
+
+function explainProver(): string {
+  return [
+    "**Prover market** — open `#/prover-market`.",
+    "",
+    "Buyers escrow a max fee against a verification key + deadline; registered GPU",
+    "provers (holding `SERVES_GPU_PROVE`) bid down to the **0.1 LYTH** fee floor",
+    "(**250 LYTH** bond to register). The view lists open / assigned / settled /",
+    "slashed / expired requests, live bids, and registered provers.",
+  ].join("\n");
+}
+
+function explainDirectory(): string {
+  return [
+    "**Cluster directory** — open `#/cluster-directory`.",
+    "",
+    "Every DVT cluster the chain has formed, fed by the on-chain `ClusterFormed`",
+    "event: roster (BLS pubkeys), anchor address, effective epoch, and formation",
+    "status (forming / active / draining / retired).",
+  ].join("\n");
+}
+
+function explainDiversity(): string {
+  return [
+    "**Node diversity** — open `#/diversity`.",
+    "",
+    "Per-cluster correlated-failure exposure (PF-6): the entropy of each roster",
+    "across autonomous systems, countries, and hosting classes, scored `0..10000`",
+    "basis points. Per-operator ASN / geo / hosting / PCR-digest metadata is on the",
+    "cluster detail.",
+  ].join("\n");
+}
+
+function explainBridge(): string {
+  return [
+    "**Bridge health** — open `#/bridge`.",
+    "",
+    "Per-route drain-cap proximity (drained vs cap-per-window) plus circuit-breaker",
+    "state. The breaker pauses claims when a route's window cap is crossed, then",
+    "waits out a resume cooldown before it re-arms.",
+  ].join("\n");
+}
+
+function explainOperatorFee(): string {
+  return [
+    "**Operator fees** — monoscan is the neutral transparency surface for the",
+    "on-chain operator-fee facts.",
+    "",
+    "Registered GPU provers publish a per-prover **fee floor** (≥ 0.1 LYTH) and a",
+    "locked **bond** (≥ 250 LYTH); see `#/prover-market`. Oracle signers and their",
+    "feed parameters are at `#/oracle`. These values are read straight from chain",
+    "state — monoscan reports them factually, without a verdict.",
+  ].join("\n");
+}
+
+/* -------------------------------------------------------------------------- */
 /* Public driver                                                              */
 /* -------------------------------------------------------------------------- */
 
@@ -276,6 +389,30 @@ export async function ask(
       const inv = await call("get_cluster", { id: Number(matched.args.id) });
       tool_calls.push(inv);
       explanation = explainCluster(inv.result as GetClusterResult);
+      break;
+    }
+    case "oracle": {
+      explanation = explainOracle();
+      break;
+    }
+    case "prover": {
+      explanation = explainProver();
+      break;
+    }
+    case "directory": {
+      explanation = explainDirectory();
+      break;
+    }
+    case "diversity": {
+      explanation = explainDiversity();
+      break;
+    }
+    case "bridge": {
+      explanation = explainBridge();
+      break;
+    }
+    case "operatorFee": {
+      explanation = explainOperatorFee();
       break;
     }
   }

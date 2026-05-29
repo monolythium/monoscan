@@ -55,4 +55,8 @@ export const SAMPLE_QUERIES: string[] = [
   "Are there any recent gap records?",
   "Find tokens matching MONO",
   "Summarize cluster 3's recent rounds",
+  "Show the oracle feeds",
+  "Open the prover market",
+  "How diverse are the clusters?",
+  "Bridge circuit-breaker status",
 ];

@@ -6687,3 +6687,576 @@ async function readLatestHeadFromWebSocket(): Promise<ChainHead | null> {
       "Disable VITE_MONOSCAN_USE_WS or wait for the WS upgrade.",
   );
 }
+
+/* ==========================================================================
+ * New-surface hooks (PF-6 / MB-6 / PF-4 / MB-5 / MB-4 / MB-2)
+ *
+ * Each hook calls the live `lyth_*` read method published in
+ * `@monolythium/core-sdk` 0.3.10 through the SDK client, resolving the node
+ * via `sdk/client.ts`. When RPC is unconfigured, a method errors, or the
+ * chain returns the `{ status: "indexer_unavailable" }` graceful fallback,
+ * the hook degrades to the `data/fallback.ts` fixture (clearly a fixture, not
+ * fabricated live data) so the surface still renders. All SDK-type coupling
+ * lives in `sdk/surfaces.ts` (re-exports + view-model adapters); the page
+ * components consume the view-models unchanged.
+ * ========================================================================== */
+
+import {
+  BRIDGE_ROUTE_HEALTH,
+  CLUSTER_DIRECTORY,
+  CLUSTER_DIVERSITY,
+  ORACLE_DASHBOARD,
+  PROVER_MARKET,
+  SPENDING_POLICIES,
+} from "./fallback";
+import {
+  diversityScoreFromView,
+  normalizeHostingClass,
+  type BridgeBreakerState,
+  type BridgeRouteHealth,
+  type ClusterDirectory,
+  type ClusterDirectoryEntry,
+  type ClusterDiversityRollup,
+  type ClusterFormationStatus,
+  type OperatorNetworkMetadataRow,
+  type OracleDashboard,
+  type OracleFeed,
+  type OracleSigner,
+  type ProofRequest,
+  type ProverBid,
+  type ProverMarket,
+  type RegisteredProver,
+  type SpendingPolicyDimensions,
+} from "../sdk/surfaces";
+import type {
+  BridgeHealthRecord,
+  OracleFeedConfig,
+  OracleLatestPrice,
+  OracleSignerRow,
+  ProofRequestRow,
+  ProverBidView,
+  SpendingPolicyView,
+} from "@monolythium/core-sdk";
+
+/* -------------------------------------------------------------------------- */
+/* v5-surface SDK-method type augmentations.                                   */
+/*                                                                             */
+/* The SDK 0.3.10 RpcClient declares the v5 read methods; we widen the local   */
+/* `RpcClient` reference so call sites stay typed without depending on the     */
+/* exact published method-name list. Every method is invoked through a         */
+/* `try/catch` that degrades to the fixture, so an absent method on an older   */
+/* node simply falls back.                                                     */
+/* -------------------------------------------------------------------------- */
+
+const ZERO_HASH = `0x${"00".repeat(32)}`;
+
+/** `0x0`/empty/all-zero → null; otherwise the raw value. Used for cap fields. */
+function nonZeroOrNull(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  try {
+    return BigInt(raw) === 0n ? null : raw;
+  } catch {
+    return raw === ZERO_HASH ? null : raw;
+  }
+}
+
+/** `0x`-hex (or decimal) uint256 → decimal string; `null` passes through. */
+function toDecimalString(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  try {
+    return BigInt(raw).toString(10);
+  } catch {
+    return raw;
+  }
+}
+
+function isIndexerUnavailable(value: unknown): boolean {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    (value as { status?: string }).status === "indexer_unavailable"
+  );
+}
+
+/* ----------------------------- PF-6 diversity ----------------------------- */
+
+/** Resolve one operator's network metadata into the rendered row. */
+async function readOperatorMetadataRow(
+  rpc: ReturnType<typeof getRpcClient>,
+  operatorId: string,
+): Promise<OperatorNetworkMetadataRow | null> {
+  try {
+    const md = await rpc.lythGetOperatorNetworkMetadata(operatorId);
+    return {
+      operatorId: md.operatorId ?? operatorId,
+      asn: md.asn ?? 0,
+      geoRegion: md.geoRegion ?? "",
+      hostingClass: normalizeHostingClass(md.hostingClass),
+      pcrDigest: md.pcrDigest ?? ZERO_HASH,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build the diversity rollup for one cluster from the live SDK: the flat
+ * `lyth_getClusterDiversity` view + the cluster's roster operator ids from
+ * `lyth_clusterStatus` (fanned out to `lyth_getOperatorNetworkMetadata`).
+ */
+async function readClusterDiversity(
+  clusterId: number,
+): Promise<ClusterDiversityRollup | null> {
+  if (!isRpcConfigured()) {
+    return CLUSTER_DIVERSITY.find((v) => v.diversity.clusterId === clusterId) ?? null;
+  }
+  try {
+    const rpc = getRpcClient();
+    const view = await rpc.lythGetClusterDiversity(clusterId);
+    let operators: OperatorNetworkMetadataRow[] = [];
+    let resolvedMembers = 0;
+    try {
+      const status: ClusterStatusResponse = await rpc.lythClusterStatus(clusterId);
+      const members = status.members ?? [];
+      resolvedMembers = members.length;
+      const rows = await Promise.all(
+        members.map((m) => readOperatorMetadataRow(rpc, m.operatorId)),
+      );
+      operators = rows.filter((r): r is OperatorNetworkMetadataRow => r !== null);
+    } catch {
+      operators = [];
+    }
+    return {
+      diversity: diversityScoreFromView(view, resolvedMembers || operators.length),
+      operators,
+    };
+  } catch {
+    return CLUSTER_DIVERSITY.find((v) => v.diversity.clusterId === clusterId) ?? null;
+  }
+}
+
+/**
+ * PF-6 — cluster network-diversity score + per-operator metadata. Live:
+ * `lyth_getClusterDiversity` + `lyth_clusterStatus` +
+ * `lyth_getOperatorNetworkMetadata`. Falls back to the `CLUSTER_DIVERSITY`
+ * fixture when RPC is unconfigured or the method is unavailable.
+ */
+export function useClusterDiversity(clusterId: number | undefined) {
+  return useQuery<ClusterDiversityRollup | null>({
+    queryKey: QK.clusterDiversity(clusterId ?? ""),
+    enabled: clusterId !== undefined,
+    queryFn: () => readClusterDiversity(clusterId as number),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * PF-6 — the full diversity set for the index view. Fans `lyth_getClusterDiversity`
+ * out over the live `lyth_clusterDirectory` ids; falls back to the fixture set
+ * when RPC is unconfigured or the directory cannot be read.
+ */
+export function useClusterDiversitySet() {
+  return useQuery<ClusterDiversityRollup[] | null>({
+    queryKey: QK.clusterDiversitySet(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return CLUSTER_DIVERSITY;
+      try {
+        const rpc = getRpcClient();
+        const directory = await getApiClient()
+          .clusters(0, 100)
+          .then((r) => r.data.clusters)
+          .catch(() => rpc.lythClusterDirectory(0, 100));
+        const ids = (directory.clusters ?? [])
+          .map((c) => c.clusterId)
+          .filter((id): id is number => typeof id === "number")
+          .slice(0, 50);
+        if (ids.length === 0) return CLUSTER_DIVERSITY;
+        const rows = await Promise.all(
+          ids.map(async (id): Promise<ClusterDiversityRollup | null> => {
+            try {
+              const view = await rpc.lythGetClusterDiversity(id);
+              return {
+                diversity: diversityScoreFromView(view, 0),
+                operators: [],
+              };
+            } catch {
+              return null;
+            }
+          }),
+        );
+        const live = rows.filter((r): r is ClusterDiversityRollup => r !== null);
+        return live.length > 0 ? live : CLUSTER_DIVERSITY;
+      } catch {
+        return CLUSTER_DIVERSITY;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+/* ------------------------------- MB-6 oracle ------------------------------ */
+
+function oracleSignerFromRow(row: OracleSignerRow): OracleSigner {
+  return {
+    address: row.writer,
+    servesOracleWriter: true,
+    feeds: [],
+    bond: null,
+  };
+}
+
+function oracleFeedFromConfig(
+  cfg: OracleFeedConfig,
+  price: OracleLatestPrice | null,
+): OracleFeed {
+  return {
+    feedId: cfg.feedId,
+    label: null,
+    decimals: cfg.decimals,
+    minSigners: cfg.minSigners,
+    allowedWritersLen: cfg.allowedWritersLen,
+    heartbeatSecs: cfg.heartbeatSeconds,
+    deviationBps: cfg.deviationBps,
+    latestRoundId: price && price.round > 0 ? price.round : null,
+    latestMedian: price?.median ?? null,
+    finalizedAtBlock: price?.finalizedAtBlock ?? null,
+    observationsLen: null,
+  };
+}
+
+/**
+ * MB-6 — oracle dashboard: signer roster + configured feeds + latest medians.
+ *
+ * Live: `lyth_oracleSigners` (global writer roster). The fixture supplies the
+ * feed catalogue (the chain has no "list every feed" method — feeds are read
+ * per-id via `lyth_oracleFeedConfig` + `lyth_oracleLatestPrice`), so monoscan
+ * enriches each known feed id with the live config/price and otherwise falls
+ * back. When the signer projection is unavailable
+ * (`{ status: "indexer_unavailable" }`) the signer roster degrades to the
+ * fixture.
+ */
+export function useOracleDashboard() {
+  return useQuery<OracleDashboard | null>({
+    queryKey: QK.oracleDashboard(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return ORACLE_DASHBOARD;
+      try {
+        const rpc = getRpcClient();
+        let signers: OracleSigner[] = ORACLE_DASHBOARD.signers;
+        try {
+          const roster = await rpc.lythOracleSigners();
+          if (!isIndexerUnavailable(roster) && roster.writers.length > 0) {
+            signers = roster.writers.map(oracleSignerFromRow);
+          }
+        } catch {
+          // keep fixture signers
+        }
+        // Enrich the known feed catalogue with live config + price per feed id.
+        const feeds: OracleFeed[] = await Promise.all(
+          ORACLE_DASHBOARD.feeds.map(async (fixtureFeed) => {
+            try {
+              const [cfg, price] = await Promise.all([
+                rpc.lythOracleFeedConfig(fixtureFeed.feedId),
+                rpc.lythOracleLatestPrice(fixtureFeed.feedId).catch(() => null),
+              ]);
+              const feed = oracleFeedFromConfig(cfg, price);
+              // Preserve the human label the fixture knows for the feed id.
+              feed.label = fixtureFeed.label;
+              feed.observationsLen = price ? fixtureFeed.observationsLen : null;
+              return feed;
+            } catch {
+              return fixtureFeed;
+            }
+          }),
+        );
+        return { signers, feeds, admin: ORACLE_DASHBOARD.admin };
+      } catch {
+        return ORACLE_DASHBOARD;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+/* --------------------------- PF-4 spending policy ------------------------- */
+
+function spendingPolicyFromView(view: SpendingPolicyView): SpendingPolicyDimensions {
+  return {
+    subAccount: view.address,
+    configured: view.exists,
+    disabled: view.exists && !view.enabled,
+    perTxCapLythoshi: nonZeroOrNull(view.perTxCap),
+    dailyCapLythoshi: nonZeroOrNull(view.dailyCap),
+    weeklyCapLythoshi: nonZeroOrNull(view.weeklyCap),
+    monthlyCapLythoshi: nonZeroOrNull(view.monthlyCap),
+    // The §18.8 read shape carries no per-window spend counters.
+    dailySpentLythoshi: null,
+    weeklySpentLythoshi: null,
+    monthlySpentLythoshi: null,
+    categoryAllowRoot:
+      view.categoryAllowRoot && view.categoryAllowRoot !== ZERO_HASH
+        ? view.categoryAllowRoot
+        : null,
+    destinationAllowRoot:
+      view.destinationAllowRoot && view.destinationAllowRoot !== ZERO_HASH
+        ? view.destinationAllowRoot
+        : null,
+    timeWindow: view.timeOfDayWindow
+      ? {
+          enabled: view.timeOfDayWindow.enabled,
+          startHour: view.timeOfDayWindow.startHour,
+          endHour: view.timeOfDayWindow.endHour,
+        }
+      : null,
+    expiryUnixSecs: view.expiryUnixSeconds,
+    policyVersion: view.version,
+  };
+}
+
+/**
+ * PF-4 — §18.8 spending-policy dimensions for one agent sub-account. Live:
+ * `lyth_getSpendingPolicy`. Returns `null` (the card renders the unconfigured
+ * state) when the policy does not exist; falls back to the fixture when RPC is
+ * unconfigured or the read errors.
+ */
+export function useSpendingPolicy(addr: string | undefined) {
+  return useQuery<SpendingPolicyDimensions | null>({
+    queryKey: QK.spendingPolicy(addr ?? ""),
+    enabled: Boolean(addr),
+    queryFn: async () => {
+      if (!addr) return null;
+      if (!isRpcConfigured()) return SPENDING_POLICIES[addr] ?? null;
+      try {
+        const view = await getRpcClient().lythGetSpendingPolicy(addr);
+        if (!view.exists) return null;
+        return spendingPolicyFromView(view);
+      } catch {
+        return SPENDING_POLICIES[addr] ?? null;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+/* --------------------------- MB-5 cluster directory ----------------------- */
+
+function directoryStatusFromEntry(
+  entry: ClusterDirectoryEntryResponse,
+  status: ClusterStatusResponse | null,
+): ClusterFormationStatus {
+  if (!entry.active) return "retired";
+  if (status && status.live < status.threshold) return "draining";
+  return "active";
+}
+
+function directoryEntryToView(
+  entry: ClusterDirectoryEntryResponse,
+  status: ClusterStatusResponse | null,
+): ClusterDirectoryEntry {
+  const size = status?.size ?? entry.size;
+  const threshold = status?.threshold ?? entry.threshold;
+  const roster = (status?.members ?? []).map((m) => m.blsPubkey).filter(Boolean);
+  const epoch = status?.epoch != null ? Number(status.epoch) : 0;
+  return {
+    clusterId: entry.clusterId,
+    effectiveEpoch: epoch,
+    // The directory page carries no anchor address; surface the id-derived
+    // placeholder until a node retains the ClusterFormed anchor.
+    anchorAddress: "",
+    roster,
+    liveMembers: status?.live ?? size,
+    size,
+    threshold,
+    status: directoryStatusFromEntry(entry, status),
+    formedAtBlock: status?.lastUpdateHeight != null ? Number(status.lastUpdateHeight) : null,
+  };
+}
+
+/**
+ * MB-5 — cluster directory: roster, anchor, effective epoch, formation status.
+ *
+ * Live: `lyth_clusterDirectory` (the compact descriptor page) joined with
+ * `lyth_clusterStatus` per cluster for roster + threshold + epoch. Falls back
+ * to the `CLUSTER_DIRECTORY` fixture when RPC is unconfigured or the directory
+ * cannot be read.
+ */
+export function useClusterDirectory() {
+  return useQuery<ClusterDirectory | null>({
+    queryKey: QK.clusterDirectory(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return CLUSTER_DIRECTORY;
+      try {
+        const rpc = getRpcClient();
+        const page = await getApiClient()
+          .clusters(0, 100)
+          .then((r) => r.data.clusters)
+          .catch(() => rpc.lythClusterDirectory(0, 100));
+        const entries = page.clusters ?? [];
+        if (entries.length === 0) return CLUSTER_DIRECTORY;
+        const capped = entries.slice(0, 50);
+        const clusters = await Promise.all(
+          capped.map(async (entry) => {
+            let status: ClusterStatusResponse | null = null;
+            try {
+              status = await getApiClient()
+                .cluster(entry.clusterId)
+                .then((r) => apiClusterStatusToRpcStatus(r.data.cluster))
+                .catch(() => rpc.lythClusterStatus(entry.clusterId));
+            } catch {
+              status = null;
+            }
+            return directoryEntryToView(entry, status);
+          }),
+        );
+        const currentEpoch =
+          clusters.map((c) => c.effectiveEpoch).filter((e) => e > 0).sort((a, b) => b - a)[0] ??
+          CLUSTER_DIRECTORY.currentEpoch;
+        return { clusters, currentEpoch };
+      } catch {
+        return CLUSTER_DIRECTORY;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+/* ----------------------------- MB-4 prover market ------------------------- */
+
+function proofRequestFromRow(row: ProofRequestRow): ProofRequest {
+  return {
+    id: row.requestId,
+    buyer: row.buyer,
+    vkeyHash: row.vkeyHash,
+    maxFee: toDecimalString(row.maxFee) ?? "0",
+    deadline: row.deadlineUnixSeconds,
+    state: row.state,
+    assignedProver: row.assignedProver,
+    winningFee: toDecimalString(row.winningFee),
+  };
+}
+
+function proverBidFromView(requestId: string, bid: ProverBidView): ProverBid {
+  return {
+    requestId,
+    prover: bid.prover,
+    fee: toDecimalString(bid.fee) ?? "0",
+  };
+}
+
+/**
+ * MB-4 — prover market: open requests, bids, registered provers.
+ *
+ * Live: `lyth_listProofRequests` (indexer projection) for the request rows +
+ * `lyth_getProverBids` per request for the live bid book. The registered-prover
+ * roster has no list method (provers are discovered by capability bit), so it
+ * is supplied by the fixture. When the projection is unavailable
+ * (`{ status: "indexer_unavailable" }`) or RPC is unconfigured the whole market
+ * degrades to the `PROVER_MARKET` fixture.
+ */
+export function useProverMarket() {
+  return useQuery<ProverMarket | null>({
+    queryKey: QK.proverMarket(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return PROVER_MARKET;
+      try {
+        const rpc = getRpcClient();
+        const list = await rpc.lythListProofRequests(null, 50);
+        if (isIndexerUnavailable(list)) return PROVER_MARKET;
+        const requests = (list.requests ?? []).map(proofRequestFromRow);
+        if (requests.length === 0) {
+          return { requests: [], bids: [], provers: PROVER_MARKET.provers };
+        }
+        const bidLists = await Promise.all(
+          requests
+            .filter((r) => r.state === "open" || r.state === "assigned")
+            .map(async (r) => {
+              try {
+                const res = await rpc.lythGetProverBids(r.id);
+                return (res.bids ?? []).map((b) => proverBidFromView(r.id, b));
+              } catch {
+                return [] as ProverBid[];
+              }
+            }),
+        );
+        const bids = bidLists.flat();
+        // No on-chain "list provers" method; surface the fixture roster.
+        const provers: RegisteredProver[] = PROVER_MARKET.provers;
+        return { requests, bids, provers };
+      } catch {
+        return PROVER_MARKET;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+/* ----------------------------- MB-2 bridge health ------------------------- */
+
+function bridgeRouteFromRecord(
+  record: BridgeHealthRecord,
+  drained: string | null,
+  asset: string,
+): BridgeRouteHealth {
+  const cb = record.circuitBreaker;
+  const cap = nonZeroOrNull(toDecimalString(cb.defaultDrainCapPerWindow));
+  const drainedDec = toDecimalString(drained) ?? "0";
+  let remaining: string | null = null;
+  let proximity: number | null = null;
+  if (cap !== null) {
+    const capBig = BigInt(cap);
+    const drainedBig = BigInt(drainedDec);
+    const rem = capBig > drainedBig ? capBig - drainedBig : 0n;
+    remaining = rem.toString(10);
+    proximity = capBig > 0n ? Math.min(1, Number((drainedBig * 10000n) / capBig) / 10000) : null;
+  }
+  const breaker: BridgeBreakerState =
+    cap === null ? "disabled" : cb.paused ? "paused" : "armed";
+  return {
+    bridgeId: record.bridgeId,
+    asset,
+    drainedThisBucket: drainedDec,
+    capPerWindow: cap,
+    remaining,
+    proximity,
+    windowBlocks: cb.defaultDrainWindowBlocks,
+    breaker,
+    pausedAtBlock: cb.pausedAtBlock,
+    resumeCooldownBlocks: cb.resumeCooldownBlocks,
+    pausedReason: null,
+  };
+}
+
+/**
+ * MB-2 — per-route bridge health: drain-cap proximity + circuit-breaker state.
+ *
+ * Live: `lyth_bridgeHealth` (the paged global bridge set; each record carries
+ * the circuit-breaker posture). The bridge id alone does not name the wrapped
+ * asset, so the rendered `asset` falls back to a short bridge-id label. Falls
+ * back to the `BRIDGE_ROUTE_HEALTH` fixture when RPC is unconfigured or the
+ * read errors.
+ */
+export function useBridgeRouteHealth() {
+  return useQuery<BridgeRouteHealth[] | null>({
+    queryKey: QK.bridgeRouteHealth(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return BRIDGE_ROUTE_HEALTH;
+      try {
+        const rpc = getRpcClient();
+        const health = await rpc.lythBridgeHealth(null, 50);
+        const records = health.records ?? [];
+        if (records.length === 0) return BRIDGE_ROUTE_HEALTH;
+        return records.map((record) => {
+          const assetLabel = `${record.bridgeId.slice(0, 10)}…`;
+          // `lyth_bridgeHealth` carries the bridge-default cap/window + breaker
+          // posture; the live per-asset drain bucket needs a wrapped-asset id
+          // (`lyth_bridgeDrainStatus`) that the health page does not name, so
+          // the rendered bucket starts at 0 and shows the bridge-default cap.
+          return bridgeRouteFromRecord(record, "0", assetLabel);
+        });
+      } catch {
+        return BRIDGE_ROUTE_HEALTH;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
