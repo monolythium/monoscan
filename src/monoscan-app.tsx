@@ -1048,18 +1048,19 @@ const ClusterPage = ({ slot, go }: any) => {
             Cluster status, quorum, and member BLS keys come from public RPC. Rich APY, rewards, and vertex inclusion remain indexer-backed mock data.
           </div>
         </Card>
-        <Card title="Members · 7 operators">
+        <Card title={`Members · ${memberRows.length} operator${memberRows.length === 1 ? "" : "s"}`}>
+          <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
           <table className="ms-table">
             <thead><tr><th>Operator</th><th>Role</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Vertex rate</th><th></th></tr></thead>
             <tbody>
               {memberRows.map(m=>(
                 <tr key={m.addrShort} onClick={()=>go(`#/operator/${encodeURIComponent(m.addrShort)}`)}>
                   <td>
-                    <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                      <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${m.handle.charCodeAt(0)*7%360})`}}/>
-                      <div>
+                    <div style={{display:"flex",gap:10,alignItems:"center",minWidth:0}}>
+                      <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${m.handle.charCodeAt(0)*7%360})`,flexShrink:0}}/>
+                      <div style={{minWidth:0}}>
                         <div style={{fontWeight:500,fontSize:13}}>{m.handle}</div>
-                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>{m.addrShort}</div>
+                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"min(58vw,340px)"}}>{m.addrShort}</div>
                       </div>
                     </div>
                   </td>
@@ -1075,6 +1076,7 @@ const ClusterPage = ({ slot, go }: any) => {
               ))}
             </tbody>
           </table>
+          </div>
         </Card>
 
         <Card title="Reward stream · last 30 days">
@@ -1774,6 +1776,7 @@ const OperatorsPage = ({go}: any) => {
         </div>
       )}
       <Card title="">
+        <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
         <table className="ms-table">
           <thead><tr><th>Operator</th><th>State</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Uptime 90d</th><th style={{textAlign:"right"}}>Bonded</th><th style={{textAlign:"right"}}>Clusters</th><th style={{textAlign:"right"}}>Slash</th></tr></thead>
           <tbody>
@@ -1819,6 +1822,7 @@ const OperatorsPage = ({go}: any) => {
             ))}
           </tbody>
         </table>
+        </div>
         {useLiveRoster && (
           <div className="mono" style={{color:"var(--fg-500)",fontSize:11,padding:"10px 14px",lineHeight:1.55,borderTop:"1px solid var(--fg-700)"}}>
             Reputation / uptime / bonded / slash aggregates require an indexed peer

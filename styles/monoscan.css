@@ -2396,6 +2396,22 @@ html[data-theme="light"] .ms-theme__pop {
 
 /* ---------- ≤ 720px: large phone landscape / small tablet portrait ---------- */
 @media (max-width: 720px) {
+  /* Every data table becomes a horizontally-scrollable block on phones.
+     Setting the <table> itself to display:block keeps the internal row
+     layout (anonymous table fixup) while giving it its own scroll
+     container — so wide tables (operator rosters, market lists, the rich
+     list, etc.) never force the whole page sideways. white-space:nowrap
+     keeps each cell on one line so columns stay aligned while scrolling. */
+  .ms-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+  /* Trim cell padding + size a touch so more columns fit before scroll. */
+  .ms-table th, .ms-table td { padding-left: 8px; padding-right: 8px; }
+
   /* Topbar wraps so the search input gets a full row on its own. */
   .ms-topbar { flex-wrap: wrap; gap: 10px; padding: 10px 14px; }
   .ms-brand small { display: none; }
