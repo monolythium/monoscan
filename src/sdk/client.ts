@@ -262,8 +262,8 @@ export const QK = {
   txStatus: (h: string) => ["mono", "tx", h, "status"] as const,
   txFeed: (limit: number, cursor: string | null = null) =>
     ["mono", "transactions", "feed", limit, cursor ?? "head"] as const,
-  latestTransactions: (limit: number, blockWindow: number) =>
-    ["mono", "transactions", "latest", limit, blockWindow] as const,
+  latestTransactions: (limit: number, blockWindow: number, cursor: string | null = null) =>
+    ["mono", "transactions", "latest", limit, blockWindow, cursor ?? "head"] as const,
   mempool: () => ["mono", "mempool"] as const,
   clusterSet: () => ["mono", "clusters"] as const,
   activeClusters: () => ["mono", "clusters", "active"] as const,

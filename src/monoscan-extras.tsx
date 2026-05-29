@@ -2006,7 +2006,18 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
 ===================================================== */
 const TransactionsPage = ({ go }: any) => {
   const [query, setQuery] = useStateX("");
-  const live = useLatestTransactions(60, 32);
+  // Cursor-based pagination over the live transaction feed. The feed is
+  // forward-only: each page returns up to `pageSize` rows + an opaque
+  // nextCursor. We keep a stack of the cursors we have walked so "Newer"
+  // can step back to a prior page. Random page-N access is not possible
+  // with opaque cursors, and the feed exposes no height/date anchor — so
+  // "go to height" routes to the round view instead.
+  const [pageSize, setPageSize] = useStateX(50);
+  const [cursorStack, setCursorStack] = useStateX<(string | null)[]>([null]);
+  const [pageIndex, setPageIndex] = useStateX(0);
+  const [heightJump, setHeightJump] = useStateX("");
+  const currentCursor = cursorStack[pageIndex] ?? null;
+  const live = useLatestTransactions(pageSize, 32, currentCursor);
   const hasLiveDigest = live.data !== undefined && live.data !== null;
   const fallbackRows = useMemoX(() =>
     Object.values(TXS)
@@ -2070,6 +2081,26 @@ const TransactionsPage = ({ go }: any) => {
       ? "checking live API"
       : "local fallback";
 
+  // Pagination is only meaningful on the cursor-backed feed. The block-scan
+  // fallback returns a single newest-window page (nextCursor null), so Older
+  // stays disabled there — honest, since that path cannot walk a cursor.
+  const nextCursor = live.data?.nextCursor ?? null;
+  const usingCursorFeed = hasLiveDigest && live.data?.source === "lyth_txFeed";
+  const canOlder = usingCursorFeed && nextCursor !== null;
+  const canNewer = pageIndex > 0;
+  const goOlder = () => {
+    if (!canOlder) return;
+    setCursorStack((stack) => (pageIndex === stack.length - 1 ? [...stack, nextCursor] : stack));
+    setPageIndex((i) => i + 1);
+  };
+  const goNewer = () => { if (canNewer) setPageIndex((i) => Math.max(0, i - 1)); };
+  const resetPaging = () => { setCursorStack([null]); setPageIndex(0); };
+  const heightJumpValid = /^\d+$/.test(heightJump.trim().replace(/[, ]/g, ""));
+  const submitHeightJump = () => {
+    const h = heightJump.trim().replace(/[, ]/g, "");
+    if (/^\d+$/.test(h)) go(`#/round/${h}`);
+  };
+
   return (
     <div className="ms-page ms-transactions">
       <section style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:18,flexWrap:"wrap"}}>
@@ -2077,7 +2108,7 @@ const TransactionsPage = ({ go }: any) => {
           <div className="cap" style={{color:"var(--gold)"}}>Transactions</div>
           <h1 className="ms-h1" style={{margin:"4px 0 0"}}>Latest transactions</h1>
           <p className="mono" style={{color:"var(--fg-400)",margin:"8px 0 0",fontSize:13,maxWidth:720,lineHeight:1.55}}>
-            Recent public transactions flattened from the newest block window. Private transfer amounts remain hidden by protocol rules.
+            Public transactions newest-first, paged through the live feed. Use Older / Newer to walk the feed, or jump to a specific height. Private transfer amounts remain hidden by protocol rules.
           </p>
         </div>
         <button className="ov-cta ov-cta--ghost" onClick={()=>live.refetch()}>
@@ -2196,6 +2227,76 @@ const TransactionsPage = ({ go }: any) => {
           </table>
           </div>
         )}
+
+        {/* ---------- Pagination + jump controls ---------- */}
+        <div
+          style={{
+            display:"flex", alignItems:"center", justifyContent:"space-between",
+            gap:12, flexWrap:"wrap", marginTop:14, paddingTop:14,
+            borderTop:"1px solid var(--fg-700)",
+          }}
+        >
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <span className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>Page {pageIndex + 1}</span>
+            <button
+              className="ov-cta ov-cta--ghost"
+              onClick={goNewer}
+              disabled={!canNewer}
+              style={{opacity: canNewer ? 1 : 0.4, cursor: canNewer ? "pointer" : "not-allowed"}}
+            >
+              ← Newer
+            </button>
+            <button
+              className="ov-cta ov-cta--ghost"
+              onClick={goOlder}
+              disabled={!canOlder}
+              style={{opacity: canOlder ? 1 : 0.4, cursor: canOlder ? "pointer" : "not-allowed"}}
+            >
+              Older →
+            </button>
+            <span className="mono" style={{fontSize:10.5,color:"var(--fg-500)"}}>
+              {usingCursorFeed
+                ? (canOlder ? "more pages available" : "end of feed")
+                : hasLiveDigest ? "single page · block scan" : "fallback preview"}
+            </span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <label className="mono" style={{fontSize:11,color:"var(--fg-400)",display:"flex",alignItems:"center",gap:6}}>
+              rows
+              <select
+                value={pageSize}
+                onChange={(e)=>{ setPageSize(Number(e.target.value)); resetPaging(); }}
+                style={{
+                  background:"rgba(255,255,255,0.03)", border:"1px solid var(--fg-700)",
+                  borderRadius:6, color:"var(--fg-100)", fontSize:11, padding:"4px 6px",
+                }}
+              >
+                {[25,50,100].map((n)=>(<option key={n} value={n}>{n}</option>))}
+              </select>
+            </label>
+            {/* TODO: missing date-anchored txFeed param (or a date->height index) to jump the feed to a calendar date */}
+            <form onSubmit={(e)=>{ e.preventDefault(); submitHeightJump(); }} style={{display:"flex",alignItems:"center",gap:6}}>
+              <input
+                value={heightJump}
+                onChange={(e)=>setHeightJump(e.target.value)}
+                placeholder="go to height"
+                inputMode="numeric"
+                style={{
+                  width:120, padding:"5px 8px", border:"1px solid var(--fg-700)",
+                  borderRadius:6, background:"rgba(255,255,255,0.03)", color:"var(--fg-100)", fontSize:11,
+                }}
+              />
+              <button
+                type="submit"
+                className="ov-cta ov-cta--ghost"
+                disabled={!heightJumpValid}
+                style={{opacity: heightJumpValid ? 1 : 0.4, cursor: heightJumpValid ? "pointer" : "not-allowed"}}
+              >
+                Open round
+              </button>
+            </form>
+          </div>
+        </div>
       </Card>
     </div>
   );
