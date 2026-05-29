@@ -6687,3 +6687,160 @@ async function readLatestHeadFromWebSocket(): Promise<ChainHead | null> {
       "Disable VITE_MONOSCAN_USE_WS or wait for the WS upgrade.",
   );
 }
+
+/* ==========================================================================
+ * New-surface hooks (PF-6 / MB-6 / PF-4 / MB-5 / MB-4 / MB-2)
+ *
+ * Each hook renders from the `data/fallback.ts` fixture today and carries a
+ * `// TODO(monolythium-vision)` marker for the live `lyth_*` method that lands
+ * in @monolythium/core-sdk 0.3.10. All SDK-version coupling stays in
+ * `sdk/surfaces.ts` (the typed shapes) + `sdk/client.ts` (cache keys); the
+ * end-pass swaps the fixture read for the live call without touching the
+ * page components.
+ * ========================================================================== */
+
+import {
+  BRIDGE_ROUTE_HEALTH,
+  CLUSTER_DIRECTORY,
+  CLUSTER_DIVERSITY,
+  ORACLE_DASHBOARD,
+  PROVER_MARKET,
+  SPENDING_POLICIES,
+} from "./fallback";
+import type {
+  BridgeRouteHealth,
+  ClusterDirectory,
+  ClusterDiversityView,
+  OracleDashboard,
+  ProverMarket,
+  SpendingPolicyDimensions,
+} from "../sdk/surfaces";
+
+/**
+ * PF-6 — cluster network-diversity score + per-operator metadata.
+ *
+ * Fixture: `CLUSTER_DIVERSITY` (mirrors `diversity.rs::DiversityBreakdown`
+ * and `registration.rs` network fields).
+ */
+export function useClusterDiversity(clusterId: number | undefined) {
+  return useQuery<ClusterDiversityView | null>({
+    queryKey: QK.clusterDiversity(clusterId ?? ""),
+    enabled: clusterId !== undefined,
+    queryFn: async () => {
+      // TODO(monolythium-vision): bind to @monolythium/core-sdk 0.3.10 lyth_clusterDiversity
+      // (returns { score, breakdown:{asnVariance,geoVariance,hostingSpread}, operators[] }).
+      return CLUSTER_DIVERSITY.find((v) => v.diversity.clusterId === clusterId) ?? null;
+    },
+    staleTime: 60_000,
+  });
+}
+
+/** PF-6 — the full diversity set for the cluster-diversity index view. */
+export function useClusterDiversitySet() {
+  return useQuery<ClusterDiversityView[] | null>({
+    queryKey: QK.clusterDiversitySet(),
+    queryFn: async () => {
+      // TODO(monolythium-vision): bind to @monolythium/core-sdk 0.3.10 lyth_clusterDiversity
+      // (per-cluster; fan out over lyth_clusterDirectory ids).
+      return CLUSTER_DIVERSITY;
+    },
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * MB-6 — oracle dashboard: signer roster, configured feeds, latest medians.
+ *
+ * Fixture: `ORACLE_DASHBOARD` (mirrors `oracle::storage::feed_field` /
+ * `round_field` + `events.rs` FeedAdded / OracleRoundFinalized projections).
+ */
+export function useOracleDashboard() {
+  return useQuery<OracleDashboard | null>({
+    queryKey: QK.oracleDashboard(),
+    queryFn: async () => {
+      // TODO(monolythium-vision): bind to @monolythium/core-sdk 0.3.10 lyth_oracleDashboard
+      // (signers[], feeds[] with decimals/minSigners/allowedWritersLen/heartbeatSecs/
+      //  deviationBps/latestMedian/finalizedAtBlock, admin).
+      return ORACLE_DASHBOARD;
+    },
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * PF-4 — §18.8 spending-policy dimensions for one agent sub-account.
+ *
+ * Fixture: `SPENDING_POLICIES` (mirrors `spending-policy::storage` cap +
+ * allow-root + time-window + expiry slot family). Extends the agent/account
+ * view; renders nothing for an address with no installed policy.
+ */
+export function useSpendingPolicy(addr: string | undefined) {
+  return useQuery<SpendingPolicyDimensions | null>({
+    queryKey: QK.spendingPolicy(addr ?? ""),
+    enabled: Boolean(addr),
+    queryFn: async () => {
+      // TODO(monolythium-vision): bind to @monolythium/core-sdk 0.3.10 lyth_spendingPolicy
+      // (returns the §18.8 dims: per-tx/daily/weekly/monthly caps, categoryAllowRoot,
+      //  timeWindow {enabled,startHour,endHour}, expiryUnixSecs, spent counters).
+      return (addr && SPENDING_POLICIES[addr]) || null;
+    },
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * MB-5 — cluster directory: roster, anchor, effective epoch, formation status.
+ *
+ * Fixture: `CLUSTER_DIRECTORY` (mirrors the `ClusterFormed(uint32 clusterId,
+ * uint64 effectiveEpoch, address anchorAddress, bytes operatorRoster)` event
+ * + `lyth_clusterStatus`).
+ */
+export function useClusterDirectory() {
+  return useQuery<ClusterDirectory | null>({
+    queryKey: QK.clusterDirectory(),
+    queryFn: async () => {
+      // TODO(monolythium-vision): bind to @monolythium/core-sdk 0.3.10 lyth_clusterDirectory
+      // + lyth_clusterStatus (clusters[] with anchorAddress/effectiveEpoch/roster/status).
+      return CLUSTER_DIRECTORY;
+    },
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * MB-4 — prover market: open requests, bids, registered provers.
+ *
+ * Fixture: `PROVER_MARKET` (mirrors `prover-market::core::ProofRequest` /
+ * `ProverBid` + `registry` GPU-prove capability + fee floor / bond).
+ */
+export function useProverMarket() {
+  return useQuery<ProverMarket | null>({
+    queryKey: QK.proverMarket(),
+    queryFn: async () => {
+      // TODO(monolythium-vision): bind to @monolythium/core-sdk 0.3.10 lyth_proverMarket
+      // (requests[] with vkeyHash/maxFee/deadline/state, bids[], provers[] with feeFloor/bond).
+      return PROVER_MARKET;
+    },
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * MB-2 — per-route bridge health: drain-cap proximity + circuit-breaker state.
+ *
+ * Fixture: `BRIDGE_ROUTE_HEALTH` (mirrors the `bridge::storage` drain-cap +
+ * breaker slot family + `BridgePaused` / `DrainCapSet` events). Complements
+ * the existing `useBridgeRouteDisclosures` trust view.
+ */
+export function useBridgeRouteHealth() {
+  return useQuery<BridgeRouteHealth[] | null>({
+    queryKey: QK.bridgeRouteHealth(),
+    queryFn: async () => {
+      // TODO(monolythium-vision): bind to @monolythium/core-sdk 0.3.10 lyth_bridgeRouteHealth
+      // (per-route drainedThisBucket/capPerWindow/remaining/proximity/breaker/pausedAtBlock/
+      //  resumeCooldownBlocks).
+      return BRIDGE_ROUTE_HEALTH;
+    },
+    staleTime: 30_000,
+  });
+}

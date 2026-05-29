@@ -647,3 +647,275 @@ WALLETS.forEach((w: any) => {
     };
   });
 });
+
+/* ================= NEW-SURFACE FIXTURES (PF-6 / MB-6 / PF-4 / MB-5 / MB-4 / MB-2) =================
+ *
+ * Typed against the `src/sdk/surfaces.ts` seam shapes. These render the new
+ * explorer surfaces with realistic data until `@monolythium/core-sdk` 0.3.10
+ * lands the live methods; the hooks in `./hooks.ts` swap the data source then.
+ * Field layouts mirror the merged mono-core crates — see `surfaces.ts` for the
+ * crate citations.
+ */
+
+import type {
+  BridgeRouteHealth,
+  ClusterDirectory,
+  ClusterDirectoryEntry,
+  ClusterDiversityView,
+  OperatorNetworkMetadata,
+  OracleDashboard,
+  ProverBid,
+  ProverMarket,
+  ProofRequest,
+  RegisteredProver,
+  SpendingPolicyDimensions,
+} from "../sdk/surfaces";
+
+const LYTHOSHI = 1_000_000_000_000_000_000n;
+const _lythoshi = (lyth: number): string =>
+  (BigInt(Math.round(lyth * 1_000_000)) * (LYTHOSHI / 1_000_000n)).toString();
+const _opId = (n: number): string =>
+  `0x${(n * 0x9e3779b1).toString(16).padStart(8, "0").slice(-8).repeat(8).slice(0, 64)}`;
+const _bls = (n: number): string =>
+  `0x${(n * 0x517cc1b7).toString(16).padStart(8, "0").slice(-8).repeat(12).slice(0, 96)}`;
+const _feedId = (label: string): string => {
+  let h = 0x811c9dc5;
+  for (const ch of label) h = Math.imul(h ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+  return `0x${h.toString(16).padStart(8, "0").repeat(8).slice(0, 64)}`;
+};
+
+/* ---- PF-6: cluster diversity + operator network metadata ---- */
+const PF6_ASNS = [
+  { asn: 16509, geo: "USA", host: "cloud" as const, label: "AWS" },
+  { asn: 24940, geo: "DEU", host: "cloud" as const, label: "Hetzner" },
+  { asn: 396982, geo: "USA", host: "cloud" as const, label: "GCP" },
+  { asn: 8075, geo: "NLD", host: "cloud" as const, label: "Azure" },
+  { asn: 13335, geo: "GBR", host: "coLocation" as const, label: "Cloudflare" },
+  { asn: 174, geo: "SGP", host: "bareMetal" as const, label: "Cogent" },
+  { asn: 3320, geo: "JPN", host: "bareMetal" as const, label: "Deutsche Telekom" },
+  { asn: 6939, geo: "USA", host: "coLocation" as const, label: "Hurricane Electric" },
+  { asn: 31898, geo: "SWE", host: "cloud" as const, label: "Oracle Cloud" },
+  { asn: 12876, geo: "FRA", host: "bareMetal" as const, label: "Scaleway" },
+];
+
+const _diversityOperators = (clusterId: number, count: number): OperatorNetworkMetadata[] =>
+  Array.from({ length: count }, (_, i) => {
+    // Skew clusters with low ids toward concentration so the score spread is visible.
+    const spreadIdx = clusterId < 3 ? i % 2 : (i + clusterId) % PF6_ASNS.length;
+    const md = PF6_ASNS[spreadIdx];
+    return {
+      operatorId: _opId(clusterId * 31 + i + 1),
+      asn: md.asn,
+      geoRegion: md.geo,
+      hostingClass: md.host,
+      pcrDigest: i % 6 === 4 ? `0x${"00".repeat(32)}` : _hash(clusterId * 977 + i * 13).replace("…", "").padEnd(66, "0").slice(0, 66),
+    };
+  });
+
+/** Diversity view per cluster slot (1-based), mirroring the live cluster set. */
+export const CLUSTER_DIVERSITY: ClusterDiversityView[] = MONOSCAN_DATA.clusters
+  .slice(0, 24)
+  .map((c: any) => {
+    const operators = _diversityOperators(c.slot, c.size ?? 7);
+    // Approximate the on-chain entropy: distinct-axis ratio scaled to bps.
+    const distinct = (key: "asn" | "geoRegion" | "hostingClass") =>
+      new Set(operators.map((o) => o[key])).size;
+    const toBps = (n: number, total: number) =>
+      total <= 1 ? 0 : Math.round(Math.min(1, (n - 1) / (total - 1)) * 10000);
+    const asnVariance = toBps(distinct("asn"), operators.length);
+    const geoVariance = toBps(distinct("geoRegion"), operators.length);
+    const hostingSpread = toBps(distinct("hostingClass"), 3);
+    return {
+      diversity: {
+        clusterId: c.slot - 1,
+        score: Math.round((asnVariance + geoVariance + hostingSpread) / 3),
+        breakdown: { asnVariance, geoVariance, hostingSpread },
+        resolvedMembers: operators.length,
+      },
+      operators,
+    };
+  });
+
+/* ---- MB-6: oracle dashboard ---- */
+const _oracleFeed = (
+  label: string,
+  decimals: number,
+  minSigners: number,
+  allowedWriters: number,
+  heartbeatSecs: number,
+  deviationBps: number,
+  medianHuman: number,
+  roundId: number,
+  finalizedAtBlock: number,
+  observationsLen: number,
+) => ({
+  feedId: _feedId(label),
+  label,
+  decimals,
+  minSigners,
+  allowedWritersLen: allowedWriters,
+  heartbeatSecs,
+  deviationBps,
+  latestRoundId: roundId,
+  latestMedian: (BigInt(Math.round(medianHuman * 10 ** decimals))).toString(),
+  finalizedAtBlock,
+  observationsLen,
+});
+
+export const ORACLE_DASHBOARD: OracleDashboard = (() => {
+  const feeds = [
+    _oracleFeed("BTC/USD", 8, 4, 7, 60, 500, 64218.42, 18422, 2_938_402, 6),
+    _oracleFeed("ETH/USD", 8, 4, 7, 60, 500, 3284.91, 18419, 2_938_388, 5),
+    _oracleFeed("LYTH/USD", 8, 3, 5, 120, 800, 8.42, 9210, 2_938_360, 4),
+    _oracleFeed("USDC/USD", 8, 3, 5, 300, 100, 0.9998, 6104, 2_938_201, 5),
+    _oracleFeed("LINK/USD", 8, 3, 5, 120, 800, 18.07, 4188, 2_938_120, 3),
+  ];
+  const writerAddrs = Array.from({ length: 7 }, (_, i) => _typedAddress("user", 0x400001 + i));
+  const signers = writerAddrs.map((address, i) => ({
+    address,
+    servesOracleWriter: true,
+    feeds: feeds
+      .filter((f, fi) => (i + fi) % (i < 5 ? 1 : 2) === 0)
+      .map((f) => f.feedId),
+    bond: _lythoshi(5000),
+  }));
+  return {
+    signers,
+    feeds,
+    admin: _typedAddress("multisig", 0x4000ff),
+  };
+})();
+
+/* ---- PF-4: spending-policy §18.8 dimensions ---- */
+export const SPENDING_POLICIES: Record<string, SpendingPolicyDimensions> = (() => {
+  const out: Record<string, SpendingPolicyDimensions> = {};
+  const mk = (
+    n: number,
+    over: Partial<SpendingPolicyDimensions>,
+  ): SpendingPolicyDimensions => {
+    const subAccount = _typedAddress("smartAccount", 0x500001 + n);
+    return {
+      subAccount,
+      configured: true,
+      disabled: false,
+      perTxCapLythoshi: _lythoshi(500),
+      dailyCapLythoshi: _lythoshi(2000),
+      weeklyCapLythoshi: _lythoshi(10000),
+      monthlyCapLythoshi: _lythoshi(35000),
+      dailySpentLythoshi: _lythoshi(640),
+      weeklySpentLythoshi: _lythoshi(3120),
+      monthlySpentLythoshi: _lythoshi(12080),
+      categoryAllowRoot: _hash(n * 7919).replace("…", "").padEnd(66, "0").slice(0, 66),
+      destinationAllowRoot: null,
+      timeWindow: { enabled: true, startHour: 8, endHour: 20 },
+      expiryUnixSecs: 1_787_000_000 + n * 86_400,
+      policyVersion: 3 + (n % 4),
+      ...over,
+    };
+  };
+  // A few representative sub-accounts; keyed by sub-account address.
+  const samples: SpendingPolicyDimensions[] = [
+    mk(0, {}),
+    mk(1, { categoryAllowRoot: null, timeWindow: null, monthlyCapLythoshi: null }),
+    mk(2, { disabled: true, dailySpentLythoshi: _lythoshi(0) }),
+  ];
+  for (const s of samples) out[s.subAccount] = s;
+  return out;
+})();
+
+/** First sample sub-account address — handy for the demo route + search. */
+export const SPENDING_POLICY_SAMPLE_ADDR: string = Object.keys(SPENDING_POLICIES)[0];
+
+/* ---- MB-5: cluster directory ---- */
+export const CLUSTER_DIRECTORY: ClusterDirectory = (() => {
+  const STATUSES = ["active", "forming", "draining", "retired"] as const;
+  const clusters: ClusterDirectoryEntry[] = MONOSCAN_DATA.clusters
+    .slice(0, 16)
+    .map((c: any, i: number) => {
+      const status =
+        c.state === "jail" ? "draining" : c.active ? "active" : i % 5 === 1 ? "forming" : "retired";
+      const size = c.size ?? 7;
+      return {
+        clusterId: c.slot - 1,
+        effectiveEpoch: 4_210 - i,
+        anchorAddress: _typedAddress("cluster", 0x600001 + i),
+        roster: Array.from({ length: size }, (_, k) => _bls((c.slot - 1) * 17 + k + 1)),
+        liveMembers: c.members ?? size,
+        size,
+        threshold: 5,
+        status,
+        formedAtBlock: 2_900_000 + i * 1_900,
+      };
+    });
+  return { clusters, currentEpoch: 4_210 };
+})();
+
+/* ---- MB-4: prover market ---- */
+export const PROVER_MARKET: ProverMarket = (() => {
+  const STATES = ["open", "assigned", "settled", "slashed", "expired"] as const;
+  const requests: ProofRequest[] = Array.from({ length: 9 }, (_, i) => {
+    const state = STATES[i % STATES.length];
+    const assigned = state === "open" || state === "expired" ? null : _typedAddress("user", 0x700020 + i);
+    const winning = assigned ? _lythoshi(0.4 + (i % 3) * 0.15) : null;
+    return {
+      id: _hash(0x70_0000 + i * 131).replace("…", "").padEnd(66, "0").slice(0, 66),
+      buyer: _typedAddress("user", 0x700001 + i),
+      vkeyHash: _hash(0x76_0000 + i * 97).replace("…", "").padEnd(66, "0").slice(0, 66),
+      maxFee: _lythoshi(0.8 + (i % 4) * 0.25),
+      deadline: 1_786_900_000 + i * 3600,
+      state,
+      assignedProver: assigned,
+      winningFee: winning,
+    };
+  });
+  const bids: ProverBid[] = requests
+    .filter((r) => r.state === "open" || r.state === "assigned")
+    .flatMap((r, i) =>
+      Array.from({ length: (i % 2) + 1 }, (_, k) => ({
+        requestId: r.id,
+        prover: _typedAddress("user", 0x700040 + i * 3 + k),
+        fee: _lythoshi(0.1 + k * 0.05 + (i % 3) * 0.02),
+      })),
+    );
+  const provers: RegisteredProver[] = Array.from({ length: 5 }, (_, i) => ({
+    address: _typedAddress("user", 0x700040 + i),
+    servesGpuProve: true,
+    feeFloor: _lythoshi(0.1 + (i % 3) * 0.05),
+    bond: _lythoshi(250 + i * 50),
+  }));
+  return { requests, bids, provers };
+})();
+
+/* ---- MB-2: bridge route health + circuit breaker ---- */
+export const BRIDGE_ROUTE_HEALTH: BridgeRouteHealth[] = (() => {
+  const ROUTES = [
+    { asset: "wETH", drainedHuman: 412, capHuman: 1000, window: 7200, breaker: "armed" as const },
+    { asset: "USDC", drainedHuman: 9120, capHuman: 10000, window: 7200, breaker: "armed" as const },
+    { asset: "wBTC", drainedHuman: 0, capHuman: 50, window: 14400, breaker: "paused" as const },
+    { asset: "LINK", drainedHuman: 1380, capHuman: 5000, window: 7200, breaker: "armed" as const },
+    { asset: "wMATIC", drainedHuman: 0, capHuman: 0, window: 7200, breaker: "disabled" as const },
+  ];
+  return ROUTES.map((r, i) => {
+    const cap = r.capHuman > 0 ? _lythoshi(r.capHuman) : null;
+    const drained = _lythoshi(r.drainedHuman);
+    const remaining =
+      cap !== null ? (BigInt(cap) - BigInt(drained)).toString() : null;
+    const proximity = cap !== null ? r.drainedHuman / r.capHuman : null;
+    return {
+      bridgeId: _hash(0xb1_0000 + i * 211).replace("…", "").padEnd(66, "0").slice(0, 66),
+      asset: r.asset,
+      drainedThisBucket: drained,
+      capPerWindow: cap,
+      remaining,
+      proximity,
+      windowBlocks: r.window,
+      breaker: r.breaker,
+      pausedAtBlock: r.breaker === "paused" ? 2_938_001 : null,
+      resumeCooldownBlocks: 1200,
+      pausedReason:
+        r.breaker === "paused"
+          ? _hash(0xbe_0000 + i).replace("…", "").padEnd(66, "0").slice(0, 66)
+          : null,
+    };
+  });
+})();
