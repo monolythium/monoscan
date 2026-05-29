@@ -44,6 +44,7 @@ import {
   useRedemptionQueue,
   useRichList,
   useSearch,
+  useSpendingPolicy,
   useTokenBalances,
   useTxByHashLive,
   useTxNativeReceipt,
@@ -80,6 +81,7 @@ import {
 import { getLythTokenId } from "./sdk/client";
 import { getNativeAgentForwarderAddress } from "./sdk/client";
 import { fmtAddr, fmtAddrShort, fmtHashShort } from "./sdk/format";
+import { SpendingPolicyCard } from "./monoscan-surfaces";
 import {
   buildNativeAgentActionWalletRequest,
   nativeAgentActionIndexedNonce,
@@ -1400,6 +1402,8 @@ const WalletPage = ({ addr, go }: any) => {
   const agentReputation = useAgentReputation(addr);
   const nativeAgentState = useNativeAgentState({ account: addr, includePolicySpends: true, limit: 25 });
   const mrcAccount = useMrcAccount(addr, 6);
+  // PF-4 — §18.8 agent spending-policy dimensions for this sub-account.
+  const spendingPolicy = useSpendingPolicy(addr);
   const fallbackWallet = WALLETS.find(w => w.addr === addr);
   const profileAccount = profile.data?.account ?? null;
   const profileBalance = profileAccount?.nativeBalance ?? null;
@@ -1689,6 +1693,14 @@ const WalletPage = ({ addr, go }: any) => {
             disclosures={bridgeTrustDisclosures}
             unavailable={bridgeTrustDisclosures.length === 0 && bridgeTrustDisclosureChecked}
           />
+        </section>
+      )}
+
+      {/* PF-4 — §18.8 spending-policy dimensions render only when the account
+          has an installed policy (agent / smart sub-account). */}
+      {spendingPolicy.data && spendingPolicy.data.configured && (
+        <section>
+          <SpendingPolicyCard policy={spendingPolicy.data}/>
         </section>
       )}
 

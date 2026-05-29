@@ -47,7 +47,28 @@ export function SearchModal({ open, onClose, go }: SearchModalProps) {
       e.preventDefault();
       const v = q.trim();
       if (!v) return;
-      if (/^\d+$/.test(v)) go(`#/round/${v}`);
+      const lower = v.toLowerCase();
+      // New-surface keyword shortcuts (PF-6 / MB-6 / PF-4 / MB-5 / MB-4 / MB-2).
+      const surfaceRoute: Record<string, string> = {
+        diversity: "#/diversity",
+        oracle: "#/oracle",
+        oracles: "#/oracle",
+        feed: "#/oracle",
+        feeds: "#/oracle",
+        prover: "#/prover-market",
+        provers: "#/prover-market",
+        "prover market": "#/prover-market",
+        bridge: "#/bridge",
+        bridges: "#/bridge",
+        directory: "#/cluster-directory",
+        "cluster directory": "#/cluster-directory",
+        policy: "#/wallets",
+        "spending policy": "#/wallets",
+        "operator fee": "#/prover-market",
+        "operator fees": "#/prover-market",
+      };
+      if (surfaceRoute[lower]) go(surfaceRoute[lower]);
+      else if (/^\d+$/.test(v)) go(`#/round/${v}`);
       else if (v.startsWith("0x")) go(`#/search/${encodeURIComponent(v)}`);
       else if (/^c-\d+/i.test(v)) go(`#/cluster/${v.slice(2)}`);
       else go(`#/search/${encodeURIComponent(v)}`);
@@ -75,7 +96,7 @@ export function SearchModal({ open, onClose, go }: SearchModalProps) {
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Round number · cluster C-0 · address mono1… · vertex hash · tx hash"
+            placeholder="Round · C-0 · mono1… · tx hash · oracle · prover · bridge · diversity"
             className="ms-searchmodal__input"
             autoComplete="off"
             spellCheck={false}
@@ -119,6 +140,33 @@ export function SearchModal({ open, onClose, go }: SearchModalProps) {
             }}
           >
             operators
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              go("#/oracle");
+              onClose();
+            }}
+          >
+            oracle
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              go("#/prover-market");
+              onClose();
+            }}
+          >
+            provers
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              go("#/bridge");
+              onClose();
+            }}
+          >
+            bridge
           </button>
         </div>
       </div>

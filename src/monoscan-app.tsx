@@ -14,6 +14,15 @@ import { MONOSCAN_DATA, MARKETS } from "./data/fallback";
 import { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
 import {
+  DiversityPage,
+  ClusterDiversityPage,
+  OraclePage,
+  SpendingPolicyPage,
+  ClusterDirectoryPage,
+  ProverMarketPage,
+  BridgePage,
+} from "./monoscan-surfaces";
+import {
   useChainHead,
   useChainStrip,
   useChainStats,
@@ -186,6 +195,11 @@ const Header = ({ go, route }: any) => {
     ["#/wallets", "Wallets"],
     ["#/clusters", "Clusters"],
     ["#/operators", "Operators"],
+    ["#/diversity", "Diversity"],
+    ["#/oracle", "Oracle"],
+    ["#/cluster-directory", "Directory"],
+    ["#/prover-market", "Provers"],
+    ["#/bridge", "Bridge"],
     ["#/stats", "Statistics"],
     ["#/protocol", "Protocol"],
   ];
@@ -194,8 +208,14 @@ const Header = ({ go, route }: any) => {
     (h === "#/transactions" && route.startsWith("#/tx")) ||
     (h === "#/markets" && route.startsWith("#/market")) ||
     (h === "#/wallets" && route.startsWith("#/wallet")) ||
-    (h === "#/clusters" && route.startsWith("#/cluster")) ||
-    (h === "#/operators" && route.startsWith("#/operator"));
+    // Cluster nav stays active for /cluster/:slot but not for the MB-5
+    // directory route (it owns its own nav item).
+    (h === "#/clusters" && route.startsWith("#/cluster/")) ||
+    (h === "#/operators" && route.startsWith("#/operator")) ||
+    (h === "#/diversity" && route.startsWith("#/diversity")) ||
+    (h === "#/cluster-directory" && route.startsWith("#/cluster-directory")) ||
+    (h === "#/prover-market" && route.startsWith("#/prover")) ||
+    (h === "#/bridge" && route.startsWith("#/bridge"));
 
   // Global ⌘K / Ctrl+K opens the search modal. Skipped when an
   // editable target is focused so the keystroke still works inside the
@@ -1916,6 +1936,13 @@ const App = () => {
     page = <div style={{padding: 40, textAlign: "center", color: "var(--fg-300)"}}>Redirecting to monolythium.com/get-lyth …</div>;
   }
   else if (parts[0]==="protocol")   page = <ProtocolPage go={go}/>;
+  else if (parts[0]==="diversity" && parts[1]) page = <ClusterDiversityPage id={parts[1]} go={go}/>;
+  else if (parts[0]==="diversity")  page = <DiversityPage go={go}/>;
+  else if (parts[0]==="oracle")     page = <OraclePage go={go}/>;
+  else if (parts[0]==="policy")     page = <SpendingPolicyPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
+  else if (parts[0]==="cluster-directory" || parts[0]==="clusters-directory") page = <ClusterDirectoryPage go={go}/>;
+  else if (parts[0]==="prover-market" || parts[0]==="prover") page = <ProverMarketPage go={go}/>;
+  else if (parts[0]==="bridge" || parts[0]==="bridges") page = <BridgePage go={go}/>;
   else if (parts[0]==="transactions") page = <TransactionsPage go={go}/>;
   else if (parts[0]==="wallets")    page = <WalletsPage go={go}/>;
   else if (parts[0]==="wallet")     page = <WalletPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;

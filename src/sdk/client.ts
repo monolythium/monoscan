@@ -399,4 +399,13 @@ export const QK = {
   verticesAtRound: (round: number | string) => ["mono", "dag", "vertices", round] as const,
   dagParents: (round: number | string) => ["mono", "dag", "parents", round] as const,
   gapRecords: (from: number | string, to: number | string) => ["mono", "gaps", from, to] as const,
+  // New-surface keys (PF-6 / MB-6 / PF-4 / MB-5 / MB-4 / MB-2). Backed by
+  // `data/fallback.ts` fixtures until @monolythium/core-sdk 0.3.10 lands.
+  clusterDiversity: (id: number | string) => ["mono", "cluster", id, "diversity"] as const,
+  clusterDiversitySet: () => ["mono", "clusters", "diversity"] as const,
+  oracleDashboard: () => ["mono", "oracle", "dashboard"] as const,
+  spendingPolicy: (addr: string) => ["mono", "address", addr, "spending-policy"] as const,
+  clusterDirectory: () => ["mono", "clusters", "directory"] as const,
+  proverMarket: () => ["mono", "prover-market"] as const,
+  bridgeRouteHealth: () => ["mono", "bridge", "route-health"] as const,
 } as const;
