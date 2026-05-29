@@ -69,7 +69,17 @@ const openWalletStakeIntent = (cluster: any) => {
  * are best-effort live values from `useChainStrip` and degrade quietly to
  * the mocked values when the node is unreachable.
  */
-const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
+const ChainStrip = ({
+  round,
+  latencyMs,
+  ratePerSec,
+  signers,
+  strip,
+  proposerLatency,
+  attestationRate,
+  liveClusterUp,
+  liveClusterTotal,
+}: any) => {
   const block = strip?.blockNumber;
   const peers = strip?.peerCount;
   const syncState = strip?.syncState;
@@ -78,13 +88,34 @@ const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
   // `web3_clientVersion` is the node's self-reported build identifier
   // (commonly `protocore/v0.0.18-testnet-…/…` or similar). Surface a
   // short slice so the strip stays narrow; fall back to "n/a" when the
-  // node didn't expose the call. Whitepaper text doesn't belong in a
-  // live strip — that was a placeholder while no binary identity was
-  // wired in.
+  // node didn't expose the call.
   const clientVersion: string | null = strip?.clientVersion ?? null;
   const clientShort = clientVersion
     ? (clientVersion.length > 28 ? clientVersion.slice(0, 28) + "…" : clientVersion)
     : null;
+
+  // Live commit latency from `lyth_metricsRange` (`proposer_latency_ms`
+  // gauge). When the node doesn't retain telemetry, fall back to the
+  // demo number from SCAN so the strip never goes blank.
+  const commitDisplay = proposerLatency
+    ? `${proposerLatency.value.toFixed(0)}${proposerLatency.unit ? proposerLatency.unit : "ms"}`
+    : `${latencyMs}ms`;
+  // Attestation rate from `lyth_metricsRange` (`attestation_rate_bps`
+  // gauge, basis points where 10000 = 100%). The slot used to claim
+  // "X/s" throughput; relabelled to "attest" + percent so the value
+  // matches the actual chain meaning. Falls back to a derived mock
+  // percentage so the strip stays populated when the metric isn't
+  // exposed by the connected node.
+  const attestDisplay = attestationRate
+    ? `${(attestationRate.value / 100).toFixed(2)}%`
+    : `${(ratePerSec * 30).toFixed(1)}%`;
+  // Live cluster up / total — `useHealthyClusters()` for the live-and-
+  // signing count, `lyth_chainStats.clusters.total` for the configured
+  // total. Both must be present to render the live "X / Y" form.
+  const clustersDisplay = liveClusterUp !== null && liveClusterTotal !== null
+    ? `${liveClusterUp}/${liveClusterTotal} live`
+    : `${signers.live}/${signers.total} live`;
+
   return (
     <div className="ms-strip">
       <span className="ms-strip__dot"/>
@@ -98,11 +129,23 @@ const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
           <Sep/>
         </>
       ) : null}
-      <Field label="rate" value={`${ratePerSec.toFixed(1)}/s`}/>
+      <Field
+        label="attest"
+        value={attestDisplay}
+        title={attestationRate ? "lyth_metricsRange · attestation_rate" : "demo · node has no retained telemetry"}
+      />
       <Sep/>
-      <Field label="commit p95" value={`${latencyMs}ms`}/>
+      <Field
+        label="commit p95"
+        value={commitDisplay}
+        title={proposerLatency ? "lyth_metricsRange · proposer_latency" : "demo · node has no retained telemetry"}
+      />
       <Sep/>
-      <Field label="clusters" value={`${signers.live}/${signers.total} live`}/>
+      <Field
+        label="clusters"
+        value={clustersDisplay}
+        title={liveClusterUp !== null && liveClusterTotal !== null ? "useHealthyClusters / lyth_chainStats" : "demo · cluster set unavailable"}
+      />
       {peers !== null && peers !== undefined ? (
         <>
           <Sep/>
@@ -1811,6 +1854,33 @@ const App = () => {
   },[]);
   const round = strip.data?.round ?? head.data?.round ?? mockRound;
 
+  // Live counterparts to the three previously-mocked strip fields. Each
+  // has a documented chain source today; the strip displays the live
+  // value when present and gracefully falls back to the SCAN demo
+  // numbers (kept for the unconnected-node case so the strip never
+  // shows blanks).
+  //
+  // - `proposer_latency` ms gauge → strip's "commit p95" slot.
+  // - `attestation_rate`  bps gauge → strip's "attest" slot (relabelled
+  //   from "rate" — the metric is a per-round attestation percentage,
+  //   not a transactions-per-second throughput, so the original "X/s"
+  //   framing was misleading).
+  // - `useHealthyClusters()` + `useChainStats().clusters.total` →
+  //   strip's "clusters" slot (live / total).
+  const stripMetrics = useMetricsRange(["proposer_latency", "attestation_rate"]);
+  const healthyClusters = useHealthyClusters();
+  const chainStats = useChainStats();
+  const stripLatestMetric = (selector: string) => {
+    const series = stripMetrics.data?.series?.find((s: any) => s.selector === selector);
+    if (!series?.samples?.length) return null;
+    const last = series.samples[series.samples.length - 1];
+    return { value: last.value as number, unit: (series.unit as string | null) ?? null };
+  };
+  const proposerLatency = stripLatestMetric("proposer_latency");
+  const attestationRate = stripLatestMetric("attestation_rate");
+  const liveClusterTotal = chainStats.data?.clusters?.total ?? null;
+  const liveClusterUp = healthyClusters.data?.length ?? null;
+
   // Lightweight toast channel (for clipboard copies, preview-only actions, etc.)
   const [toast, setToast] = useState<string | null>(null);
   useEffect(()=>{
@@ -1855,6 +1925,10 @@ const App = () => {
         ratePerSec={SCAN.consensus.ratePerSec}
         signers={SCAN.consensus.signers}
         strip={strip.data ?? null}
+        proposerLatency={proposerLatency}
+        attestationRate={attestationRate}
+        liveClusterUp={liveClusterUp}
+        liveClusterTotal={liveClusterTotal}
       />
       <Header go={go} route={route}/>
       <main className="ms-main">{page}</main>
