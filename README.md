@@ -2,7 +2,7 @@
 
 # Monoscan
 
-Monoscan is the public explorer for Monolythium. It provides browser views for blocks, transactions, rounds, operators, clusters, wallets, markets, protocol capability surfaces, and native receipt proof material.
+Monoscan is the public explorer for Monolythium. It provides browser views for blocks, transactions, rounds, operators, clusters, wallets, markets, validator diversity, the oracle dashboard, spending-policy dimensions, the prover market, bridge health, protocol capability surfaces, and native receipt proof material.
 
 The app is a Vite + React + TypeScript single-page application served as static files. Browser traffic uses relative `/rpc` and `/api/v1` routes by default, so deployments can point the Caddy proxy at their own Monolythium node without rebuilding the frontend.
 
