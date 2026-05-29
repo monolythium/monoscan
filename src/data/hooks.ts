@@ -3805,19 +3805,19 @@ export function txFeedToRows(feed: TxFeedResponse): LatestTransactionRow[] {
  * Recent transaction index. Prefer the node API's global transaction feed and
  * fall back to a newest-block scan for older peers.
  */
-export function useLatestTransactions(limit = 50, blockWindow = 24) {
+export function useLatestTransactions(limit = 50, blockWindow = 24, cursor: string | null = null) {
   const rowLimit = Math.max(1, Math.min(Math.trunc(limit), 100));
   const scanBlocks = Math.max(1, Math.min(Math.trunc(blockWindow), 96));
   return useQuery<LatestTransactionsDigest | null>({
-    queryKey: QK.latestTransactions(rowLimit, scanBlocks),
+    queryKey: QK.latestTransactions(rowLimit, scanBlocks, cursor),
     enabled: isRpcConfigured(),
     queryFn: async () => {
       try {
         const rpc = getRpcClient();
         const feed = await getApiClient()
-          .transactions(rowLimit, null)
+          .transactions(rowLimit, cursor)
           .then((response) => response.data)
-          .catch(() => rpc.lythTxFeed(rowLimit).catch(() => null));
+          .catch(() => rpc.lythTxFeed(rowLimit, cursor).catch(() => null));
         if (feed) {
           return {
             rows: txFeedToRows(feed),
@@ -3828,6 +3828,11 @@ export function useLatestTransactions(limit = 50, blockWindow = 24) {
             source: "lyth_txFeed",
           };
         }
+        // The block-window scan is a page-0-only fallback: it walks the newest
+        // heights when no indexed feed answers. Cursor pages have no block-scan
+        // equivalent (the cursor is opaque to the scan), so a non-null cursor
+        // with no feed yields an empty page rather than re-scanning the head.
+        if (cursor !== null) return null;
         const tip = bigToNum(await rpc.ethBlockNumber());
         const heights = Array.from({ length: scanBlocks }, (_, i) => tip - i).filter((h) => h >= 0);
         if (heights.length === 0) {
