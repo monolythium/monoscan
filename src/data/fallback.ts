@@ -661,8 +661,8 @@ import type {
   BridgeRouteHealth,
   ClusterDirectory,
   ClusterDirectoryEntry,
-  ClusterDiversityView,
-  OperatorNetworkMetadata,
+  ClusterDiversityRollup,
+  OperatorNetworkMetadataRow,
   OracleDashboard,
   ProverBid,
   ProverMarket,
@@ -698,7 +698,7 @@ const PF6_ASNS = [
   { asn: 12876, geo: "FRA", host: "bareMetal" as const, label: "Scaleway" },
 ];
 
-const _diversityOperators = (clusterId: number, count: number): OperatorNetworkMetadata[] =>
+const _diversityOperators = (clusterId: number, count: number): OperatorNetworkMetadataRow[] =>
   Array.from({ length: count }, (_, i) => {
     // Skew clusters with low ids toward concentration so the score spread is visible.
     const spreadIdx = clusterId < 3 ? i % 2 : (i + clusterId) % PF6_ASNS.length;
@@ -713,7 +713,7 @@ const _diversityOperators = (clusterId: number, count: number): OperatorNetworkM
   });
 
 /** Diversity view per cluster slot (1-based), mirroring the live cluster set. */
-export const CLUSTER_DIVERSITY: ClusterDiversityView[] = MONOSCAN_DATA.clusters
+export const CLUSTER_DIVERSITY: ClusterDiversityRollup[] = MONOSCAN_DATA.clusters
   .slice(0, 24)
   .map((c: any) => {
     const operators = _diversityOperators(c.slot, c.size ?? 7);

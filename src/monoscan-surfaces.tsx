@@ -556,6 +556,11 @@ const PROVER_STATE_TONE: Record<ProverMarketState, "ok" | "warn" | "err" | "neut
   expired: "neutral",
 };
 
+/** Tone for a proof-request state (the SDK widens the state to `string`). */
+function proverStateTone(state: string): "ok" | "warn" | "err" | "neutral" | "gold" {
+  return PROVER_STATE_TONE[state as ProverMarketState] ?? "neutral";
+}
+
 const ProverMarketPage = ({ go: _go }: any) => {
   const q = useProverMarket();
   const market = q.data;
@@ -596,7 +601,7 @@ const ProverMarketPage = ({ go: _go }: any) => {
                   <td className="mono" style={{ fontSize: 11 }}>{fmtHashShort(r.id, 12, 6)}
                     <div style={{ fontSize: 10, color: "var(--fg-500)" }}>buyer {fmtAddrShort(r.buyer, "user", 8, 4)}</div>
                   </td>
-                  <td><Halo tone={PROVER_STATE_TONE[r.state]} label={r.state}/></td>
+                  <td><Halo tone={proverStateTone(r.state)} label={r.state}/></td>
                   <td className="mono" style={{ fontSize: 11, color: "var(--fg-400)" }}>{fmtHashShort(r.vkeyHash, 12, 6)}</td>
                   <td className="mono num" style={{ textAlign: "right" }}>{fmtLyth(r.maxFee)}</td>
                   <td className="mono" style={{ fontSize: 11, color: "var(--fg-400)" }}>{new Date(r.deadline * 1000).toISOString().slice(0, 16).replace("T", " ")}</td>
