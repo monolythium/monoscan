@@ -1168,8 +1168,13 @@ const WalletsPage = ({ go }: any) => {
   // becomes "endpoint not exposed"; an empty array becomes "no holders yet".
   // Either way: prefer the live answer over the 50-row demo fixture.
   const richListResolved = richList.data !== null && richList.data !== undefined;
+  // "Unavailable" means: don't render holder data, either because the
+  // indexer is off, or because we got a confirmed empty live answer. A
+  // resolved-with-rows answer is decidedly NOT unavailable — the
+  // previous `(richListResolved || !usingLiveRichList)` flipped the
+  // truth table so any live response (even with rows) hid the list.
   const richListUnavailable = indexerAvailability.disabled
-    || (indexerAvailability.liveChain && (richListResolved || !usingLiveRichList));
+    || (indexerAvailability.liveChain && richListResolved && !usingLiveRichList);
   const emptyReason = indexerAvailability.disabled
     ? indexerAvailability.reason ?? "Indexer is unavailable on the connected node"
     : richListResolved && !usingLiveRichList

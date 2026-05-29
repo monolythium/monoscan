@@ -38,6 +38,7 @@ import {
 } from "./data/hooks";
 import { AskPage } from "./nl/AskPage";
 import { MsThemeSwitcher } from "./monoscan-theme";
+import { SearchModal } from "./SearchModal";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -74,6 +75,16 @@ const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
   const syncState = strip?.syncState;
   const syncLag = strip?.syncLag;
   const netVersion = strip?.netVersion;
+  // `web3_clientVersion` is the node's self-reported build identifier
+  // (commonly `protocore/v0.0.18-testnet-…/…` or similar). Surface a
+  // short slice so the strip stays narrow; fall back to "n/a" when the
+  // node didn't expose the call. Whitepaper text doesn't belong in a
+  // live strip — that was a placeholder while no binary identity was
+  // wired in.
+  const clientVersion: string | null = strip?.clientVersion ?? null;
+  const clientShort = clientVersion
+    ? (clientVersion.length > 28 ? clientVersion.slice(0, 28) + "…" : clientVersion)
+    : null;
   return (
     <div className="ms-strip">
       <span className="ms-strip__dot"/>
@@ -107,13 +118,13 @@ const ChainStrip = ({ round, latencyMs, ratePerSec, signers, strip }: any) => {
       <span style={{flex:1}}/>
       <Field label="network" value={netVersion ? `chain-id ${netVersion}` : "testnet 69420"}/>
       <Sep/>
-      <Field label="proto" value="whitepaper v4.0"/>
+      <Field label="node" value={clientShort ?? "n/a"} title={clientVersion ?? undefined}/>
     </div>
   );
 };
 const Sep = () => <span className="ms-strip__sep"/>;
-const Field = ({label, value, accent}: any) => (
-  <span className="ms-strip__field">
+const Field = ({label, value, accent, title}: any) => (
+  <span className="ms-strip__field" title={title}>
     <span>{label}</span>
     <b style={accent ? {color:"var(--gold)"} : {}}>{value}</b>
   </span>
@@ -121,7 +132,7 @@ const Field = ({label, value, accent}: any) => (
 
 /* ============== HEADER NAV ============== */
 const Header = ({ go, route }: any) => {
-  const [q, setQ] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   // All eight routes render inline — no overflow dropdown. On narrow
   // viewports the .ms-header wraps so the nav drops to its own row;
   // either way every link is reachable in one tap.
@@ -142,58 +153,74 @@ const Header = ({ go, route }: any) => {
     (h === "#/wallets" && route.startsWith("#/wallet")) ||
     (h === "#/clusters" && route.startsWith("#/cluster")) ||
     (h === "#/operators" && route.startsWith("#/operator"));
-  const submit = (e) => {
-    e.preventDefault();
-    const v = q.trim();
-    if (!v) return;
-    if (/^\d+$/.test(v)) go(`#/round/${v}`);
-    else if (v.startsWith("0x")) go(`#/search/${encodeURIComponent(v)}`);
-    else if (/^c-\d+/i.test(v)) go(`#/cluster/${v.slice(2)}`);
-    else go(`#/search/${encodeURIComponent(v)}`);
-  };
+
+  // Global ⌘K / Ctrl+K opens the search modal. Skipped when an
+  // editable target is focused so the keystroke still works inside the
+  // Ask page or any future text inputs.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      if (e.key.toLowerCase() !== "k") return;
+      e.preventDefault();
+      setSearchOpen((v) => !v);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
-    <header className="ms-header">
-      <a href="#/" onClick={()=>go("#/")} className="ms-brand">
-        <img className="ms-brand__mark" src="/brand/monolythium.svg" alt="" width="32" height="32"/>
-        <div>
-          <b>Monoscan</b>
-          <small>live · testnet · chain_id 69420</small>
-        </div>
-      </a>
-      <form onSubmit={submit} className="ms-search">
-        <Icon name="explorer" size={14}/>
-        <input
-          value={q}
-          onChange={e=>setQ(e.target.value)}
-          placeholder="Round number · cluster C-044 · operator 0x… · vertex hash · tx hash"
-        />
-        <span className="ms-search__hint">enter ↵</span>
-      </form>
-      <button
-        type="button"
-        className={`ms-ask-btn ${route.startsWith("#/ask") ? "is-active" : ""}`}
-        onClick={()=>go("#/ask")}
-        aria-label="Ask Monoscan a natural-language question"
-        title="Ask Monoscan in plain English"
-      >
-        <span className="ms-ask-btn__spark"/>
-        <span>Ask</span>
-        <span className="ms-ask-btn__hint mono">NL</span>
-      </button>
-      <nav className="ms-nav">
-        {navItems.map(([h, l]) => (
-          <a
-            key={h}
-            href={h}
-            onClick={() => go(h)}
-            className={`ms-nav__item ${routeMatches(h) ? "is-active" : ""}`}
-          >
-            {l}
-          </a>
-        ))}
-      </nav>
-      <MsThemeSwitcher/>
-    </header>
+    <>
+      <header className="ms-header">
+        <a href="#/" onClick={()=>go("#/")} className="ms-brand">
+          <img className="ms-brand__mark" src="/brand/monolythium.svg" alt="" width="32" height="32"/>
+          <div>
+            <b>Monoscan</b>
+            <small>live · testnet · chain_id 69420</small>
+          </div>
+        </a>
+        <button
+          type="button"
+          className="ms-search-btn"
+          onClick={() => setSearchOpen(true)}
+          aria-label="Open search"
+          title="Search (⌘K)"
+        >
+          <Icon name="explorer" size={14}/>
+          <span>Search</span>
+          <span className="ms-search-btn__kbd mono">⌘K</span>
+        </button>
+        <button
+          type="button"
+          className={`ms-ask-btn ${route.startsWith("#/ask") ? "is-active" : ""}`}
+          onClick={()=>go("#/ask")}
+          aria-label="Ask Monoscan a natural-language question"
+          title="Ask Monoscan in plain English"
+        >
+          <span className="ms-ask-btn__spark"/>
+          <span>Ask</span>
+          <span className="ms-ask-btn__hint mono">NL</span>
+        </button>
+        <nav className="ms-nav">
+          {navItems.map(([h, l]) => (
+            <a
+              key={h}
+              href={h}
+              onClick={() => go(h)}
+              className={`ms-nav__item ${routeMatches(h) ? "is-active" : ""}`}
+            >
+              {l}
+            </a>
+          ))}
+        </nav>
+        <MsThemeSwitcher/>
+      </header>
+      <SearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        go={go}
+      />
+    </>
   );
 };
 
