@@ -1197,13 +1197,17 @@ const WalletsPage = ({ go }: any) => {
             ? `${liveHolders.length} live holders`
             : richListUnavailable
               ? "rich list empty"
-              : `${_fmt(NETWORK_STATS.totals.walletsTotal)} total wallets`}</div>
+              : indexerAvailability.liveChain
+                ? "loading rich list…"
+                : `${_fmt(NETWORK_STATS.totals.walletsTotal)} total wallets`}</div>
           <div style={{color:"var(--fg-400)"}}>
             {usingLiveRichList
               ? `token ${_short(richList.data?.tokenId, 12)}`
               : richListUnavailable
                 ? `token ${_short(richList.data?.tokenId ?? getLythTokenId(), 12)}`
-                : `top 30 hold ${_abbr(topSum)} LYTH`}
+                : indexerAvailability.liveChain
+                  ? `token ${_short(getLythTokenId(), 12)}`
+                  : `top 30 hold ${_abbr(topSum)} LYTH`}
           </div>
         </div>
       </div>
@@ -1215,19 +1219,42 @@ const WalletsPage = ({ go }: any) => {
             <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
               {emptyReason}. Holder distribution will populate once the rich list returns rows.
             </div>
-          ) : (
-          <div style={{padding:"10px 4px 4px"}}>
-            <SupplyPie slices={wallets.pie} hover={hover} setHover={setHover}/>
-            <div className="wl-legend">
-              {wallets.pie.map((s,i)=>(
-                <div key={i} className={`wl-legend__row ${hover===i?"is-hover":""}`} onMouseEnter={()=>setHover(i)} onMouseLeave={()=>setHover(null)}>
-                  <span className="wl-legend__dot" style={{background: PIE_COLORS[i % PIE_COLORS.length]}}/>
-                  <span className="wl-legend__label">{s.label}</span>
-                  <span className="mono num wl-legend__pct">{s.pct.toFixed(2)}%</span>
-                </div>
-              ))}
+          ) : indexerAvailability.liveChain ? (
+            // Live chain mode: the chain-native rich list returns the top-N
+            // holder addresses, but the "Foundation treasury · 1.42%",
+            // "Other 10k+ wallets · 61.76%", "Retail (<50k LYTH)"
+            // bucketing requires an aggregating indexer that the connected
+            // node doesn't yet expose. Don't render the SCAN demo pie —
+            // it would imply tagged-entity buckets the chain hasn't
+            // produced. Surface what we DO have honestly instead.
+            <div className="mono" style={{color:"var(--fg-300)",fontSize:12,lineHeight:1.6,padding:"14px 8px"}}>
+              <div style={{color:"var(--fg-200)",marginBottom:8,letterSpacing:"0.02em"}}>
+                {usingLiveRichList
+                  ? `${liveHolders.length} live holders surfaced by the chain rich list.`
+                  : "The chain rich list returned no rows yet."}
+              </div>
+              <div style={{color:"var(--fg-400)"}}>
+                Categorised distribution (Foundation treasury, exchange wallets,
+                bridge reserves, staking pools, long-tail buckets) needs an
+                aggregating indexer alongside the node. Listing on-chain
+                addresses without their entity labels would be misleading, so
+                we surface only the rows the chain itself returns until the
+                indexer is wired.
+              </div>
             </div>
-          </div>
+          ) : (
+            <div style={{padding:"10px 4px 4px"}}>
+              <SupplyPie slices={wallets.pie} hover={hover} setHover={setHover}/>
+              <div className="wl-legend">
+                {wallets.pie.map((s,i)=>(
+                  <div key={i} className={`wl-legend__row ${hover===i?"is-hover":""}`} onMouseEnter={()=>setHover(i)} onMouseLeave={()=>setHover(null)}>
+                    <span className="wl-legend__dot" style={{background: PIE_COLORS[i % PIE_COLORS.length]}}/>
+                    <span className="wl-legend__label">{s.label}</span>
+                    <span className="mono num wl-legend__pct">{s.pct.toFixed(2)}%</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </Card>
 
