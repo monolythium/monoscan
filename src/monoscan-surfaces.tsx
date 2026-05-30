@@ -19,6 +19,7 @@
 ===================================================== */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { LYTHOSHI_PER_LYTH } from "@monolythium/core-sdk";
 import { Card } from "./primitives";
 import { fmtAddr, fmtAddrShort, fmtHashShort } from "./sdk/format";
 import {
@@ -46,9 +47,9 @@ import {
 
 /* ----------------------------- shared helpers ----------------------------- */
 
-const LYTHOSHI = 1_000_000_000_000_000_000n;
-
-/** Format a raw lythoshi string as a LYTH amount (2 dp). */
+/** Format a raw lythoshi string as a LYTH amount (2 dp).
+ *  1 LYTH = 100,000,000 lythoshi (8 decimals) — `LYTHOSHI_PER_LYTH` from the
+ *  SDK, the same scale every wallet/RPC surface uses. */
 function fmtLyth(raw: string | null | undefined): string {
   if (raw === null || raw === undefined || raw === "") return "—";
   let v: bigint;
@@ -57,8 +58,8 @@ function fmtLyth(raw: string | null | undefined): string {
   } catch {
     return "—";
   }
-  const whole = v / LYTHOSHI;
-  const frac = ((v % LYTHOSHI) * 100n) / LYTHOSHI;
+  const whole = v / LYTHOSHI_PER_LYTH;
+  const frac = ((v % LYTHOSHI_PER_LYTH) * 100n) / LYTHOSHI_PER_LYTH;
   return `${whole.toLocaleString()}.${frac.toString().padStart(2, "0")} LYTH`;
 }
 

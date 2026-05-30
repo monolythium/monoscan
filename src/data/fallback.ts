@@ -671,7 +671,7 @@ import type {
   SpendingPolicyDimensions,
 } from "../sdk/surfaces";
 
-const LYTHOSHI = 1_000_000_000_000_000_000n;
+const LYTHOSHI = 100_000_000n;
 const _lythoshi = (lyth: number): string =>
   (BigInt(Math.round(lyth * 1_000_000)) * (LYTHOSHI / 1_000_000n)).toString();
 const _opId = (n: number): string =>
