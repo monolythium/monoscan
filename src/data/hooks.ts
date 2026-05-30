@@ -6725,7 +6725,6 @@ import {
   type ProofRequest,
   type ProverBid,
   type ProverMarket,
-  type RegisteredProver,
   type SpendingPolicyDimensions,
 } from "../sdk/surfaces";
 import type {
@@ -6870,7 +6869,9 @@ export function useClusterDiversitySet() {
           .map((c) => c.clusterId)
           .filter((id): id is number => typeof id === "number")
           .slice(0, 50);
-        if (ids.length === 0) return CLUSTER_DIVERSITY;
+        // Live directory read succeeded but the chain has no clusters yet —
+        // render the real empty state, never the fixture set.
+        if (ids.length === 0) return [];
         const rows = await Promise.all(
           ids.map(async (id): Promise<ClusterDiversityRollup | null> => {
             try {
@@ -6884,8 +6885,7 @@ export function useClusterDiversitySet() {
             }
           }),
         );
-        const live = rows.filter((r): r is ClusterDiversityRollup => r !== null);
-        return live.length > 0 ? live : CLUSTER_DIVERSITY;
+        return rows.filter((r): r is ClusterDiversityRollup => r !== null);
       } catch {
         return CLUSTER_DIVERSITY;
       }
@@ -6942,17 +6942,23 @@ export function useOracleDashboard() {
       if (!isRpcConfigured()) return ORACLE_DASHBOARD;
       try {
         const rpc = getRpcClient();
-        let signers: OracleSigner[] = ORACLE_DASHBOARD.signers;
+        // On a live chain the signer roster is whatever the chain reports —
+        // empty if no signers are authorized. The fixture roster is never
+        // surfaced as live data; an unavailable projection degrades to [].
+        let signers: OracleSigner[] = [];
         try {
           const roster = await rpc.lythOracleSigners();
-          if (!isIndexerUnavailable(roster) && roster.writers.length > 0) {
+          if (!isIndexerUnavailable(roster)) {
             signers = roster.writers.map(oracleSignerFromRow);
           }
         } catch {
-          // keep fixture signers
+          // projection unavailable — leave the live roster empty, not fixtures
         }
-        // Enrich the known feed catalogue with live config + price per feed id.
-        const feeds: OracleFeed[] = await Promise.all(
+        // The chain has no "list every feed" method, so we probe the known feed
+        // ids with the live per-feed config read. A feed id with no live config
+        // (read throws) is dropped — it is not seeded from the fixture. The
+        // fixture only contributes the human label for ids that DO resolve live.
+        const feedProbes: Array<OracleFeed | null> = await Promise.all(
           ORACLE_DASHBOARD.feeds.map(async (fixtureFeed) => {
             try {
               const [cfg, price] = await Promise.all([
@@ -6965,11 +6971,14 @@ export function useOracleDashboard() {
               feed.observationsLen = price ? fixtureFeed.observationsLen : null;
               return feed;
             } catch {
-              return fixtureFeed;
+              return null;
             }
           }),
         );
-        return { signers, feeds, admin: ORACLE_DASHBOARD.admin };
+        const feeds: OracleFeed[] = feedProbes.filter((f): f is OracleFeed => f !== null);
+        // No live "oracle admin" read on this surface; the fixture admin is not
+        // surfaced as live data, so it renders unset on a live chain.
+        return { signers, feeds, admin: null };
       } catch {
         return ORACLE_DASHBOARD;
       }
@@ -7092,7 +7101,9 @@ export function useClusterDirectory() {
           .then((r) => r.data.clusters)
           .catch(() => rpc.lythClusterDirectory(0, 100));
         const entries = page.clusters ?? [];
-        if (entries.length === 0) return CLUSTER_DIRECTORY;
+        // Live directory read succeeded but the chain has formed no clusters —
+        // render the real empty state, never the fixture directory.
+        if (entries.length === 0) return { clusters: [], currentEpoch: null };
         const capped = entries.slice(0, 50);
         const clusters = await Promise.all(
           capped.map(async (entry) => {
@@ -7163,8 +7174,13 @@ export function useProverMarket() {
         const list = await rpc.lythListProofRequests(null, 50);
         if (isIndexerUnavailable(list)) return PROVER_MARKET;
         const requests = (list.requests ?? []).map(proofRequestFromRow);
+        // The live projection responded. There is no on-chain "list provers"
+        // method (provers are discovered by capability bit), so on a live chain
+        // the registered-prover roster renders empty rather than seeding the
+        // fixture — showing fixture provers next to a real (possibly empty)
+        // request book would misrepresent live state.
         if (requests.length === 0) {
-          return { requests: [], bids: [], provers: PROVER_MARKET.provers };
+          return { requests: [], bids: [], provers: [] };
         }
         const bidLists = await Promise.all(
           requests
@@ -7179,9 +7195,7 @@ export function useProverMarket() {
             }),
         );
         const bids = bidLists.flat();
-        // No on-chain "list provers" method; surface the fixture roster.
-        const provers: RegisteredProver[] = PROVER_MARKET.provers;
-        return { requests, bids, provers };
+        return { requests, bids, provers: [] };
       } catch {
         return PROVER_MARKET;
       }
@@ -7244,7 +7258,9 @@ export function useBridgeRouteHealth() {
         const rpc = getRpcClient();
         const health = await rpc.lythBridgeHealth(null, 50);
         const records = health.records ?? [];
-        if (records.length === 0) return BRIDGE_ROUTE_HEALTH;
+        // Live bridge-health read succeeded but no routes are registered —
+        // render the real empty state, never the fixture routes.
+        if (records.length === 0) return [];
         return records.map((record) => {
           const assetLabel = `${record.bridgeId.slice(0, 10)}…`;
           // `lyth_bridgeHealth` carries the bridge-default cap/window + breaker
