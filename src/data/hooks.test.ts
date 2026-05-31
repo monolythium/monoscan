@@ -27,6 +27,10 @@ import {
 import { MlDsa65Backend, bytesToHex as sdkBytesToHex } from "@monolythium/core-sdk/crypto";
 import {
   HEAD_POLL_MS,
+  FEE_BURN_BPS,
+  FEE_BPS_DENOMINATOR,
+  aggregateBurnDigest,
+  burnFromFeeLythoshi,
   apiBlockToRpcHeader,
   apiBlockTransactionsToRows,
   apiReceiptToRpcReceipt,
@@ -3994,5 +3998,152 @@ describe("deriveIndexerAvailability", () => {
     });
     expect(disabledLive.liveChain).toBe(true);
     expect(disabledLive.disabled).toBe(true);
+  });
+});
+
+describe("LYTH burn derivation", () => {
+  function burnFeedTx(
+    overrides: { feeTotal?: string | null; blockNumber?: number; timestamp?: number | null; hash?: string } = {},
+  ): Record<string, unknown> {
+    return {
+      txHash: overrides.hash ?? `0x${"aa".repeat(32)}`,
+      blockHash: `0x${"bb".repeat(32)}`,
+      blockNumber: overrides.blockNumber ?? 100,
+      blockTimestamp: overrides.timestamp === undefined ? 1_700_000_000 : overrides.timestamp,
+      txIndex: 0,
+      from: "mono1from",
+      to: "0x000000000000000000000000000000000000110e",
+      nonce: 1,
+      value: "0",
+      executionUnitLimit: 400000,
+      maxExecutionFeeLythoshi: "2000",
+      priorityTipLythoshi: "2000",
+      fee:
+        overrides.feeTotal === null
+          ? undefined
+          : {
+              total_lythoshi: overrides.feeTotal ?? "63000000",
+              cycles_used: 21000,
+              base_price_per_cycle_lythoshi: "1000",
+              state_io_units: 0,
+              state_io_price_per_unit_lythoshi: "0",
+              priority_tip_lythoshi: "2000",
+            },
+      input: "0xdeadbeef",
+      receipt: { executionUnitsUsed: 21000, logsCount: 0, status: 1 },
+    };
+  }
+
+  function burnFeedPage(
+    transactions: Record<string, unknown>[],
+    overrides: { latestHeight?: number; nextCursor?: string | null } = {},
+  ): any {
+    return {
+      schemaVersion: 1,
+      latestHeight: overrides.latestHeight ?? 100,
+      limit: transactions.length,
+      nextCursor: overrides.nextCursor ?? null,
+      transactions,
+    };
+  }
+
+  it("pins the milestone fee split to 50% burn", () => {
+    expect(FEE_BURN_BPS).toBe(5000n);
+    expect(FEE_BPS_DENOMINATOR).toBe(10000n);
+  });
+
+  it("burns exactly 50% of a fee, flooring the integer division", () => {
+    // 63_000_000 lythoshi fee → 31_500_000 burned.
+    expect(burnFromFeeLythoshi("63000000")).toBe(31_500_000n);
+    // Odd lythoshi floors (dust stays out of this per-tx estimate).
+    expect(burnFromFeeLythoshi("7")).toBe(3n);
+    expect(burnFromFeeLythoshi(7n)).toBe(3n);
+    expect(burnFromFeeLythoshi(100)).toBe(50n);
+  });
+
+  it("treats empty, zero, negative, and malformed fees as zero burn", () => {
+    expect(burnFromFeeLythoshi(null)).toBe(0n);
+    expect(burnFromFeeLythoshi(undefined)).toBe(0n);
+    expect(burnFromFeeLythoshi("")).toBe(0n);
+    expect(burnFromFeeLythoshi("0")).toBe(0n);
+    expect(burnFromFeeLythoshi("-100")).toBe(0n);
+    expect(burnFromFeeLythoshi("not-a-number")).toBe(0n);
+  });
+
+  it("aggregates burn = 50% of summed fees across feed pages", () => {
+    const digest = aggregateBurnDigest([
+      burnFeedPage(
+        [
+          burnFeedTx({ feeTotal: "63000000", blockNumber: 100, hash: `0x${"11".repeat(32)}` }),
+          burnFeedTx({ feeTotal: "100000000", blockNumber: 99, hash: `0x${"22".repeat(32)}` }),
+        ],
+        { latestHeight: 100 },
+      ),
+    ]);
+    // Fees 63_000_000 + 100_000_000 = 163_000_000; burn = 81_500_000.
+    expect(digest.totalFeesLythoshi).toBe("163000000");
+    expect(digest.totalBurnedLythoshi).toBe("81500000");
+    expect(digest.txCount).toBe(2);
+    expect(digest.pagesScanned).toBe(1);
+    expect(digest.latestBlock).toBe(100);
+    expect(digest.oldestBlockScanned).toBe(99);
+    expect(digest.truncated).toBe(false);
+  });
+
+  it("skips fee-less and zero-fee transactions without counting them", () => {
+    const digest = aggregateBurnDigest([
+      burnFeedPage([
+        burnFeedTx({ feeTotal: "63000000", hash: `0x${"33".repeat(32)}` }),
+        burnFeedTx({ feeTotal: null, hash: `0x${"44".repeat(32)}` }), // no fee object
+        burnFeedTx({ feeTotal: "0", hash: `0x${"55".repeat(32)}` }), // zero fee
+      ]),
+    ]);
+    expect(digest.txCount).toBe(1);
+    expect(digest.totalBurnedLythoshi).toBe("31500000");
+    expect(digest.recent).toHaveLength(1);
+  });
+
+  it("buckets burn per UTC day and surfaces unknown-day buckets last", () => {
+    // 2025-05-31 = 1748649600; 2025-06-01 = 1748736000 (UTC midnight).
+    const digest = aggregateBurnDigest([
+      burnFeedPage([
+        burnFeedTx({ feeTotal: "63000000", timestamp: 1_748_649_600, blockNumber: 10, hash: `0x${"66".repeat(32)}` }),
+        burnFeedTx({ feeTotal: "63000000", timestamp: 1_748_736_000, blockNumber: 11, hash: `0x${"77".repeat(32)}` }),
+        burnFeedTx({ feeTotal: "63000000", timestamp: null, blockNumber: 12, hash: `0x${"88".repeat(32)}` }),
+      ]),
+    ]);
+    expect(digest.perDay).toHaveLength(3);
+    // Dated buckets sorted ascending, unknown last.
+    expect(digest.perDay[0].day).toBe("2025-05-31");
+    expect(digest.perDay[1].day).toBe("2025-06-01");
+    expect(digest.perDay[2].day).toBeNull();
+    expect(digest.perDay[0].burnLythoshi).toBe("31500000");
+  });
+
+  it("orders recent contributions newest-block-first and honors recentLimit", () => {
+    const digest = aggregateBurnDigest(
+      [
+        burnFeedPage([
+          burnFeedTx({ feeTotal: "10000000", blockNumber: 5, hash: `0x${"01".repeat(32)}` }),
+          burnFeedTx({ feeTotal: "20000000", blockNumber: 7, hash: `0x${"02".repeat(32)}` }),
+          burnFeedTx({ feeTotal: "30000000", blockNumber: 6, hash: `0x${"03".repeat(32)}` }),
+        ]),
+      ],
+      { truncated: true, source: "lyth_txFeed", recentLimit: 2 },
+    );
+    expect(digest.recent).toHaveLength(2);
+    expect(digest.recent[0].blockNumber).toBe(7);
+    expect(digest.recent[1].blockNumber).toBe(6);
+    expect(digest.truncated).toBe(true);
+    expect(digest.source).toBe("lyth_txFeed");
+  });
+
+  it("returns an empty-but-valid digest for no pages", () => {
+    const digest = aggregateBurnDigest([]);
+    expect(digest.totalBurnedLythoshi).toBe("0");
+    expect(digest.totalFeesLythoshi).toBe("0");
+    expect(digest.txCount).toBe(0);
+    expect(digest.perDay).toEqual([]);
+    expect(digest.recent).toEqual([]);
   });
 });

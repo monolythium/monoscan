@@ -6,7 +6,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState as useStateX, useMemo as useMemoX, useEffect as useEffectX } from "react";
-import { Card } from "./primitives";
+import { Card, Icon } from "./primitives";
 import { MONOSCAN_DATA, MARKETS, NETWORK_STATS, WALLETS, TXS } from "./data/fallback";
 import {
   useAccountCode,
@@ -23,6 +23,7 @@ import {
   useBlockByNumber,
   useBlockTransactions,
   useBridgeRouteDisclosures,
+  useBurnSummary,
   useCapabilities,
   useChainStats,
   useClusterResignations,
@@ -1158,6 +1159,240 @@ const HealthRow = ({ label, value, tone }: any) => (
     <span className="mono num stats-health__value">{value}</span>
   </div>
 );
+
+/* =====================================================
+   BURN PAGE — cumulative LYTH removed from supply
+
+   Every transaction fee on chain-69420 is split 50% burn / 30% operator /
+   20% treasury (milestone fee_burn_bps = 5000). The burn is debited from the
+   sender and credited to NO account — it leaves the supply outright. There is
+   no burn address, no burn event, and no chain-side total-burned counter or
+   supply RPC yet, so the figure here is DERIVED from the per-tx fee the
+   indexer retains: burn = sum(fee.total_lythoshi) × 50%. It is an indexed
+   ESTIMATE over the most recent slice of retained blocks, not an authoritative
+   on-chain number — every surface below labels it as such.
+===================================================== */
+const BurnPage = ({ go }: any) => {
+  const burn = useBurnSummary();
+  const chainStats = useChainStats();
+  const digest = burn.data ?? null;
+  const hasLive = digest !== null && digest !== undefined;
+
+  const totalBurnedLyth = hasLive ? _fmtLythRaw(digest.totalBurnedLythoshi) : null;
+  const totalFeesLyth = hasLive ? _fmtLythRaw(digest.totalFeesLythoshi) : null;
+  const latestBlock = chainStats.data?.latestHeight ?? digest?.latestBlock ?? null;
+
+  // Per-day series (oldest → newest) for the chart + the daily table. Buckets
+  // with an unknown day (no block timestamp from the feed) are kept out of the
+  // spark so the x-axis stays a clean date run.
+  const datedDays = (digest?.perDay ?? []).filter((d) => d.day !== null);
+  const daySeries = datedDays.map((d) => _rawToLythNumber(d.burnLythoshi));
+  const peakDay = datedDays.reduce<{ day: string | null; burn: number }>(
+    (acc, d) => {
+      const v = _rawToLythNumber(d.burnLythoshi);
+      return v > acc.burn ? { day: d.day, burn: v } : acc;
+    },
+    { day: null, burn: 0 },
+  );
+
+  const scanCoverage = hasLive
+    ? digest.oldestBlockScanned !== null
+      ? `blocks ${_fmtI(digest.oldestBlockScanned)}–${_fmtI(digest.latestBlock)}`
+      : `${_fmtI(digest.txCount)} indexed txs`
+    : "—";
+  const sourceText = hasLive
+    ? `${digest.source === "lyth_txFeed" ? "lyth_txFeed" : "/api/v1 transactions"} · ${digest.pagesScanned} pages${digest.truncated ? " · partial scan" : ""}`
+    : burn.isLoading
+      ? "scanning transaction feed…"
+      : "no live feed reachable";
+
+  return (
+    <div className="ms-page ms-burn">
+      {/* Hero */}
+      <section style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:18,flexWrap:"wrap"}}>
+        <div>
+          <div className="cap" style={{color:"var(--gold)"}}>
+            <Icon name="burn" size={13}/> Burn
+          </div>
+          <h1 className="ms-h1" style={{margin:"4px 0 0"}}>LYTH removed from supply</h1>
+          <p className="mono" style={{color:"var(--fg-400)",margin:"8px 0 0",fontSize:13,maxWidth:760,lineHeight:1.55}}>
+            Half of every transaction fee on chain-69420 is burned — debited from the sender and credited to no account.
+            There is no burn address and no on-chain total-burned counter yet, so this figure is
+            <b style={{color:"var(--fg-200)"}}> derived</b> from the per-transaction fees the indexer retains
+            (burn = 50% of total fees). Treat it as an indexed estimate, not an authoritative chain number.
+          </p>
+        </div>
+        <button className="ov-cta ov-cta--ghost" onClick={()=>burn.refetch()}>
+          {burn.isFetching ? "Refreshing…" : "Refresh"}
+        </button>
+      </section>
+
+      {/* Headline burn counters */}
+      <section className="stats-econ-grid" style={{marginTop:20}}>
+        <StatBig
+          label="Total LYTH burned · indexed estimate"
+          value={hasLive ? (totalBurnedLyth?.replace(/ LYTH$/, "") ?? "—") : "—"}
+          unit="LYTH"
+          tone="gold"
+          annotation={hasLive
+            ? `50% of ${totalFeesLyth ?? "—"} fees · ${_fmtI(digest.txCount)} txs`
+            : burn.isLoading ? "scanning feed…" : "connect a node to derive the burn"}
+          chart={daySeries.length > 1
+            ? <MiniSpark data={daySeries} w={260} h={56} stroke="var(--gold)" fill="rgba(242,180,65,0.10)"/>
+            : null}
+          footer={hasLive
+            ? `Derived from fees over ${scanCoverage}${digest.truncated ? " (recent slice only)" : ""}.`
+            : "lyth_txFeed exposes per-tx fee.total_lythoshi"}
+        />
+        <StatBig
+          label="Total fees scanned"
+          value={hasLive ? (totalFeesLyth?.replace(/ LYTH$/, "") ?? "—") : "—"}
+          unit="LYTH"
+          tone="neutral"
+          annotation={hasLive ? "base fee + priority tip, all scanned txs" : "—"}
+          chart={null}
+          footer="Burn is 50% · operators 30% · treasury 20% (fee_burn_bps 5000)"
+        />
+      </section>
+
+      {/* Secondary counters */}
+      <section className="stats-counters">
+        <StatCounter
+          label="Burning txs scanned"
+          value={hasLive ? _fmtI(digest.txCount) : "—"}
+          sub={sourceText}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Scan coverage"
+          value={hasLive ? `${digest.pagesScanned} pages` : "—"}
+          sub={hasLive ? scanCoverage : "transaction feed walk"}
+          tone={hasLive && digest.truncated ? "warn" : "neutral"}
+        />
+        <StatCounter
+          label="Chain tip"
+          value={latestBlock !== null ? _fmtI(latestBlock) : "—"}
+          sub={chainStats.data?.genesisHash
+            ? `genesis ${chainStats.data.genesisHash.slice(0, 10)}…`
+            : "latest indexed block"}
+          tone="neutral"
+        />
+        <StatCounter
+          label="Peak burn day"
+          value={peakDay.day ? _fmt(peakDay.burn) : "—"}
+          sub={peakDay.day ? `${peakDay.day} (UTC) · LYTH` : "per-day buckets"}
+          tone="gold"
+        />
+      </section>
+
+      {/* Honesty banner */}
+      <section style={{marginTop:4}}>
+        <div className="ms-card" style={{padding:"14px 18px",borderLeft:"3px solid var(--gold)"}}>
+          <div className="mono" style={{color:"var(--fg-300)",fontSize:12,lineHeight:1.6}}>
+            <b style={{color:"var(--fg-100)"}}>How this number is derived.</b>{" "}
+            chain-69420 has no burn address, no burn event, and no <span className="mono">lyth_totalBurned</span> /
+            supply RPC. The burn is computed from each transaction's retained
+            fee: <span className="mono">burn = floor(fee.total_lythoshi × 5000 / 10000)</span>, summed over the indexed feed.
+            It covers only blocks this node still retains and stops after a bounded walk, so on a long chain it is a
+            <b style={{color:"var(--fg-200)"}}> partial</b> figure. It also slightly under-counts: the 50/30/20 integer
+            split routes its division remainder to the burn, which the per-tx 50% floor here does not add back — the true
+            burn is <span className="mono">≥</span> this estimate. An authoritative total awaits a chain-side burn
+            counter + <span className="mono">lyth_totalBurned</span> RPC.
+          </div>
+        </div>
+      </section>
+
+      {/* Per-day burn table */}
+      <section className="stats-split" style={{marginTop:6}}>
+        <div>
+          <h3 className="ov-section-title">Burned per day · UTC</h3>
+          <Card
+            title=""
+            right={
+              <span className={`pill ${hasLive ? "ok" : "warn"}`} style={{fontSize:10}}>
+                {hasLive ? "derived" : burn.isLoading ? "loading" : "no data"}
+              </span>
+            }
+          >
+            {datedDays.length === 0 ? (
+              <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0,padding:"10px 6px"}}>
+                {hasLive
+                  ? "No dated burn buckets in the scanned window (the feed returned no block timestamps)."
+                  : burn.isLoading ? "Scanning the transaction feed…" : "Connect a Monolythium node to derive the burn."}
+              </p>
+            ) : (
+              <table className="ms-table stats-table">
+                <thead>
+                  <tr>
+                    <th>Day (UTC)</th>
+                    <th style={{textAlign:"right"}}>Burned</th>
+                    <th style={{textAlign:"right"}}>Txs</th>
+                    <th style={{textAlign:"right"}}>Trend</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {datedDays.slice().reverse().map((d) => (
+                    <tr key={d.day}>
+                      <td className="mono" style={{fontSize:12}}>{d.day}</td>
+                      <td className="mono num" style={{textAlign:"right",color:"var(--gold)"}}>{_fmtLythRaw(d.burnLythoshi)}</td>
+                      <td className="mono num" style={{textAlign:"right"}}>{_fmtI(d.txCount)}</td>
+                      <td style={{textAlign:"right"}}>
+                        <MiniBars data={[d.txCount]} w={60} h={20} fill="var(--gold)"/>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Card>
+        </div>
+
+        {/* Recent burn contributions */}
+        <div>
+          <h3 className="ov-section-title">Recent burn contributions</h3>
+          <Card title="">
+            {!hasLive || digest.recent.length === 0 ? (
+              <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0,padding:"10px 6px"}}>
+                {hasLive
+                  ? "No fee-charging transactions in the scanned window."
+                  : burn.isLoading ? "Scanning the transaction feed…" : "Connect a Monolythium node to list burn contributions."}
+              </p>
+            ) : (
+              <div style={{overflowX:"auto"}}>
+                <table className="ms-table ms-table--tight">
+                  <thead>
+                    <tr>
+                      <th>Tx</th>
+                      <th>Block</th>
+                      <th style={{textAlign:"right"}}>Fee</th>
+                      <th style={{textAlign:"right"}}>Burned (50%)</th>
+                      <th style={{textAlign:"right"}}>Age</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {digest.recent.map((row) => (
+                      <tr key={row.hash} onClick={()=>row.hash && go(`#/tx/${encodeURIComponent(row.hash)}`)}>
+                        <td className="mono" style={{fontSize:12,color:"var(--fg-100)"}}>{row.hash ? fmtHashShort(row.hash) : "—"}</td>
+                        <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
+                          <a onClick={(e)=>{ e.stopPropagation(); go(`#/round/${row.blockNumber}`); }} style={{color:"var(--gold)",cursor:"pointer"}}>
+                            {_fmtI(row.blockNumber)}
+                          </a>
+                        </td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)"}}>{_fmtLythRaw(row.feeLythoshi)}</td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--gold)"}}>{_fmtLythRaw(row.burnLythoshi)}</td>
+                        <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>{_ageFromTs(row.blockTimestamp)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </div>
+      </section>
+    </div>
+  );
+};
 
 /* =====================================================
    WALLETS PAGE — rich list + pie
@@ -3799,4 +4034,4 @@ const LiveAddressLabel = ({ addr, fallback }: { addr: string | null | undefined;
 
 
 /* Named exports — replaces the legacy window-attach pattern. */
-export { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, BridgeTrustDisclosuresCard, NativeAgentActionsCard, NativeAgentStateCard };
+export { StatsPage, BurnPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, BridgeTrustDisclosuresCard, NativeAgentActionsCard, NativeAgentStateCard };

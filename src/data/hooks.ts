@@ -3875,6 +3875,285 @@ export function useLatestTransactions(limit = 50, blockWindow = 24, cursor: stri
 }
 
 /* -------------------------------------------------------------------------- */
+/* LYTH burn — indexer-DERIVED estimate.                                        */
+/*                                                                             */
+/* chain-69420 splits every transaction fee 50% burn / 30% operator / 20%      */
+/* treasury (milestone `fee_burn_bps = 5000`). The burn is debited from the    */
+/* sender and credited to no account — it is removed from supply outright.     */
+/* There is NO burn address (the SDK `BURN_ADDR` zero-address carries a 0       */
+/* balance on this chain), NO burn event, and NO chain-side `total_burned`     */
+/* counter or `lyth_totalBurned` / supply RPC today.                           */
+/*                                                                             */
+/* So total-burned must be DERIVED from the per-tx fee the indexer retains.    */
+/* Every transaction carries `fee.total_lythoshi` (base + tip) via the         */
+/* `/api/v1` transaction feed and `lyth_txFeed`. The burn for a tx is          */
+/* `floor(total_lythoshi * FEE_BURN_BPS / 10000)`.                             */
+/*                                                                             */
+/* HONESTY: this figure is an indexed estimate, not an authoritative chain     */
+/* counter. It                                                                 */
+/*   - covers only the blocks the connected node still retains, and            */
+/*   - the bounded forward walk below stops after `maxPages` pages, so on a    */
+/*     long chain the surface labels the figure as a partial scan.             */
+/* It also slightly UNDER-counts: the 50/30/20 integer split routes its        */
+/* division remainder (dust) to the burn, which the per-tx 50% floor here      */
+/* does not add back. The true burn is therefore `>=` this estimate.          */
+/* -------------------------------------------------------------------------- */
+
+/** Milestone fee-split: basis points of every fee that is burned (50%). */
+export const FEE_BURN_BPS = 5000n;
+/** Basis-point denominator. */
+export const FEE_BPS_DENOMINATOR = 10000n;
+
+/** Default page size for the bounded burn walk over the transaction feed. */
+export const BURN_FEED_PAGE_SIZE = 100;
+/** Default page cap for the bounded burn walk (pages × pageSize tx ceiling). */
+export const BURN_FEED_MAX_PAGES = 25;
+
+/**
+ * Burn attributable to a single fee, in lythoshi.
+ *
+ * `floor(totalFeeLythoshi * FEE_BURN_BPS / FEE_BPS_DENOMINATOR)`. Returns `0n`
+ * for empty / unparseable / negative inputs rather than throwing, so a single
+ * malformed feed row never poisons the running total.
+ */
+export function burnFromFeeLythoshi(totalFeeLythoshi: string | number | bigint | null | undefined): bigint {
+  if (totalFeeLythoshi === null || totalFeeLythoshi === undefined || totalFeeLythoshi === "") return 0n;
+  let fee: bigint;
+  try {
+    fee = typeof totalFeeLythoshi === "bigint" ? totalFeeLythoshi : BigInt(totalFeeLythoshi);
+  } catch {
+    return 0n;
+  }
+  if (fee <= 0n) return 0n;
+  return (fee * FEE_BURN_BPS) / FEE_BPS_DENOMINATOR;
+}
+
+/** One transaction's burn contribution, ready for the recent-burns table. */
+export interface BurnContribution {
+  hash: string;
+  blockNumber: number;
+  blockTimestamp: number | null;
+  from: string;
+  to: string | null;
+  feeLythoshi: string;
+  burnLythoshi: string;
+}
+
+/** Per-UTC-day burn bucket, for the time-series chart. */
+export interface BurnDayBucket {
+  /** `YYYY-MM-DD` in UTC. `null` when no block timestamp was available. */
+  day: string | null;
+  burnLythoshi: string;
+  txCount: number;
+}
+
+/** Aggregate of a bounded burn walk over the transaction feed. */
+export interface BurnDigest {
+  /** Cumulative burned lythoshi across every fee-charging tx scanned. */
+  totalBurnedLythoshi: string;
+  /** Cumulative fee lythoshi scanned (burn is FEE_BURN_BPS of this). */
+  totalFeesLythoshi: string;
+  /** Number of fee-charging transactions scanned. */
+  txCount: number;
+  /** Number of feed pages walked. */
+  pagesScanned: number;
+  /** Node-reported chain tip at scan time. */
+  latestBlock: number;
+  /** Lowest block height observed in the scan window. */
+  oldestBlockScanned: number | null;
+  /**
+   * True when the walk hit `maxPages` before exhausting the feed — the figure
+   * then covers only the most recent slice of indexed history.
+   */
+  truncated: boolean;
+  /** Per-UTC-day burn buckets, oldest-first. */
+  perDay: BurnDayBucket[];
+  /** Newest fee-charging transactions, largest-burn-first within the scan. */
+  recent: BurnContribution[];
+  /** Wire source that answered the walk. */
+  source: "lyth_txFeed" | "api_transactions";
+}
+
+function feedTxFeeTotalLythoshi(tx: unknown): string | null {
+  const fee = readObjectField(tx, ["fee"]);
+  return readStringField(fee, ["total_lythoshi", "totalLythoshi"]);
+}
+
+function utcDayFromTimestamp(timestamp: number | null | undefined): string | null {
+  if (timestamp === null || timestamp === undefined || !Number.isFinite(timestamp)) return null;
+  const ms = timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000;
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Fold a set of transaction-feed pages into a {@link BurnDigest}. Pure so it
+ * can be unit-tested without a render env or live node. `recentLimit` caps the
+ * recent-contributions table.
+ */
+export function aggregateBurnDigest(
+  pages: readonly TxFeedResponse[],
+  options: { truncated: boolean; source: BurnDigest["source"]; recentLimit?: number } = {
+    truncated: false,
+    source: "lyth_txFeed",
+  },
+): BurnDigest {
+  const recentLimit = options.recentLimit ?? 12;
+  let totalBurned = 0n;
+  let totalFees = 0n;
+  let txCount = 0;
+  let latestBlock = 0;
+  let oldestBlock: number | null = null;
+  const perDay = new Map<string, { burn: bigint; count: number }>();
+  const contributions: BurnContribution[] = [];
+
+  for (const page of pages) {
+    if (Number.isFinite(page.latestHeight) && page.latestHeight > latestBlock) {
+      latestBlock = page.latestHeight;
+    }
+    for (const tx of page.transactions) {
+      const feeStr = feedTxFeeTotalLythoshi(tx);
+      if (feeStr === null) continue;
+      let fee: bigint;
+      try {
+        fee = BigInt(feeStr);
+      } catch {
+        continue;
+      }
+      if (fee <= 0n) continue;
+      const burn = burnFromFeeLythoshi(fee);
+      if (burn <= 0n) continue;
+      totalFees += fee;
+      totalBurned += burn;
+      txCount += 1;
+      const blockNumber = readNumberField(tx, ["blockNumber", "blockHeight"]) ?? 0;
+      if (oldestBlock === null || blockNumber < oldestBlock) oldestBlock = blockNumber;
+      const blockTimestamp = readNumberField(tx, ["blockTimestamp", "block_timestamp"]);
+      const dayKey = utcDayFromTimestamp(blockTimestamp) ?? "unknown";
+      const bucket = perDay.get(dayKey) ?? { burn: 0n, count: 0 };
+      bucket.burn += burn;
+      bucket.count += 1;
+      perDay.set(dayKey, bucket);
+      contributions.push({
+        hash: readStringField(tx, ["txHash", "hash"]) ?? "",
+        blockNumber,
+        blockTimestamp: blockTimestamp ?? null,
+        from: readStringField(tx, ["from"]) ?? "",
+        to: readStringField(tx, ["to"]),
+        feeLythoshi: fee.toString(),
+        burnLythoshi: burn.toString(),
+      });
+    }
+  }
+
+  const perDayBuckets: BurnDayBucket[] = Array.from(perDay.entries())
+    .sort((a, b) => {
+      if (a[0] === "unknown") return 1;
+      if (b[0] === "unknown") return -1;
+      return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+    })
+    .map(([day, value]) => ({
+      day: day === "unknown" ? null : day,
+      burnLythoshi: value.burn.toString(),
+      txCount: value.count,
+    }));
+
+  const recent = contributions
+    .slice()
+    .sort((a, b) => {
+      if (b.blockNumber !== a.blockNumber) return b.blockNumber - a.blockNumber;
+      return BigInt(b.burnLythoshi) > BigInt(a.burnLythoshi) ? 1 : -1;
+    })
+    .slice(0, recentLimit);
+
+  return {
+    totalBurnedLythoshi: totalBurned.toString(),
+    totalFeesLythoshi: totalFees.toString(),
+    txCount,
+    pagesScanned: pages.length,
+    latestBlock,
+    oldestBlockScanned: oldestBlock,
+    truncated: options.truncated,
+    perDay: perDayBuckets,
+    recent,
+    source: options.source,
+  };
+}
+
+/**
+ * Walk the live transaction feed forward (bounded) and fold it into a
+ * {@link BurnDigest}. Prefers the `/api/v1` transaction feed and falls back to
+ * `lyth_txFeed`; both expose the same opaque forward cursor + per-tx
+ * `fee.total_lythoshi`. The walk stops at the first empty / cursor-less page or
+ * after `maxPages` pages, whichever comes first.
+ */
+export async function fetchBurnDigest(
+  pageSize = BURN_FEED_PAGE_SIZE,
+  maxPages = BURN_FEED_MAX_PAGES,
+): Promise<BurnDigest | null> {
+  if (!isRpcConfigured()) return null;
+  const limit = Math.max(1, Math.min(Math.trunc(pageSize), 100));
+  const pageCap = Math.max(1, Math.min(Math.trunc(maxPages), 200));
+  const rpc = getRpcClient();
+  const api = getApiClient();
+
+  let source: BurnDigest["source"] = "api_transactions";
+  const pages: TxFeedResponse[] = [];
+  let cursor: string | null = null;
+  let truncated = false;
+
+  for (let i = 0; i < pageCap; i += 1) {
+    let page: TxFeedResponse | null = null;
+    try {
+      page = await api.transactions(limit, cursor).then((response) => response.data);
+    } catch {
+      page = null;
+    }
+    if (page === null) {
+      try {
+        page = await rpc.lythTxFeed(limit, cursor);
+        source = "lyth_txFeed";
+      } catch {
+        page = null;
+      }
+    }
+    if (page === null) {
+      // First page failed entirely → no live feed; let the caller fall back.
+      if (i === 0) return null;
+      break;
+    }
+    pages.push(page);
+    cursor = page.nextCursor;
+    if (cursor === null || page.transactions.length === 0) break;
+    if (i === pageCap - 1) truncated = true;
+  }
+
+  if (pages.length === 0) return null;
+  return aggregateBurnDigest(pages, { truncated, source });
+}
+
+/**
+ * Cumulative LYTH-burned estimate, derived from the indexed transaction feed.
+ *
+ * Indexer-DERIVED, not an authoritative chain counter — see the section banner
+ * above. Returns `null` when no live feed answers so the page can show the
+ * "connect a node" empty state instead of a fabricated number.
+ */
+export function useBurnSummary(
+  pageSize = BURN_FEED_PAGE_SIZE,
+  maxPages = BURN_FEED_MAX_PAGES,
+) {
+  return useQuery<BurnDigest | null>({
+    queryKey: QK.burnSummary(pageSize, maxPages),
+    enabled: isRpcConfigured(),
+    queryFn: () => fetchBurnDigest(pageSize, maxPages),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+}
+
+/* -------------------------------------------------------------------------- */
 /* Cluster + address surfaces.                                                 */
 /* -------------------------------------------------------------------------- */
 
