@@ -11,7 +11,7 @@ import {
   Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
 import { MONOSCAN_DATA, MARKETS } from "./data/fallback";
-import { StatsPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
+import { StatsPage, BurnPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage } from "./monoscan-markets";
 import {
   DiversityPage,
@@ -201,6 +201,7 @@ const Header = ({ go, route }: any) => {
     ["#/prover-market", "Provers"],
     ["#/bridge", "Bridge"],
     ["#/stats", "Statistics"],
+    ["#/burn", "Burn"],
     ["#/protocol", "Protocol"],
   ];
   const routeMatches = (h: string) =>
@@ -1930,6 +1931,7 @@ const App = () => {
   else if (parts[0]==="operator")   page = <OperatorPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
   else if (parts[0]==="operators")  page = <OperatorsPage go={go}/>;
   else if (parts[0]==="stats")      page = <StatsPage go={go}/>;
+  else if (parts[0]==="burn")       page = <BurnPage go={go}/>;
   else if (parts[0]==="get-monolythium" || parts[0]==="get-lyth") {
     // Genesis sale moved to monolythium.com. Redirect for deep links.
     if (typeof window !== "undefined") window.location.replace("https://monolythium.com/get-lyth");
