@@ -139,6 +139,12 @@ body::after {
 .ms-strip__sep { width: 1px; height: 14px; background: var(--fg-700); }
 .ms-strip__field { display: flex; gap: 6px; align-items: baseline; }
 .ms-strip__field b { color: var(--fg-200); font-weight: 500; }
+/* The live-chain status strip packs ~9 dense metric fields plus the node
+   version string in one row — unreadable and overflowing on phones. Hide it
+   on mobile; the data is non-essential glanceable telemetry, not navigation. */
+@media (max-width: 720px) {
+  .ms-strip { display: none; }
+}
 
 /* ============ HEADER ============ */
 .ms-header {
