@@ -29,6 +29,7 @@ import {
   HEAD_POLL_MS,
   FEE_BURN_BPS,
   FEE_BPS_DENOMINATOR,
+  NATIVE_INITIAL_SUPPLY_LYTHOSHI,
   aggregateBurnDigest,
   burnFromFeeLythoshi,
   apiBlockToRpcHeader,
@@ -57,6 +58,7 @@ import {
   MRV_NATIVE_RECEIPT_TX_TYPE,
   MRV_NATIVE_TX_EXTENSION_BODY_HEX,
   MRV_NATIVE_TX_EXTENSION_KIND,
+  nativeSupplyFromTotalBurned,
   NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM,
   NO_EVM_BINARY_RECEIPT_LEAF_DOMAIN,
   NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA,
@@ -82,6 +84,7 @@ import {
   nativeMarketEventRows,
   nativeMarketStateRows,
   nativeReceiptMarketEventRows,
+  normalizeNativeSupplyResponse,
   queryClient,
   structuredNativeReceiptFee,
   txFeedToRows,
@@ -4050,6 +4053,7 @@ describe("LYTH burn derivation", () => {
   it("pins the milestone fee split to 50% burn", () => {
     expect(FEE_BURN_BPS).toBe(5000n);
     expect(FEE_BPS_DENOMINATOR).toBe(10000n);
+    expect(NATIVE_INITIAL_SUPPLY_LYTHOSHI).toBe("10000000000000000");
   });
 
   it("burns exactly 50% of a fee, flooring the integer division", () => {
@@ -4145,5 +4149,36 @@ describe("LYTH burn derivation", () => {
     expect(digest.txCount).toBe(0);
     expect(digest.perDay).toEqual([]);
     expect(digest.recent).toEqual([]);
+  });
+
+  it("normalizes the native circulating-supply RPC response", () => {
+    const supply = normalizeNativeSupplyResponse({
+      initialSupplyLythoshi: "10000000000000000",
+      circulatingSupplyLythoshi: "9999999998765432",
+      totalBurnedLythoshi: "1234568",
+    });
+
+    expect(supply).toEqual({
+      initialSupplyLythoshi: "10000000000000000",
+      circulatingSupplyLythoshi: "9999999998765432",
+      totalBurnedLythoshi: "1234568",
+      source: "lyth_circulatingSupply",
+    });
+  });
+
+  it("derives current supply from total burned on older nodes", () => {
+    const supply = nativeSupplyFromTotalBurned("250000000", "lyth_totalBurned");
+
+    expect(supply).toEqual({
+      initialSupplyLythoshi: "10000000000000000",
+      circulatingSupplyLythoshi: "9999999750000000",
+      totalBurnedLythoshi: "250000000",
+      source: "lyth_totalBurned",
+    });
+  });
+
+  it("rejects malformed native supply responses", () => {
+    expect(normalizeNativeSupplyResponse({ current: "nope" })).toBeNull();
+    expect(nativeSupplyFromTotalBurned("not-a-number")).toBeNull();
   });
 });
