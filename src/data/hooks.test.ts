@@ -21,6 +21,7 @@ import {
   CHAIN_REGISTRY,
   RpcClient,
   type AgentReputationResponse,
+  type ClusterDirectoryEntryResponse,
   type NativeReceiptResponse,
   type ReceiptProofTrustPolicy,
 } from "@monolythium/core-sdk";
@@ -44,6 +45,7 @@ import {
   decodedTxToRpcReceipt,
   decodedTxToRpcTx,
   deriveIndexerAvailability,
+  directoryEntryToCluster,
   fetchBridgeRouteDisclosures,
   fetchMrcAccount,
   fetchMrcHoldersForTokenBalances,
@@ -641,6 +643,40 @@ describe("live-SDK seam", () => {
       eventName: "market.order.filled",
       primaryId: marketId,
     });
+  });
+
+  it("normalizes native market event byte arrays for explorer display", () => {
+    const primaryBytes = Array.from({ length: 32 }, (_, i) => i + 1);
+    const accountBytes = Array.from({ length: 20 }, (_, i) => 0xaa - i);
+    const rows = nativeMarketEventRows({
+      schemaVersion: 1,
+      fromBlock: 1,
+      toBlock: 2,
+      limit: 1,
+      events: [{
+        blockHeight: 2,
+        txIndex: 0,
+        logIndex: 0,
+        address: "monoc1market",
+        eventTopic: `0x${"55".repeat(32)}`,
+        decoded: {
+          family: "market",
+          event_name: "market.spot.order_placed",
+          primary_id: primaryBytes,
+          account: { kind: "User", bytes: accountBytes },
+          accuracy_score: null,
+          price: 100,
+        },
+        decodedJson: "",
+      }],
+      source: { indexerProvider: "native_events" },
+    } as any);
+
+    expect(rows[0].primaryId).toBe(`0x${primaryBytes.map((b) => b.toString(16).padStart(2, "0")).join("")}`);
+    expect(rows[0].account).toMatch(/^mono1/);
+    expect(rows[0].decodedFields).toContainEqual(["account", rows[0].account]);
+    expect(rows[0].decodedFields).toContainEqual(["price", "100"]);
+    expect(rows[0].decodedFields.some(([key]) => key === "accuracy_score")).toBe(false);
   });
 
   it("falls back to lyth_nativeMarketEvents when the dedicated API path is unavailable", async () => {
@@ -4002,6 +4038,19 @@ describe("deriveIndexerAvailability", () => {
     expect(disabledLive.liveChain).toBe(true);
     expect(disabledLive.disabled).toBe(true);
   });
+
+  it("enters live mode whenever a configured RPC is present", () => {
+    const pending = deriveIndexerAvailability({
+      capabilities: null,
+      capabilitiesLoading: false,
+      stats: null,
+      statsLoading: false,
+      rpcConfigured: true,
+    });
+    expect(pending.liveChain).toBe(true);
+    expect(pending.available).toBe(false);
+    expect(pending.disabled).toBe(false);
+  });
 });
 
 describe("LYTH burn derivation", () => {
@@ -4180,5 +4229,50 @@ describe("LYTH burn derivation", () => {
   it("rejects malformed native supply responses", () => {
     expect(normalizeNativeSupplyResponse({ current: "nope" })).toBeNull();
     expect(nativeSupplyFromTotalBurned("not-a-number")).toBeNull();
+  });
+});
+
+describe("directoryEntryToCluster", () => {
+  const baseEntry: ClusterDirectoryEntryResponse = {
+    clusterId: 4,
+    size: 10,
+    threshold: 7,
+    aggregateHealth: "ok",
+    regionDiversity: ["eu-central", "us-east"],
+    active: true,
+  };
+
+  it("maps the compact directory descriptor onto a ClusterDescriptor", () => {
+    const cluster = directoryEntryToCluster(baseEntry);
+
+    expect(cluster).toEqual({
+      id: 4,
+      pubkey: null,
+      stake: null,
+      stakeIndexed: false,
+      active: true,
+      size: 10,
+      threshold: 7,
+      aggregateHealth: "ok",
+    });
+  });
+
+  it("flags stake as not-indexed because the directory endpoint carries no stake/weight field", () => {
+    // The cluster-directory descriptor (and lyth_clusterStatus) expose no
+    // bonded/TVS/vote-weight value, so stake must be an honest null with an
+    // explicit `stakeIndexed:false` signal — never a fabricated zero. Renderers
+    // rely on this flag to show "not indexed" instead of a dead "pending"/"—".
+    const cluster = directoryEntryToCluster(baseEntry);
+
+    expect(cluster.stake).toBeNull();
+    expect(cluster.stakeIndexed).toBe(false);
+  });
+
+  it("retired directory entries still surface a not-indexed stake signal", () => {
+    const cluster = directoryEntryToCluster({ ...baseEntry, active: false });
+
+    expect(cluster.active).toBe(false);
+    expect(cluster.stake).toBeNull();
+    expect(cluster.stakeIndexed).toBe(false);
   });
 });

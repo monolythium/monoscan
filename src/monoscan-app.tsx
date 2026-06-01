@@ -6,13 +6,13 @@
 ===================================================== */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
 import { MONOSCAN_DATA, MARKETS } from "./data/fallback";
-import { StatsPage, BurnPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
-import { MarketsPage, MarketPage } from "./monoscan-markets";
+import { StatsPage, BurnPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, supplySourceLabel } from "./monoscan-extras";
+import { MarketsPage, MarketPage, liveMarketRowsFromNativeState } from "./monoscan-markets";
 import {
   DiversityPage,
   ClusterDiversityPage,
@@ -42,6 +42,7 @@ import {
   useDelegationCap,
   useEntityRatchet,
   useMetricsRange,
+  useNativeMarketState,
   useNativeSupply,
   useIndexerAvailability,
   useLiveOperatorRoster,
@@ -52,6 +53,7 @@ import { AskPage } from "./nl/AskPage";
 import { MsThemeSwitcher } from "./monoscan-theme";
 import { SearchModal } from "./SearchModal";
 import { fmtAddr, fmtHashShort } from "./sdk/format";
+import { isRpcConfigured } from "./sdk/client";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -90,6 +92,7 @@ const ChainStrip = ({
   attestationRate,
   liveClusterUp,
   liveClusterTotal,
+  liveMode,
 }: any) => {
   const block = strip?.blockNumber;
   const peers = strip?.peerCount;
@@ -97,42 +100,33 @@ const ChainStrip = ({
   const syncLag = strip?.syncLag;
   const netVersion = strip?.netVersion;
   // `web3_clientVersion` is the node's self-reported build identifier
-  // (commonly `protocore/v0.0.18-testnet-…/…` or similar). Surface a
-  // short slice so the strip stays narrow; fall back to "n/a" when the
-  // node didn't expose the call.
+  // (commonly `protocore/v0.0.24-testnet-…/…` or similar). Surface just the
+  // protocore semver so the strip stays narrow and never cuts mid-token; the
+  // full string stays in the field's title tooltip. Fall back to "n/a" when
+  // the node didn't expose the call.
   const clientVersion: string | null = strip?.clientVersion ?? null;
   const clientShort = clientVersion
-    ? (clientVersion.length > 28 ? clientVersion.slice(0, 28) + "…" : clientVersion)
+    ? (clientVersion.match(/v\d+\.\d+\.\d+[\w.-]*/)?.[0]
+        ?? (clientVersion.length > 28 ? clientVersion.slice(0, 28) + "…" : clientVersion))
     : null;
 
-  // Live commit latency from `lyth_metricsRange` (`proposer_latency_ms`
-  // gauge). When the node doesn't retain telemetry, fall back to the
-  // demo number from SCAN so the strip never goes blank.
   const commitDisplay = proposerLatency
     ? `${proposerLatency.value.toFixed(0)}${proposerLatency.unit ? proposerLatency.unit : "ms"}`
-    : `${latencyMs}ms`;
-  // Attestation rate from `lyth_metricsRange` (`attestation_rate_bps`
-  // gauge, basis points where 10000 = 100%). The slot used to claim
-  // "X/s" throughput; relabelled to "attest" + percent so the value
-  // matches the actual chain meaning. Falls back to a derived mock
-  // percentage so the strip stays populated when the metric isn't
-  // exposed by the connected node.
+    : liveMode ? "—" : `${latencyMs}ms`;
   const attestDisplay = attestationRate
     ? `${(attestationRate.value / 100).toFixed(2)}%`
-    : `${(ratePerSec * 30).toFixed(1)}%`;
-  // Live cluster up / total — `useHealthyClusters()` for the live-and-
-  // signing count, `lyth_chainStats.clusters.total` for the configured
-  // total. Both must be present to render the live "X / Y" form.
+    : liveMode ? "—" : `${(ratePerSec * 30).toFixed(1)}%`;
   const clustersDisplay = liveClusterUp !== null && liveClusterTotal !== null
     ? `${liveClusterUp}/${liveClusterTotal} live`
-    : `${signers.live}/${signers.total} live`;
+    : liveMode ? "—" : `${signers.live}/${signers.total} live`;
+  const roundDisplay = typeof round === "number" && Number.isFinite(round) ? fmt(round) : "—";
 
   return (
     <div className="ms-strip">
       <span className="ms-strip__dot"/>
       <span className="ms-strip__label">CHAIN LIVE</span>
       <Sep/>
-      <Field label="round" value={fmt(round)} accent/>
+      <Field label="round" value={roundDisplay} accent/>
       <Sep/>
       {block !== null && block !== undefined ? (
         <>
@@ -143,19 +137,19 @@ const ChainStrip = ({
       <Field
         label="attest"
         value={attestDisplay}
-        title={attestationRate ? "lyth_metricsRange · attestation_rate" : "demo · node has no retained telemetry"}
+        title={attestationRate ? "lyth_metricsRange · attestation_rate" : liveMode ? "awaiting lyth_metricsRange" : "demo · node has no retained telemetry"}
       />
       <Sep/>
       <Field
         label="commit p95"
         value={commitDisplay}
-        title={proposerLatency ? "lyth_metricsRange · proposer_latency" : "demo · node has no retained telemetry"}
+        title={proposerLatency ? "lyth_metricsRange · proposer_latency" : liveMode ? "awaiting lyth_metricsRange" : "demo · node has no retained telemetry"}
       />
       <Sep/>
       <Field
         label="clusters"
         value={clustersDisplay}
-        title={liveClusterUp !== null && liveClusterTotal !== null ? "useHealthyClusters / lyth_chainStats" : "demo · cluster set unavailable"}
+        title={liveClusterUp !== null && liveClusterTotal !== null ? "useHealthyClusters / lyth_chainStats" : liveMode ? "awaiting live cluster set" : "demo · cluster set unavailable"}
       />
       {peers !== null && peers !== undefined ? (
         <>
@@ -185,40 +179,102 @@ const Field = ({label, value, accent, title}: any) => (
 );
 
 /* ============== HEADER NAV ============== */
+// Primary surfaces render inline (7 tabs). The specialized network surfaces
+// live under a single "Network" dropdown so the header stays one calm row and
+// never wraps. Every route is still reachable as a deep-link; Burn folds into
+// Statistics (#/burn deep-links to its supply-&-burn section).
+export const PRIMARY_NAV: ReadonlyArray<readonly [string, string]> = [
+  ["#/", "Overview"],
+  ["#/transactions", "Transactions"],
+  ["#/markets", "Markets"],
+  ["#/clusters", "Clusters"],
+  ["#/operators", "Operators"],
+  ["#/wallets", "Wallets"],
+  ["#/stats", "Statistics"],
+];
+export const NETWORK_NAV: ReadonlyArray<readonly [string, string]> = [
+  ["#/oracle", "Oracle"],
+  ["#/prover-market", "Provers"],
+  ["#/bridge", "Bridge"],
+  ["#/cluster-directory", "Directory"],
+  ["#/diversity", "Diversity"],
+  ["#/protocol", "Protocol"],
+];
+
+// A nav item is active on its own route and on its child routes. Burn folds
+// into Statistics, so #/burn lights the Statistics tab.
+export const navRouteMatches = (h: string, route: string): boolean =>
+  route === h ||
+  (h === "#/transactions" && route.startsWith("#/tx")) ||
+  (h === "#/markets" && route.startsWith("#/market")) ||
+  (h === "#/wallets" && route.startsWith("#/wallet")) ||
+  // Clusters stays active for /cluster/:slot; the cluster-directory route lives
+  // in the Network group and owns its own item there.
+  (h === "#/clusters" && route.startsWith("#/cluster/")) ||
+  (h === "#/operators" && route.startsWith("#/operator")) ||
+  (h === "#/stats" && route.startsWith("#/burn")) ||
+  (h === "#/oracle" && route.startsWith("#/oracle")) ||
+  (h === "#/prover-market" && route.startsWith("#/prover")) ||
+  (h === "#/bridge" && route.startsWith("#/bridge")) ||
+  (h === "#/cluster-directory" && route.startsWith("#/cluster-directory")) ||
+  (h === "#/diversity" && route.startsWith("#/diversity")) ||
+  (h === "#/protocol" && route.startsWith("#/protocol"));
+
+// Single grouped dropdown for the specialized network surfaces. Keeps the
+// header to one row; the trigger lights when any grouped route is active and
+// closes on outside-click, Escape, or navigation.
+const NetworkMenu = ({ go, route }: any) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const groupActive = NETWORK_NAV.some(([h]) => navRouteMatches(h, route));
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  // Close whenever the route changes (e.g. after picking an item).
+  useEffect(() => { setOpen(false); }, [route]);
+  return (
+    <div className="ms-nav__group" ref={ref}>
+      <button
+        type="button"
+        className={`ms-nav__item ms-nav__trigger ${groupActive ? "is-active" : ""} ${open ? "is-open" : ""}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        Network
+        <span className="ms-nav__caret" aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div className="ms-nav__menu" role="menu">
+          {NETWORK_NAV.map(([h, l]) => (
+            <a
+              key={h}
+              href={h}
+              role="menuitem"
+              onClick={() => { go(h); setOpen(false); }}
+              className={`ms-nav__menu-item ${navRouteMatches(h, route) ? "is-active" : ""}`}
+            >
+              {l}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const Header = ({ go, route }: any) => {
   const [searchOpen, setSearchOpen] = useState(false);
-  // All eight routes render inline — no overflow dropdown. On narrow
-  // viewports the .ms-header wraps so the nav drops to its own row;
-  // either way every link is reachable in one tap.
-  const navItems: ReadonlyArray<readonly [string, string]> = [
-    ["#/", "Overview"],
-    ["#/transactions", "Transactions"],
-    ["#/markets", "Markets"],
-    ["#/wallets", "Wallets"],
-    ["#/clusters", "Clusters"],
-    ["#/operators", "Operators"],
-    ["#/diversity", "Diversity"],
-    ["#/oracle", "Oracle"],
-    ["#/cluster-directory", "Directory"],
-    ["#/prover-market", "Provers"],
-    ["#/bridge", "Bridge"],
-    ["#/stats", "Statistics"],
-    ["#/burn", "Burn"],
-    ["#/protocol", "Protocol"],
-  ];
-  const routeMatches = (h: string) =>
-    route === h ||
-    (h === "#/transactions" && route.startsWith("#/tx")) ||
-    (h === "#/markets" && route.startsWith("#/market")) ||
-    (h === "#/wallets" && route.startsWith("#/wallet")) ||
-    // Cluster nav stays active for /cluster/:slot but not for the MB-5
-    // directory route (it owns its own nav item).
-    (h === "#/clusters" && route.startsWith("#/cluster/")) ||
-    (h === "#/operators" && route.startsWith("#/operator")) ||
-    (h === "#/diversity" && route.startsWith("#/diversity")) ||
-    (h === "#/cluster-directory" && route.startsWith("#/cluster-directory")) ||
-    (h === "#/prover-market" && route.startsWith("#/prover")) ||
-    (h === "#/bridge" && route.startsWith("#/bridge"));
 
   // Global ⌘K / Ctrl+K opens the search modal. Skipped when an
   // editable target is focused so the keystroke still works inside the
@@ -268,16 +324,17 @@ const Header = ({ go, route }: any) => {
           <span className="ms-ask-btn__hint mono">NL</span>
         </button>
         <nav className="ms-nav">
-          {navItems.map(([h, l]) => (
+          {PRIMARY_NAV.map(([h, l]) => (
             <a
               key={h}
               href={h}
               onClick={() => go(h)}
-              className={`ms-nav__item ${routeMatches(h) ? "is-active" : ""}`}
+              className={`ms-nav__item ${navRouteMatches(h, route) ? "is-active" : ""}`}
             >
               {l}
             </a>
           ))}
+          <NetworkMenu go={go} route={route} />
         </nav>
         <MsThemeSwitcher/>
       </header>
@@ -309,6 +366,31 @@ const fmtLythSupplyCompact = (value: string | bigint | number | null | undefined
   if (lyth >= 1_000) return `${(lyth / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}K`;
   return lyth.toLocaleString(undefined, { maximumFractionDigits: 4 });
 };
+// Precise (non-compacted) LYTH amount for bonded stake / TVS / vote weight.
+// Accepts a raw lythoshi value and returns e.g. "5,000 LYTH"; "—" on null/NaN.
+export const fmtLythAmount = (value: string | bigint | number | null | undefined) => {
+  if (value === null || value === undefined || value === "") return "—";
+  const n = lythoshiToLythNumber(value);
+  return Number.isFinite(n) ? `${n.toLocaleString(undefined, { maximumFractionDigits: 2 })} LYTH` : "—";
+};
+// Compact large integer counts (e.g. execution units) — 1.28M / 4.2K / 940.
+export const fmtCountCompact = (value: number | null | undefined) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "—";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 })}M`;
+  if (n >= 1_000) return `${(n / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}K`;
+  return n.toLocaleString();
+};
+// Render a cluster directory descriptor's stake (raw lythoshi string) defensively:
+// a real value formats as LYTH; null means the directory endpoint does not carry
+// a stake/weight field yet (honest "not indexed", never a dead "pending").
+// TODO(core-sdk): cluster-directory descriptor lacks a stake/weight field
+// (directoryEntryToCluster sets stake:null, stakeIndexed:false) — wire it through
+// once lyth_clusterDirectory / lyth_clusterStatus exposes bonded/TVS/vote-weight.
+export const fmtClusterStake = (cl: any) =>
+  cl?.stake !== null && cl?.stake !== undefined ? fmtLythAmount(cl.stake) : "not indexed";
+// One-based padded cluster label from a zero-based protocol cluster id.
+export const cName = (id: number | string) => `C-${String(Number(id) + 1).padStart(3, "0")}`;
 const surfaceLabel = (method = "") =>
   method
     .replace(/^lyth_/, "")
@@ -335,19 +417,36 @@ const Landing = ({ go }: any) => {
   const chainStats = useChainStats();
   const nativeSupply = useNativeSupply();
   const liveClobMarkets = useClobMarkets(25);
+  const nativeMarketState = useNativeMarketState();
   const indexerAvailability = useIndexerAvailability();
   const liveClusters = useClusterSet();
   const liveMetrics = useMetricsRange(LANDING_METRIC_SELECTORS);
   const operatorCapabilities = useOperatorCapabilities();
   const liveStats = chainStats.data ?? null;
   const hasLiveStats = liveStats !== null;
-  const hasLiveMarketResponse = liveClobMarkets.data !== undefined && liveClobMarkets.data !== null;
-  const liveMarketCount = liveClobMarkets.data?.markets.length ?? 0;
-  const liveClobVolume = (liveClobMarkets.data?.markets ?? []).reduce((sum: number, row: any) => {
-    const price = Number(row.lastPrice);
-    const volume = Number(row.totalVolumeBase);
-    return sum + (Number.isFinite(price) && Number.isFinite(volume) ? price * volume : 0);
-  }, 0);
+  const liveMode = indexerAvailability.liveChain;
+  const liveClobRows = liveClobMarkets.data?.markets ?? [];
+  const nativeSpotRows = useMemo(
+    () => liveMarketRowsFromNativeState(nativeMarketState.data?.spotMarkets ?? []),
+    [nativeMarketState.data],
+  );
+  const liveMarketRows = liveClobRows.length > 0 ? liveClobRows : nativeSpotRows;
+  const liveMarketSource = liveClobRows.length > 0 ? "lyth_clobMarkets" : nativeSpotRows.length > 0 ? "native-market-state" : "live market index";
+  const hasLiveMarketResponse = (liveClobMarkets.data !== undefined && liveClobMarkets.data !== null)
+    || (nativeMarketState.data !== undefined && nativeMarketState.data !== null);
+  const liveMarketCount = liveMarketRows.length;
+  // Human-facing caption for the live market state. The raw RPC method name
+  // (liveMarketSource) reads like a debug label on a headline card, so surface
+  // plain copy and keep the method name only in the title tooltip.
+  const liveMarketCaption = hasLiveMarketResponse
+    ? liveMarketCount > 0 ? "indexed on-chain" : "awaiting price feed"
+    : liveMode ? "live endpoint pending" : "";
+  // 24h-volume headline: there is no quote-notional traded-volume aggregate
+  // on-chain yet — CLOB rows carry only unscaled tick/lot integers with no
+  // quote-decimal metadata, so any price*volume sum would be a fabricated USD
+  // figure. In live mode we therefore show an honest "—" (see displayedVol24h);
+  // the fixture preview keeps its illustrative total.
+  // TODO(core-sdk): no quote-notional traded-volume aggregate (see monoscan-markets.tsx).
 
   // Only animate the local fixture ticker when no live chain data is
   // reaching us. When chain stats / metrics are live the displayed values
@@ -362,12 +461,18 @@ const Landing = ({ go }: any) => {
     return () => clearInterval(id);
   }, [chainStats.data]);
 
-  const mono = markets.find(m=>m.sym==="LYTH") || { price: 8.42, chg24h: 2.4 };
-  const vol24h = markets.reduce((a,t)=>a+t.vol24h,0);
-  const mcap   = markets.reduce((a,t)=>a+t.mcap,0);
-  const gainers = [...markets].sort((a,b)=>b.chg24h-a.chg24h).slice(0,5);
-  const losers  = [...markets].sort((a,b)=>a.chg24h-b.chg24h).slice(0,5);
-  const byVol   = [...markets].sort((a,b)=>b.vol24h-a.vol24h).slice(0,5);
+  // Fixture-derived market values (LYTH price, mcap, 24h vol, movers) are a
+  // design-preview illusion drawn from the static MARKETS fixture — they must
+  // NEVER reach a live screen, even a degraded one. liveMode is the SOLE gate:
+  // when the chain is live these collapse to neutral empties so a node that
+  // stops returning market state can never leak a fabricated $8.42 price or
+  // fake gainers/losers/most-traded.
+  const mono = liveMode ? { price: 0, chg24h: 0, sparkline: [] } : (markets.find(m=>m.sym==="LYTH") || { price: 8.42, chg24h: 2.4, sparkline: [] });
+  const vol24h = liveMode ? 0 : markets.reduce((a,t)=>a+t.vol24h,0);
+  const mcap   = liveMode ? 0 : markets.reduce((a,t)=>a+t.mcap,0);
+  const gainers = liveMode ? [] : [...markets].sort((a,b)=>b.chg24h-a.chg24h).slice(0,5);
+  const losers  = liveMode ? [] : [...markets].sort((a,b)=>a.chg24h-b.chg24h).slice(0,5);
+  const byVol   = liveMode ? [] : [...markets].sort((a,b)=>b.vol24h-a.vol24h).slice(0,5);
   const tvs     = parseFloat(c.tvs); // M LYTH
   const avgApy  = 6.4;
   const pubSupply = parseFloat(SCAN.supply.public); // M LYTH circulating public
@@ -375,12 +480,12 @@ const Landing = ({ go }: any) => {
   const privPct   = 100 - pubPct;
   const totalSupply = pubSupply / (pubPct/100);     // implied total (M)
   const privSupply  = totalSupply - pubSupply;      // M LYTH shielded
-  const displayedVol24h = hasLiveMarketResponse ? liveClobVolume : vol24h;
+  const displayedVol24h = liveMode ? null : vol24h;
   const liveSupply = nativeSupply.data ?? null;
   const liveInitialSupply = liveSupply?.initialSupplyLythoshi ?? NATIVE_INITIAL_SUPPLY_LYTHOSHI;
   const liveCurrentSupply = liveSupply?.circulatingSupplyLythoshi ?? liveInitialSupply;
   const liveBurnedSupply = liveSupply?.totalBurnedLythoshi ?? "0";
-  const displayedRound = liveStats?.latestHeight ?? round;
+  const displayedRound = liveStats?.latestHeight ?? (liveMode ? null : round);
   const liveClusterCount = liveStats?.clusters.total ?? liveClusters.data?.length ?? null;
   const livePeerCount = liveStats?.peerCount ?? null;
   const liveMempoolDepth = liveStats
@@ -397,8 +502,21 @@ const Landing = ({ go }: any) => {
       blockNumber: Number(sample.blockNumber),
     };
   };
+  // Numeric sample arrays for the live confidence-strip sparklines. Returns the
+  // already-fetched lyth_metricsRange samples (oldest→newest) for a selector, or
+  // [] when the node retains no series — callers then render a flat placeholder
+  // bar so every tile keeps equal height.
+  const metricSamples = (selector: string): number[] => {
+    const series = metricSeries.find((s: any) => s.selector === selector);
+    return (series?.samples ?? [])
+      .map((s: any) => Number(s.value))
+      .filter((n: number) => Number.isFinite(n));
+  };
   const proposerLatency = latestMetricValue("proposer_latency");
   const attestationRate = latestMetricValue("attestation_rate");
+  const latencySamples = metricSamples("proposer_latency");
+  const mempoolSamples = metricSamples("mempool_depth");
+  const attestSamples = metricSamples("attestation_rate");
   const reportedSurfaces = Object.entries(operatorCapabilities.data?.surfaces ?? {});
   const operatorSurfaces = reportedSurfaces.length
     ? reportedSurfaces.slice(0, 6).map(([method, cap]: any) => ({
@@ -417,8 +535,8 @@ const Landing = ({ go }: any) => {
       ].map(([label, method]) => ({
         label,
         method,
-        status: operatorCapabilities.isLoading ? "loading" : "wired",
-        tracking: "typed SDK method with null-safe page handling",
+        status: operatorCapabilities.isLoading ? "loading" : liveMode ? "not reported" : "wired",
+        tracking: liveMode ? "capability advertisement not returned by live RPC" : "typed SDK method with null-safe page handling",
       }));
 
   return (
@@ -431,6 +549,8 @@ const Landing = ({ go }: any) => {
             <span className="mono" style={{fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--fg-300)"}}>
               {hasLiveStats
                 ? `Monolythium · block ${fmt(liveStats.latestHeight)} · ${liveStats.peerCount} peers`
+                : liveMode
+                  ? "Monolythium · connecting to live node"
                 : `Monolythium · demo feed · ${c.ratePerSec.toFixed(1)} rounds/s`}
             </span>
           </div>
@@ -440,7 +560,7 @@ const Landing = ({ go }: any) => {
           </h1>
           <p className="ov-hero__desc">
             Monoscan is the public explorer for Monolythium — every transfer, every trade, every stake
-            reward, reconciled against {liveClusterCount ?? c.signers.total} live clusters.
+            reward, reconciled against {liveClusterCount ?? (liveMode ? "—" : c.signers.total)} live clusters.
             Search anything, or dig into the data below.
           </p>
           <div className="ov-hero__ctas">
@@ -455,31 +575,33 @@ const Landing = ({ go }: any) => {
         <div className="ov-hero__stats">
           <HeadlineStat
             label="LYTH"
-            value={hasLiveMarketResponse ? (liveMarketCount > 0 ? "live" : "not listed") : `$${mono.price.toFixed(3)}`}
-            sub={hasLiveMarketResponse ? `${liveMarketCount} indexed CLOB markets` : `mcap ${fmtUsd(mcap)}`}
-            delta={hasLiveMarketResponse ? "lyth_clobMarkets" : `${mono.chg24h>=0?"+":""}${mono.chg24h.toFixed(2)}% · 24h`}
-            tone={hasLiveMarketResponse ? (liveMarketCount > 0 ? "ok" : "neutral") : mono.chg24h>=0?"ok":"err"}
-            spark={hasLiveMarketResponse ? [] : mono.sparkline||[]}
+            value={hasLiveMarketResponse ? (liveMarketCount > 0 ? "live" : "not listed") : liveMode ? "—" : `$${mono.price.toFixed(3)}`}
+            sub={hasLiveMarketResponse ? `${liveMarketCount} indexed market${liveMarketCount === 1 ? "" : "s"}` : liveMode ? "checking live market state" : `mcap ${fmtUsd(mcap)}`}
+            delta={hasLiveMarketResponse || liveMode ? liveMarketCaption : `${mono.chg24h>=0?"+":""}${mono.chg24h.toFixed(2)}% · 24h`}
+            deltaTitle={hasLiveMarketResponse ? `source · ${liveMarketSource}` : undefined}
+            tone={hasLiveMarketResponse ? (liveMarketCount > 0 ? "ok" : "neutral") : liveMode ? "neutral" : mono.chg24h>=0?"ok":"err"}
+            spark={hasLiveMarketResponse || liveMode ? [] : mono.sparkline||[]}
             onClick={()=>go("#/market/LYTH")}
             accent
           />
           <HeadlineStat
-            label={hasLiveStats ? "Cluster set" : "Value staked"}
-            value={hasLiveStats ? `${liveClusterCount ?? 0}` : `${tvs.toFixed(0)}M LYTH`}
-            sub={hasLiveStats ? "live cluster descriptors; TVS aggregate pending" : `≈ ${fmtUsd(tvs*1_000_000 * mono.price)} · secures the chain`}
-            delta={hasLiveStats ? `${livePeerCount ?? 0} peers` : `+${avgApy.toFixed(1)}% APY · average`}
-            tone={hasLiveStats ? "neutral" : "gold"}
+            label={liveMode ? "Cluster set" : "Value staked"}
+            value={liveMode ? (liveClusterCount !== null ? `${liveClusterCount}` : "—") : `${tvs.toFixed(0)}M LYTH`}
+            sub={liveMode ? "live cluster descriptors; TVS aggregate pending" : `≈ ${fmtUsd(tvs*1_000_000 * mono.price)} · secures the chain`}
+            delta={liveMode ? `${livePeerCount ?? 0} peers` : `+${avgApy.toFixed(1)}% APY · average`}
+            tone={liveMode ? "neutral" : "gold"}
             onClick={()=>go("#/clusters")}
           />
           <HeadlineStat
             label="24h volume"
-            value={fmtUsd(displayedVol24h)}
-            sub={hasLiveMarketResponse ? `indexed across ${liveMarketCount} CLOB markets` : `across ${markets.length} markets`}
-            delta={hasLiveMarketResponse ? "live CLOB index" : "+12.4% vs 7d avg"}
+            value={displayedVol24h === null ? "—" : fmtUsd(displayedVol24h)}
+            sub={hasLiveMarketResponse ? `indexed across ${liveMarketCount} market${liveMarketCount === 1 ? "" : "s"}` : liveMode ? "checking live market state" : `across ${markets.length} markets`}
+            delta={hasLiveMarketResponse ? liveMarketCaption : liveMode ? "endpoint pending" : "+12.4% vs 7d avg"}
+            deltaTitle={hasLiveMarketResponse ? `source · ${liveMarketSource}` : undefined}
             tone={hasLiveMarketResponse && liveMarketCount === 0 ? "neutral" : "ok"}
             onClick={()=>go("#/markets")}
           />
-          {hasLiveStats ? (
+          {liveMode ? (
             <HeadlineStat
               label="LYTH supply"
               value={fmtLythSupplyCompact(liveCurrentSupply)}
@@ -488,7 +610,7 @@ const Landing = ({ go }: any) => {
                 : nativeSupply.isLoading
                   ? "checking lyth_circulatingSupply"
                   : "100M genesis baseline; live counter pending"}
-              delta={liveSupply ? liveSupply.source : "supply RPC unavailable"}
+              delta={liveSupply ? (supplySourceLabel(liveSupply.source) ?? "on-chain counter") : "supply RPC unavailable"}
               tone={liveSupply ? "gold" : "neutral"}
               onClick={()=>go("#/burn")}
             />
@@ -508,10 +630,12 @@ const Landing = ({ go }: any) => {
       <section className="ov-conf">
         <div className="ov-conf__item">
           <div className="ov-conf__label">Round</div>
-          <div className="ov-conf__num mono num">{fmt(displayedRound)}</div>
+          <div className="ov-conf__num mono num">{displayedRound === null ? "—" : fmt(displayedRound)}</div>
           <div className="ov-conf__hint mono">
             {chainStats.data?.latestHeight !== undefined
               ? `block ${fmt(chainStats.data.latestHeight)} · ${chainStats.data.peerCount} peers`
+              : liveMode
+                ? "awaiting lyth_chainStats"
               : "committed ~340ms ago"}
           </div>
         </div>
@@ -519,34 +643,41 @@ const Landing = ({ go }: any) => {
           <div className="ov-conf__label">Commit latency</div>
           <div style={{display:"flex",alignItems:"baseline",gap:8}}>
             <div className="ov-conf__num mono num" style={{fontSize:24}}>
-              {proposerLatency ? `${proposerLatency.value.toFixed(0)}${proposerLatency.unit ? ` ${proposerLatency.unit}` : ""}` : hasLiveStats ? "—" : `${c.commitLatencyP95Ms}ms`}
+              {proposerLatency ? `${proposerLatency.value.toFixed(0)}${proposerLatency.unit ? ` ${proposerLatency.unit}` : ""}` : liveMode ? "—" : `${c.commitLatencyP95Ms}ms`}
             </div>
-            <span className="mono" style={{fontSize:10,color:"var(--ok)"}}>{proposerLatency ? "retained metric" : hasLiveStats ? "not retained" : "p95 · healthy"}</span>
+            <span className="mono" style={{fontSize:10,color:"var(--ok)"}}>{proposerLatency ? "retained metric" : liveMode ? "not retained" : "p95 · healthy"}</span>
           </div>
-          {hasLiveStats ? null : <MiniSeries data={latencySeries} color="var(--ok)" height={28}/>}
+          {liveMode
+            ? <LiveStripTrail samples={latencySamples} color="var(--ok)" height={28}/>
+            : <MiniSeries data={latencySeries} color="var(--ok)" height={28}/>}
         </div>
         <div className="ov-conf__item">
-          <div className="ov-conf__label">{hasLiveStats ? "Mempool depth" : "Throughput"}</div>
+          <div className="ov-conf__label">{liveMode ? "Mempool depth" : "Throughput"}</div>
           <div style={{display:"flex",alignItems:"baseline",gap:8}}>
             <div className="ov-conf__num mono num" style={{fontSize:24}}>
-              {hasLiveStats ? fmt(liveMempoolDepth ?? 0) : c.ratePerSec.toFixed(2)}
-              {!hasLiveStats && <span style={{fontSize:14,color:"var(--fg-400)"}}>/s</span>}
+              {liveMode ? (liveMempoolDepth !== null ? fmt(liveMempoolDepth) : "—") : c.ratePerSec.toFixed(2)}
+              {!liveMode && <span style={{fontSize:14,color:"var(--fg-400)"}}>/s</span>}
             </div>
-            <span className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>{hasLiveStats ? "ready + pending" : "rounds"}</span>
+            <span className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>{liveMode ? "ready + pending" : "rounds"}</span>
           </div>
-          {hasLiveStats ? null : <MiniSeries data={rateSeries} color="var(--gold)" height={28}/>}
+          {liveMode
+            ? <LiveStripTrail samples={mempoolSamples} color="var(--gold)" height={28}/>
+            : <MiniSeries data={rateSeries} color="var(--gold)" height={28}/>}
         </div>
         <div className="ov-conf__item">
-          <div className="ov-conf__label">{hasLiveStats ? "Attestation rate" : "Operator quorum · last 100 rounds"}</div>
-          {hasLiveStats ? (
-            <div className="ov-conf__num mono num" style={{fontSize:24}}>
-              {attestationRate ? `${(attestationRate.value / 100).toFixed(2)}%` : "—"}
-            </div>
+          <div className="ov-conf__label">{liveMode ? "Attestation rate" : "Operator quorum · last 100 rounds"}</div>
+          {liveMode ? (
+            <>
+              <div className="ov-conf__num mono num" style={{fontSize:24}}>
+                {attestationRate ? `${(attestationRate.value / 100).toFixed(2)}%` : "—"}
+              </div>
+              <LiveStripTrail samples={attestSamples.map((bps) => bps / 100)} color="var(--ok)" height={28}/>
+            </>
           ) : (
             <SignersHist data={c.signersHist}/>
           )}
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:6,letterSpacing:"0.04em"}}>
-            {hasLiveStats ? "lyth_metricsRange · node-local retention" : "100 clusters · 7 or 10 operators per cluster"}
+            {liveMode ? "lyth_metricsRange · node-local retention" : `${c.signers.total} clusters · DVT operators per cluster`}
           </div>
         </div>
         <button className="ov-conf__toggle mono" onClick={()=>setShowDeep(s=>!s)}>
@@ -556,12 +687,12 @@ const Landing = ({ go }: any) => {
 
       {showDeep && (
         <section className="ov-deep">
-          {hasLiveStats ? (
+          {liveMode ? (
             <>
-              <Vital label="Latest block" value={fmt(liveStats.latestHeight)} delta="lyth_chainStats" tone="ok"/>
-              <Vital label="Peers" value={fmt(liveStats.peerCount)} delta="net peer aggregate" tone="ok"/>
-              <Vital label="Mempool depth" value={fmt(liveMempoolDepth ?? 0)} delta="ready + pending" tone="neutral"/>
-              <Vital label="CLOB markets" value={fmt(liveMarketCount)} delta={hasLiveMarketResponse ? "lyth_clobMarkets" : "checking"} tone={liveMarketCount > 0 ? "ok" : "neutral"}/>
+              <Vital label="Latest block" value={liveStats ? fmt(liveStats.latestHeight) : "—"} delta="lyth_chainStats" tone="ok"/>
+              <Vital label="Peers" value={liveStats ? fmt(liveStats.peerCount) : "—"} delta="net peer aggregate" tone="ok"/>
+              <Vital label="Mempool depth" value={liveMempoolDepth !== null ? fmt(liveMempoolDepth) : "—"} delta="ready + pending" tone="neutral"/>
+              <Vital label="Markets" value={fmt(liveMarketCount)} delta={hasLiveMarketResponse ? liveMarketSource : "checking"} tone={liveMarketCount > 0 ? "ok" : "neutral"}/>
               <Vital label="Proposer latency" value={proposerLatency ? `${proposerLatency.value.toFixed(0)}${proposerLatency.unit ? ` ${proposerLatency.unit}` : ""}` : "—"} delta="retained metric" tone="neutral"/>
               <Vital label="Attestation rate" value={attestationRate ? `${(attestationRate.value / 100).toFixed(2)}%` : "—"} delta="retained metric" tone="neutral"/>
             </>
@@ -586,9 +717,9 @@ const Landing = ({ go }: any) => {
             {indexerAvailability.disabled
               ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
               : hasLiveMarketResponse
-                ? `Live CLOB index responded — ${liveMarketCount} indexed market${liveMarketCount === 1 ? "" : "s"}.`
-                : "Awaiting live CLOB index response."}{" "}
-            Demo gainers, losers, and most-traded rows are hidden while the explorer is connected to a live chain.
+                ? `Live ${liveMarketSource} reports ${liveMarketCount} market${liveMarketCount === 1 ? "" : "s"}.`
+                : "Awaiting live market-state response."}{" "}
+            Gainers, losers, and most-traded cards return when the live aggregate index exposes those rolling windows.
           </div>
         </section>
       ) : (
@@ -610,6 +741,8 @@ const Landing = ({ go }: any) => {
             <span className="ov-livedot"/>
             {hasLiveStats
               ? `block ${fmt(liveStats?.latestHeight ?? 0)} · ${liveStats?.peerCount ?? 0} peers`
+              : liveMode
+                ? "awaiting live blocks"
               : `streaming · ${c.ratePerSec.toFixed(1)}/s`}
           </div>
         </div>
@@ -622,7 +755,12 @@ const Landing = ({ go }: any) => {
                   const executionUnits = Number(b.gas_used ?? b.gasUsed ?? 0);
                   const limit = Number(b.gas_limit ?? b.gasLimit ?? 1);
                   const fillPct = limit > 0 ? (executionUnits / limit) * 100 : 0;
-                  const slot = (num % 28) + 1;
+                  // TODO(core-sdk): block headers carry no per-vertex cluster
+                  // attribution, so live rows cannot show which cluster proposed
+                  // the round. Show "cluster pending" until a richer per-vertex
+                  // indexer endpoint exposes the proposing cluster slot. Fixture
+                  // rows still use the synthetic (num % 28) slot for the preview.
+                  const slot = liveMode ? null : (num % 28) + 1;
                   return (
                     <div
                       key={(b.hash as string) ?? i}
@@ -630,13 +768,21 @@ const Landing = ({ go }: any) => {
                       onClick={() => go(`#/round/${num}`)}
                     >
                       <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·{fmt(num)}</span>
-                      <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>C-{String(slot).padStart(3,"0")}</span>
-                      <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{fmt(executionUnits)} execution units</span>
+                      <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>{slot === null ? "cluster pending" : `C-${String(slot).padStart(3,"0")}`}</span>
+                      <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{fmtCountCompact(executionUnits)} execution units</span>
                       <span className="mono" style={{color:"var(--fg-500)",fontSize:10.5}}>{fillPct.toFixed(1)}%</span>
                       <span className="pill ok" style={{padding:"2px 7px",fontSize:9.5}}>committed</span>
                     </div>
                   );
                 })
+              : liveMode ? (
+                  <div className="ov-feed__row">
+                    <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·—</span>
+                    <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>live</span>
+                    <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>awaiting latest block headers</span>
+                    <span className="pill warn" style={{padding:"2px 7px",fontSize:9.5}}>loading</span>
+                  </div>
+                )
               : SCAN.recentVertices.slice(0,8).map((v,i)=>(
                   <div key={i} className="ov-feed__row" onClick={()=>go(`#/cluster/${v.clusterSlot}`)}>
                     <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·{fmt(v.round)}</span>
@@ -650,8 +796,8 @@ const Landing = ({ go }: any) => {
                 ))}
           </div>
           <aside className="ov-feed__side">
-            <div className="cap" style={{marginBottom:8}}>{hasLiveStats ? "Live cluster descriptors" : "Top staking clusters"}</div>
-            {hasLiveStats && liveClusters.data ? (
+            <div className="cap" style={{marginBottom:8}}>{liveMode ? "Live cluster descriptors" : "Top staking clusters"}</div>
+            {liveMode && liveClusters.data ? (
               liveClusters.data.slice(0,5).map((cl: any) => (
                 <div key={cl.id} className="ov-cluster-row" onClick={()=>go(`#/cluster/${Number(cl.id) + 1}`)}>
                   <div>
@@ -664,8 +810,14 @@ const Landing = ({ go }: any) => {
                   </div>
                 </div>
               ))
+            ) : liveMode ? (
+              <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"8px 0"}}>
+                Awaiting live cluster descriptors.
+              </div>
             ) : SCAN.clusters.slice(0,5).map(cl=>{
                 const tvsMono = parseFloat(cl.tvs) * 1_000_000;
+                // Guard the divisor: a near-zero-TVS fixture must not render a
+                // misleading "0.00%". 0 / non-finite APY shows "—" instead.
                 const apy = tvsMono > 0 ? (cl.reward30d * 12 / tvsMono) * 100 : 0;
                 return (
                   <div key={cl.slot} className="ov-cluster-row" onClick={()=>go(`#/cluster/${cl.slot}`)}>
@@ -674,7 +826,7 @@ const Landing = ({ go }: any) => {
                       <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{cl.members}/{cl.size} live · {cl.tvs}M TVS</div>
                     </div>
                     <div style={{textAlign:"right"}}>
-                      <div className="mono num" style={{fontSize:12.5,color:"var(--gold)"}}>{apy.toFixed(2)}%</div>
+                      <div className="mono num" style={{fontSize:12.5,color:"var(--gold)"}}>{fmtClusterApy(apy)}</div>
                       <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>APY</div>
                     </div>
                   </div>
@@ -704,22 +856,25 @@ const Landing = ({ go }: any) => {
           ))}
         </Card>
 
-        {/* TODO: missing lyth_supply endpoint to return {publicAmount, privateAmount, publicPct}.
-            On a live chain Monoscan shows the total native supply from lyth_circulatingSupply;
-            the public/private split still renders only in offline fixture preview. */}
+        {/* TODO(core-sdk): lyth_circulatingSupply has no {publicAmount, privateAmount,
+            publicPct} breakdown. On a live chain Monoscan shows the total native
+            supply from lyth_circulatingSupply and keeps the static two-denomination
+            framing below; the per-denomination public/private numbers stay honest
+            "—" until the split endpoint exists. */}
         <Card title="Two denominations" right={<span className="cap">irreversible · by design</span>}>
           <p className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,margin:"0 0 14px"}}>
             Public LYTH is fully transparent. Private LYTH‑p hides amounts at the protocol layer —
             no mixers, no opt-in. You choose per transaction.
+            {liveMode ? " The live node reports total supply but not yet the public/private split." : ""}
           </p>
           <div className="ms-denoms">
             <div className="ms-denom ms-denom--total">
               <div className="cap" style={{color:"var(--gold)"}}>Total LYTH supply</div>
               <div className="mono" style={{fontSize:24,color:"var(--fg-100)",marginTop:6}}>
-                {hasLiveStats ? fmtLythSupplyCompact(liveCurrentSupply) : `${totalSupply.toFixed(0)}M`}
+                {liveMode ? fmtLythSupplyCompact(liveCurrentSupply) : `${totalSupply.toFixed(0)}M`}
               </div>
               <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>
-                {hasLiveStats
+                {liveMode
                   ? liveSupply
                     ? `genesis ${fmtLythSupplyCompact(liveInitialSupply)} · burned ${fmtLythSupplyCompact(liveBurnedSupply)}`
                     : "100M genesis baseline · live counter pending"
@@ -727,20 +882,20 @@ const Landing = ({ go }: any) => {
               </div>
               <div className="ms-bar"><div style={{width:"100%", background:"var(--gold)"}}/></div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
-                {hasLiveStats ? (liveSupply?.source ?? "supply RPC unavailable") : "offline fixture total"}
+                {liveMode ? (liveSupply?.source ?? "supply RPC unavailable") : "offline fixture total"}
               </div>
             </div>
             <div className="ms-denom">
               <div className="cap" style={{color:"var(--gold)"}}>Public · LYTH</div>
               <div className="mono" style={{fontSize:22,color:"var(--fg-100)",marginTop:6}}>
-                {hasLiveStats ? "—" : `${SCAN.supply.public}M`}
+                {liveMode ? "—" : `${SCAN.supply.public}M`}
               </div>
               <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>
-                {hasLiveStats ? "live split endpoint pending" : "circulating · introspectable"}
+                {liveMode ? "live split endpoint pending" : "circulating · introspectable"}
               </div>
-              <div className="ms-bar"><div style={{width:`${hasLiveStats ? 0 : SCAN.supply.publicPct}%`, background:"var(--gold)"}}/></div>
+              <div className="ms-bar"><div style={{width:`${liveMode ? 0 : SCAN.supply.publicPct}%`, background:"var(--gold)"}}/></div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
-                {hasLiveStats ? "awaiting public/private supply split" : `${SCAN.supply.publicPct}% of total`}
+                {liveMode ? "awaiting public/private supply split" : `${SCAN.supply.publicPct}% of total`}
               </div>
             </div>
             <div className="ms-denom ms-denom--private">
@@ -749,7 +904,7 @@ const Landing = ({ go }: any) => {
                 — <span style={{fontSize:11,color:"var(--fg-500)"}}>opaque</span>
               </div>
               <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>
-                {hasLiveStats ? "private-tx aggregate requires indexer" : `${fmt(SCAN.supply.privateTxs30d)} private txs · 30d`}
+                {liveMode ? "private-tx aggregate requires indexer" : `${fmt(SCAN.supply.privateTxs30d)} private txs · 30d`}
               </div>
               <div className="ms-bar"><div style={{width:"100%",background:"repeating-linear-gradient(135deg, rgba(255,255,255,0.18) 0 4px, transparent 4px 8px)"}}/></div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>amounts protocol-hidden</div>
@@ -762,14 +917,14 @@ const Landing = ({ go }: any) => {
 };
 
 /* ---- Landing helpers ---- */
-const HeadlineStat = ({ label, value, sub, delta, tone, spark, accent, onClick }: any) => {
+const HeadlineStat = ({ label, value, sub, delta, deltaTitle, tone, spark, accent, onClick }: any) => {
   const toneColor = tone==="ok" ? "var(--ok)" : tone==="err" ? "var(--err)" : tone==="gold" ? "var(--gold)" : "var(--fg-400)";
   return (
     <div className={`ov-hstat ${accent?"ov-hstat--accent":""} ${onClick?"ov-hstat--click":""}`} onClick={onClick}>
       <div className="ov-hstat__label">{label}</div>
       <div className="ov-hstat__value mono num">{value}</div>
       {sub && <div className="ov-hstat__sub mono">{sub}</div>}
-      {delta && <div className="ov-hstat__delta mono" style={{color:toneColor}}>{delta}</div>}
+      {delta && <div className="ov-hstat__delta mono" style={{color:toneColor}} title={deltaTitle}>{delta}</div>}
       {spark && spark.length>0 && (
         <svg viewBox="0 0 100 28" preserveAspectRatio="none" className="ov-hstat__spark">
           <path d={spark.slice(-30).map((v,i,arr)=>{
@@ -838,6 +993,22 @@ const MiniSeries = ({ data, color, height=24 }: any) => {
   );
 };
 
+// Live confidence-strip filler. In live mode the demo sparklines are gone, so
+// tiles would otherwise have uneven heights. Render a thin MiniSeries from the
+// already-fetched lyth_metricsRange samples when the node retains >=2 points,
+// else a fixed-height muted placeholder bar so every tile lines up.
+const LiveStripTrail = ({ samples, color, height = 28 }: any) => {
+  if (Array.isArray(samples) && samples.length >= 2) {
+    return <MiniSeries data={samples} color={color} height={height}/>;
+  }
+  return (
+    <div
+      aria-hidden="true"
+      style={{ height, marginTop: 6, borderRadius: 2, background: "var(--fg-700)", opacity: 0.4 }}
+    />
+  );
+};
+
 const MoveCard = ({ title, rows, kind, go }: any) => (
   <div className="ms-card ov-movecard">
     <div className="ms-card__head">
@@ -900,11 +1071,7 @@ const ClusterPage = ({ slot, go }: any) => {
   const clusterEntity = useClusterEntity(liveClusterId);
   const entityRatchet = useEntityRatchet();
   const indexerAvailability = useIndexerAvailability();
-  // When the live cluster directory resolves, the chain has not yet
-  // exposed TVS / reward / vertex inclusion aggregates. Suppress the
-  // fixture-derived hero stats so the page does not lie about economic
-  // performance for a real cluster.
-  const showLiveHero = liveCluster !== null || liveStatus !== null && liveStatus !== undefined;
+  const showLiveHero = indexerAvailability.liveChain || liveCluster !== null || liveStatus !== null && liveStatus !== undefined;
   const apy = clusterApy(cl);
   const liveRingMembers = liveStatus?.members?.length
     ? liveStatus.members.map((m, i) => ({
@@ -912,38 +1079,44 @@ const ClusterPage = ({ slot, go }: any) => {
         handle: fmtHashShort(m.operatorId, 10, 6),
         addrShort: m.operatorId,
         role: m.state,
-        rep: 0,
-        vertexRate: 0,
+        rep: null,
+        vertexRate: null,
         state: m.state === "active" ? "live" : m.state === "lagging" ? "lag" : m.state === "standby" ? "standby" : "down",
       }))
     : null;
-  const ringMembers = liveRingMembers ?? cl.opMembers.map((m,i)=>({ ...m, id: m.handle+i }));
-  const liveOperators = liveStatus?.live ?? cl.members;
-  const totalOperators = liveStatus?.size ?? cl.size;
-  const threshold = liveStatus?.threshold ?? 5;
+  const ringMembers = showLiveHero ? (liveRingMembers ?? []) : cl.opMembers.map((m,i)=>({ ...m, id: m.handle+i }));
+  const liveOperators = liveStatus?.live ?? null;
+  const totalOperators = liveStatus?.size ?? liveCluster?.size ?? (showLiveHero ? null : cl.size);
+  const threshold = liveStatus?.threshold ?? liveCluster?.threshold ?? (showLiveHero ? null : 5);
   const quorum = liveStatus?.quorum ?? null;
-  const healthy = quorum ? quorum === "ok" : cl.state==="nominal";
-  const summary = quorum === "ok"
-    ? `Operating nominally. ${liveOperators} of ${totalOperators} operators are live, above the ${threshold}-of-${totalOperators} quorum threshold.`
-    : quorum === "degraded"
-      ? `Some operators are degraded or offline. ${liveOperators} of ${totalOperators} are live — still above quorum.`
-      : quorum === "halted"
-        ? `Below quorum. ${liveOperators} of ${totalOperators} operators are live — delegated stake is safe but not earning until quorum is restored.`
-        : cl.state==="nominal"
-          ? `Operating nominally. All ${cl.members} of ${cl.size} operators are signing vertices on time, well above the 5-of-7 quorum threshold.`
-          : cl.state==="maintenance"
-            ? `One operator is degraded or offline. ${cl.members} of ${cl.size} are signing — still safely above quorum.`
-            : `Below quorum. ${cl.members} of ${cl.size} operators signing — delegated stake is safe but not earning until quorum is restored.`;
+  const healthy = showLiveHero
+    ? (quorum ? quorum === "ok" : liveCluster?.aggregateHealth === "ok")
+    : cl.state==="nominal";
+  const summary = showLiveHero
+    ? quorum === "ok" && liveOperators !== null && totalOperators !== null && threshold !== null
+      ? `Operating nominally. ${liveOperators} of ${totalOperators} operators are live, above the ${threshold}-of-${totalOperators} quorum threshold.`
+      : quorum === "degraded" && liveOperators !== null && totalOperators !== null
+        ? `Some operators are degraded or offline. ${liveOperators} of ${totalOperators} are live.`
+        : quorum === "halted" && liveOperators !== null && totalOperators !== null
+          ? `Below quorum. ${liveOperators} of ${totalOperators} operators are live.`
+          : `Live cluster descriptor is available${liveCluster?.aggregateHealth ? ` with ${liveCluster.aggregateHealth} aggregate health` : ""}. Detailed status is not reported by this node yet.`
+    : cl.state==="nominal"
+      ? `Operating nominally. All ${cl.members} of ${cl.size} operators are signing vertices on time, well above the 5-of-7 quorum threshold.`
+      : cl.state==="maintenance"
+        ? `One operator is degraded or offline. ${cl.members} of ${cl.size} are signing — still safely above quorum.`
+        : `Below quorum. ${cl.members} of ${cl.size} operators signing — delegated stake is safe but not earning until quorum is restored.`;
   const memberRows = liveStatus?.members?.length
     ? liveStatus.members.map((m) => ({
         handle: fmtHashShort(m.operatorId, 10, 6),
         addrShort: m.operatorId,
+        blsPubkey: m.blsPubkey,
         role: m.state,
         rep: null,
         vertexRate: null,
         state: m.state === "active" ? "live" : m.state === "lagging" ? "lag" : m.state,
       }))
-    : cl.opMembers;
+    : showLiveHero ? [] : cl.opMembers;
+  const liveClusterKey = liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? null;
 
   return (
     <div className="ms-page">
@@ -956,26 +1129,39 @@ const ClusterPage = ({ slot, go }: any) => {
       {/* Ring hero — left: ring + standby tray, right: plain-language health + 4 key stats + stake CTA */}
       <section className="cl-hero">
         <div className="cl-hero__ring">
-          <ClusterRing members={ringMembers} threshold={threshold} size={280}/>
+          <ClusterRing members={ringMembers} threshold={threshold ?? 0} size={280}/>
           <div className="cl-bench">
-            <div className="cap" style={{marginBottom:8,textAlign:"center"}}>Standby bench · {cl.backupCount}/3</div>
-            <div className="cl-bench__row">
-              {cl.backups.map((b,i)=>(
-                <div key={i} className="cl-bench__op" title={`${b.handle} · queue #${b.queuePos} · promotes if an active op is jailed`}>
-                  <div className="cl-bench__dot"/>
-                  <div className="mono" style={{fontSize:10,color:"var(--fg-300)"}}>{b.handle.slice(0,6)}</div>
+            {showLiveHero ? (
+              <>
+                <div className="cap" style={{marginBottom:8,textAlign:"center"}}>Live roster</div>
+                <div className="mono" style={{fontSize:11,color:"var(--fg-400)",textAlign:"center",lineHeight:1.5}}>
+                  {memberRows.length > 0
+                    ? `${memberRows.length} operator${memberRows.length === 1 ? "" : "s"} reported by cluster status`
+                    : "member roster not reported by this node"}
                 </div>
-              ))}
-              {Array.from({length: 3 - cl.backupCount}).map((_,i)=>(
-                <div key={`e${i}`} className="cl-bench__op cl-bench__op--empty" title="Vacant standby seat">
-                  <div className="cl-bench__dot cl-bench__dot--empty"/>
-                  <div className="mono" style={{fontSize:10,color:"var(--fg-600)"}}>vacant</div>
+              </>
+            ) : (
+              <>
+                <div className="cap" style={{marginBottom:8,textAlign:"center"}}>Standby bench · {cl.backupCount}/3</div>
+                <div className="cl-bench__row">
+                  {cl.backups.map((b,i)=>(
+                    <div key={i} className="cl-bench__op" title={`${b.handle} · queue #${b.queuePos} · promotes if an active op is jailed`}>
+                      <div className="cl-bench__dot"/>
+                      <div className="mono" style={{fontSize:10,color:"var(--fg-300)"}}>{b.handle.slice(0,6)}</div>
+                    </div>
+                  ))}
+                  {Array.from({length: 3 - cl.backupCount}).map((_,i)=>(
+                    <div key={`e${i}`} className="cl-bench__op cl-bench__op--empty" title="Vacant standby seat">
+                      <div className="cl-bench__dot cl-bench__dot--empty"/>
+                      <div className="mono" style={{fontSize:10,color:"var(--fg-600)"}}>vacant</div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div className="mono" style={{fontSize:9.5,color:"var(--fg-500)",textAlign:"center",marginTop:8,letterSpacing:"0.06em",lineHeight:1.5}}>
-              promotes to active<br/>if a cluster is jailed
-            </div>
+                <div className="mono" style={{fontSize:9.5,color:"var(--fg-500)",textAlign:"center",marginTop:8,letterSpacing:"0.06em",lineHeight:1.5}}>
+                  promotes to active<br/>if a cluster is jailed
+                </div>
+              </>
+            )}
           </div>
         </div>
         <div className="cl-hero__body">
@@ -985,13 +1171,13 @@ const ClusterPage = ({ slot, go }: any) => {
                 ? `#${liveClusterId + 1}${liveClusters.data?.length ? ` of ${liveClusters.data.length}` : ""}`
                 : `#${cl.rank} of 100`}
             </span>
-            <span className="cap">DVT cluster · {totalOperators} operators · {threshold}-of-{totalOperators} BFT</span>
+            <span className="cap">DVT cluster · {totalOperators ?? "?"} operators · {threshold ?? "?"}-of-{totalOperators ?? "?"} BFT</span>
           </div>
           <h1 className="ms-h1" style={{marginTop:4,marginBottom:4}}>
             {showLiveHero ? `C-${String(liveClusterId + 1).padStart(3, "0")}` : cl.name}
           </h1>
           <div className="mono" style={{fontSize:11,color:"var(--fg-500)",letterSpacing:"0.03em",marginBottom:8}}>
-            C-{String(cl.slot).padStart(3,"0")} · operator-named cluster
+            C-{String(cl.slot).padStart(3,"0")} · {showLiveHero ? "live protocol descriptor" : "operator-named cluster"}
           </div>
           <div className="cl-hero__summary">
             <span className="cl-health-dot" style={{background: healthy ? "var(--ok)" : cl.state==="maintenance" ? "var(--warn)" : "var(--err)"}}/>
@@ -999,7 +1185,18 @@ const ClusterPage = ({ slot, go }: any) => {
           </div>
 
           {/* Recruitment notice */}
-          {cl.recruiting ? (
+          {showLiveHero ? (
+            <div className="cl-notice cl-notice--closed">
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div className="cl-notice__icon" style={{color:"var(--fg-500)"}}>◉</div>
+                <div className="mono" style={{fontSize:12,color:"var(--fg-300)",letterSpacing:"0.04em"}}>
+                  <b style={{color:"var(--fg-200)"}}>OPERATOR INTAKE</b>
+                  <span style={{color:"var(--fg-500)",margin:"0 8px"}}>·</span>
+                  not reported by live RPC
+                </div>
+              </div>
+            </div>
+          ) : cl.recruiting ? (
             <div className="cl-notice cl-notice--open">
               <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
                 <div className="cl-notice__icon">●</div>
@@ -1032,52 +1229,51 @@ const ClusterPage = ({ slot, go }: any) => {
           <div className="cl-hero__stats">
             <div className="cl-bigstat cl-bigstat--gold">
               <div className="cap">Current APY</div>
-              <div className="cl-bigstat__num mono num">{showLiveHero ? "—" : `${apy.toFixed(2)}%`}</div>
+              <div className="cl-bigstat__num mono num">{showLiveHero ? "not indexed" : fmtClusterApy(apy)}</div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
                 {showLiveHero
-                  ? "no reward aggregate exposed"
+                  ? "reward aggregate unavailable"
                   : "paid in LYTH · per delegated stake"}
               </div>
             </div>
             <div className="cl-bigstat">
               <div className="cap">TVS</div>
-              <div className="cl-bigstat__num mono num">{showLiveHero ? "—" : `${cl.tvs}M`}</div>
+              <div className="cl-bigstat__num mono num">{showLiveHero ? "not indexed" : `${cl.tvs}M`}</div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
                 {showLiveHero
-                  ? (indexerAvailability.disabled ? indexerAvailability.reason ?? "indexer disabled" : "no TVS endpoint yet")
-                  : "MONO delegated"}
+                  ? (indexerAvailability.disabled ? indexerAvailability.reason ?? "indexer disabled" : "live TVS endpoint unavailable")
+                  : "LYTH delegated"}
               </div>
             </div>
             <div className="cl-bigstat">
               <div className="cap">Reward · 30d</div>
               <div className="cl-bigstat__num mono num" style={{color:"var(--gold)"}}>
-                {showLiveHero ? "—" : `+${fmt(cl.reward30d)}`}
+                {showLiveHero ? "not indexed" : `+${fmt(cl.reward30d)}`}
               </div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
-                {showLiveHero ? "no reward history yet" : "MONO distributed"}
+                {showLiveHero ? "reward history unavailable" : "LYTH distributed"}
               </div>
             </div>
             <div className="cl-bigstat">
               <div className="cap">Vertex inclusion</div>
               <div className="cl-bigstat__num mono num" style={{color: showLiveHero ? "var(--fg-300)" : (cl.vertexInclude>0.98 ? "var(--ok)" : "var(--warn)")}}>
-                {showLiveHero ? "—" : pct(cl.vertexInclude,1)}
+                {showLiveHero ? "not indexed" : pct(cl.vertexInclude,1)}
               </div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
-                {showLiveHero ? "metric requires indexed vertex history" : "clusters tracked"}
+                {showLiveHero ? "per-cluster vertex history unavailable" : "clusters tracked"}
               </div>
             </div>
           </div>
 
           <div className="cl-hero__ctas">
-            <button className="ov-cta ov-cta--primary" onClick={()=>openWalletStakeIntent(cl)}>
+            <button className="ov-cta ov-cta--primary" onClick={()=>openWalletStakeIntent(showLiveHero ? { slot: liveClusterId + 1 } : cl)}>
               {showLiveHero ? `Stake with C-${String(liveClusterId + 1).padStart(3, "0")}` : `Stake with ${cl.name}`}
             </button>
             <button
               className="ov-cta"
+              disabled={showLiveHero && !liveClusterKey}
               onClick={()=>{
-                const keyToCopy = showLiveHero
-                  ? (liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? cl.aggKey)
-                  : cl.aggKey;
+                const keyToCopy = showLiveHero ? liveClusterKey : cl.aggKey;
                 if (keyToCopy) {
                   navigator.clipboard?.writeText(keyToCopy);
                   window.__msToast?.("Cluster key copied");
@@ -1087,9 +1283,7 @@ const ClusterPage = ({ slot, go }: any) => {
               Copy cluster key
             </button>
             <span className="mono" style={{fontSize:10,color:"var(--fg-500)",marginLeft:"auto"}}>
-              {fmtHashShort(showLiveHero
-                ? (liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? cl.aggKey)
-                : cl.aggKey)}
+              {showLiveHero ? (liveClusterKey ? fmtHashShort(liveClusterKey) : "key not reported") : fmtHashShort(cl.aggKey)}
             </span>
           </div>
         </div>
@@ -1098,24 +1292,58 @@ const ClusterPage = ({ slot, go }: any) => {
       <section className="ms-grid-2">
         <Card title="Live protocol descriptor">
           <div className="tx-kv">
-            <KVRow label="Cluster id" value={`${liveClusterId}`}/>
+            <KVRow label="Cluster" value={cName(liveClusterId)}/>
+            <KVRow label="Internal cluster id" value={`${liveClusterId}`}/>
             <KVRow label="Quorum" value={liveStatus?.quorum ?? liveCluster?.aggregateHealth ?? "not reported"}/>
             <KVRow label="Live operators" value={liveStatus ? `${liveStatus.live}/${liveStatus.size}` : "—"}/>
             <KVRow label="Active" value={liveStatus ? (liveStatus.live > 0 ? "yes" : "no") : liveCluster ? (liveCluster.active ? "yes" : "no") : "not reported"}/>
-            <KVRow label="Stake weight" value={liveCluster?.stake ?? "—"}/>
+            <KVRow label="Stake weight" value={fmtClusterStake(liveCluster)}/>
             <KVRow label="First BLS key" value={fmtHashShort(liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? "—")} mono/>
-            <KVRow label="Last update" value={liveStatus ? `${liveStatus.lastUpdateHeight}` : "—"}/>
+            <KVRow label="Last update" value={liveStatus ? `block #${Number(liveStatus.lastUpdateHeight).toLocaleString()}` : "—"}/>
             <KVRow label="Delegators" value={delegators.data ? `${delegators.data.count}` : "—"}/>
             <KVRow label="Delegation cap" value={delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "disabled" : `${delegationCap.data.capBps} bps`) : "—"}/>
             <KVRow label="Entity" value={clusterEntity.data?.entity ?? "—"}/>
             <KVRow label="Entity ratchet" value={entityRatchet.data ? `${entityRatchet.data.active}/${entityRatchet.data.threshold === 4294967295 ? "unset" : entityRatchet.data.threshold}` : "—"}/>
           </div>
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
-            Cluster status, quorum, and member BLS keys come from public RPC. Rich APY, rewards, and vertex inclusion remain indexer-backed mock data.
+            Cluster status, quorum, and member BLS keys come from public RPC. Economic aggregates are hidden until live TVS, reward history, and vertex-inclusion endpoints exist.
           </div>
         </Card>
         <Card title={`Members · ${memberRows.length} operator${memberRows.length === 1 ? "" : "s"}`}>
           <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+          {showLiveHero ? (
+          <table className="ms-table">
+            <thead><tr><th>Operator</th><th>Role</th><th style={{textAlign:"right"}}>BLS pubkey</th><th style={{textAlign:"right"}}>Source</th></tr></thead>
+            <tbody>
+              {memberRows.length === 0 ? (
+                <tr>
+                  <td colSpan={4}>
+                    <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
+                      No live member roster is reported for this cluster yet.
+                    </div>
+                  </td>
+                </tr>
+              ) : memberRows.map(m=>(
+                <tr key={m.addrShort} onClick={()=>go(`#/operator/${encodeURIComponent(m.addrShort)}`)}>
+                  <td>
+                    <div style={{display:"flex",gap:10,alignItems:"center",minWidth:0}}>
+                      <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${m.handle.charCodeAt(0)*7%360})`,flexShrink:0}}/>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontWeight:500,fontSize:13}} className="mono">{m.handle}</div>
+                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"min(58vw,340px)"}}>{fmtHashShort(m.addrShort)}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td>{(() => { const r = operatorRoleMeta(m.role); return (
+                    <span className={`pill ${r.tone === "neutral" ? "" : r.tone}`} style={{fontSize:10}}>{r.label}</span>
+                  ); })()}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)"}}>{m.blsPubkey ? fmtHashShort(m.blsPubkey, 12, 0) : "not reported"}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--ok)"}}>live cluster status</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          ) : (
           <table className="ms-table">
             <thead><tr><th>Operator</th><th>Role</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Vertex rate</th><th></th></tr></thead>
             <tbody>
@@ -1142,52 +1370,78 @@ const ClusterPage = ({ slot, go }: any) => {
               ))}
             </tbody>
           </table>
+          )}
           </div>
         </Card>
 
-        <Card title="Reward stream · last 30 days">
-          <Sparkline data={cl.rewardHist} width={520} height={140} color="var(--gold)"/>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:14}}>
-            <Stat label="Consensus" value={`${fmt(cl.streams.consensus)} LYTH`}/>
-            <Stat label="Service" value={`${fmt(cl.streams.service)} LYTH`}/>
-            <Stat label="Builder" value={`${fmt(cl.streams.builder)} LYTH`}/>
-          </div>
-          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:10,letterSpacing:"0.04em"}}>
-            split · 1/7 even per protocol-default fee policy
-          </div>
-        </Card>
+        {showLiveHero ? (
+          <Card title="Reward stream · last 30 days">
+            <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"6px 2px"}}>
+              Live reward-history aggregates are not exposed by this node yet.
+            </div>
+          </Card>
+        ) : (
+          <Card title="Reward stream · last 30 days">
+            <Sparkline data={cl.rewardHist} width={520} height={140} color="var(--gold)"/>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginTop:14}}>
+              <Stat label="Consensus" value={`${fmt(cl.streams.consensus)} LYTH`}/>
+              <Stat label="Service" value={`${fmt(cl.streams.service)} LYTH`}/>
+              <Stat label="Builder" value={`${fmt(cl.streams.builder)} LYTH`}/>
+            </div>
+            <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:10,letterSpacing:"0.04em"}}>
+              split · 1/7 even per protocol-default fee policy
+            </div>
+          </Card>
+        )}
       </section>
 
       <section className="ms-grid-2">
-        <Card title="Recent vertices">
-          {cl.recentVertices.map((v,i)=>(
-            <div key={i} className="ms-vrow">
-              <div className="mono" style={{color:"var(--gold)",fontSize:13,minWidth:90}}>r·{fmt(v.round)}</div>
-              <div className="mono" style={{flex:1,fontSize:11,color:"var(--fg-300)"}}>
-                {v.txCount} txs · DAC {v.dac?"✓":"✗"} · agg {v.blsAggMs.toFixed(1)}ms
+        {showLiveHero ? (
+          <>
+            <Card title="Recent vertices">
+              <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"6px 2px"}}>
+                Per-cluster vertex history is not exposed by the live index yet.
               </div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>{fmtHashShort(v.hashShort)}</div>
-            </div>
-          ))}
-        </Card>
-        <Card title="State history · last 14 days">
-          <div style={{display:"flex",gap:3,height:36,alignItems:"flex-end"}}>
-            {cl.stateHist.map((s,i)=>{
-              const c = s==="nominal"?"var(--ok)":s==="maintenance"?"var(--warn)":"var(--err)";
-              const h = s==="nominal"?28:s==="maintenance"?20:36;
-              return <span key={i} title={s} style={{flex:1,height:h,background:c,borderRadius:1,boxShadow:`0 0 4px ${c}66`}}/>;
-            })}
-          </div>
-          <div className="mono" style={{fontSize:10,color:"var(--fg-400)",marginTop:8,display:"flex",justifyContent:"space-between"}}>
-            <span>14d ago</span><span>now</span>
-          </div>
-          <div style={{marginTop:18}}>
-            <div className="cap" style={{marginBottom:6}}>Slash history</div>
-            {cl.slashHist.length === 0
-              ? <div className="mono" style={{fontSize:11,color:"var(--ok)"}}>· clean since genesis</div>
-              : cl.slashHist.map((s,i)=><div key={i} className="mono" style={{fontSize:11,color:"var(--err)"}}>{s}</div>)}
-          </div>
-        </Card>
+            </Card>
+            <Card title="State history · last 14 days">
+              <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"6px 2px"}}>
+                Historical cluster state and slash records are not exposed by this node yet.
+              </div>
+            </Card>
+          </>
+        ) : (
+          <>
+            <Card title="Recent vertices">
+              {cl.recentVertices.map((v,i)=>(
+                <div key={i} className="ms-vrow">
+                  <div className="mono" style={{color:"var(--gold)",fontSize:13,minWidth:90}}>r·{fmt(v.round)}</div>
+                  <div className="mono" style={{flex:1,fontSize:11,color:"var(--fg-300)"}}>
+                    {v.txCount} txs · DAC {v.dac?"✓":"✗"} · agg {v.blsAggMs.toFixed(1)}ms
+                  </div>
+                  <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>{fmtHashShort(v.hashShort)}</div>
+                </div>
+              ))}
+            </Card>
+            <Card title="State history · last 14 days">
+              <div style={{display:"flex",gap:3,height:36,alignItems:"flex-end"}}>
+                {cl.stateHist.map((s,i)=>{
+                  const c = s==="nominal"?"var(--ok)":s==="maintenance"?"var(--warn)":"var(--err)";
+                  const h = s==="nominal"?28:s==="maintenance"?20:36;
+                  return <span key={i} title={s} style={{flex:1,height:h,background:c,borderRadius:1,boxShadow:`0 0 4px ${c}66`}}/>;
+                })}
+              </div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-400)",marginTop:8,display:"flex",justifyContent:"space-between"}}>
+                <span>14d ago</span><span>now</span>
+              </div>
+              <div style={{marginTop:18}}>
+                <div className="cap" style={{marginBottom:6}}>Slash history</div>
+                {cl.slashHist.length === 0
+                  ? <div className="mono" style={{fontSize:11,color:"var(--ok)"}}>· clean since genesis</div>
+                  : cl.slashHist.map((s,i)=><div key={i} className="mono" style={{fontSize:11,color:"var(--err)"}}>{s}</div>)}
+              </div>
+            </Card>
+          </>
+        )}
       </section>
     </div>
   );
@@ -1210,6 +1464,39 @@ const KVRow = ({ label, value, mono }: any) => (
     <span className={`${mono ? "mono" : ""} tx-kv__v`} style={{wordBreak:"break-all"}}>{value}</span>
   </div>
 );
+
+// Human label + 3-tone pill for a raw operator protocol state. jailed/offline
+// must read as an error (red), not amber. Falls back to the raw string.
+const OPERATOR_ROLE_META: Record<string, { label: string; tone: string }> = {
+  active: { label: "active", tone: "ok" },
+  live: { label: "active", tone: "ok" },
+  signing: { label: "active", tone: "ok" },
+  lagging: { label: "lagging", tone: "warn" },
+  degraded: { label: "lagging", tone: "warn" },
+  standby: { label: "standby", tone: "neutral" },
+  queued: { label: "standby", tone: "neutral" },
+  offline: { label: "offline", tone: "err" },
+  jailed: { label: "jailed", tone: "err" },
+  tombstoned: { label: "tombstoned", tone: "err" },
+};
+export const operatorRoleMeta = (state: string | null | undefined) => {
+  const meta = state ? OPERATOR_ROLE_META[String(state).toLowerCase()] : undefined;
+  return meta ?? { label: state ?? "unknown", tone: "neutral" };
+};
+
+// Human labels for operator service-capability keys (offline fixture card).
+const CAPABILITY_LABELS: Record<string, string> = {
+  rpc: "RPC",
+  stateSync: "State sync",
+  snapshots: "Snapshots",
+  archival: "Archival",
+  prover: "Prover",
+  bridge: "Bridge",
+  oracle: "Oracle",
+};
+export const capabilityLabel = (key: string) =>
+  CAPABILITY_LABELS[key] ??
+  key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^\w/, (m) => m.toUpperCase());
 
 /* ============== OPERATOR PROFILE ============== */
 const OperatorPage = ({ addr, go }: any) => {
@@ -1245,9 +1532,25 @@ const OperatorPage = ({ addr, go }: any) => {
   const keyRotation = duties.data?.duties.keyRotation;
   const keyRotationLabel = keyRotation
     ? "nextRound" in keyRotation
-      ? `round ${keyRotation.nextRound}`
+      ? `round ${Number(keyRotation.nextRound).toLocaleString()}`
       : keyRotation.reason
     : "—";
+  if (indexerAvailability.liveChain && !useLiveProfile) {
+    return (
+      <div className="ms-page">
+        <div className="ms-crumb">
+          <a href="#/operators" onClick={()=>go("#/operators")}>Operators</a>
+          <span>›</span>
+          <b>unresolved</b>
+        </div>
+        <Card title="Operator not resolved">
+          <div className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,padding:"6px 2px"}}>
+            Live operator pages require a 32-byte operator id from the live cluster roster. Local operator fixture profiles are hidden while connected to a live chain.
+          </div>
+        </Card>
+      </div>
+    );
+  }
   return (
     <div className="ms-page">
       <div className="ms-crumb">
@@ -1267,7 +1570,7 @@ const OperatorPage = ({ addr, go }: any) => {
           </h1>
           <div className="mono" style={{color:"var(--fg-300)",marginTop:4}}>
             {useLiveProfile
-              ? `${liveMembership ? `cluster ${liveMembership.clusterId} · state ${liveMembership.state}` : "membership unresolved"}${authorityIndex !== undefined && authorityIndex !== null ? ` · authority #${authorityIndex}` : ""}`
+              ? `${liveMembership ? `${cName(liveMembership.clusterId)} · state ${liveMembership.state}` : "membership unresolved"}${authorityIndex !== undefined && authorityIndex !== null ? ` · authority #${authorityIndex}` : ""}`
               : `${op.addrShort} · ${op.region} · active since ${op.activeSince}`}
           </div>
         </div>
@@ -1276,8 +1579,8 @@ const OperatorPage = ({ addr, go }: any) => {
             <>
               <Stat label="Reputation" value="—"/>
               <Stat label="Uptime · 90d" value="—"/>
-              <Stat label="Bonded" value={operatorInfo.data?.bondedAmount ?? "—"}/>
-              <Stat label="Slash" value={risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}% miss` : "—"}/>
+              <Stat label="Bonded" value={fmtLythAmount(operatorInfo.data?.bondedAmount)}/>
+              <Stat label="Miss rate · 250r" value={risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}%` : "—"} tone={risk.data && risk.data.missRateBps > 0 ? "warn" : risk.data ? "ok" : undefined}/>
             </>
           ) : (
             <>
@@ -1297,8 +1600,10 @@ const OperatorPage = ({ addr, go }: any) => {
               <thead><tr><th>Cluster</th><th>State</th><th style={{textAlign:"right"}}>BLS pubkey</th></tr></thead>
               <tbody>
                 <tr onClick={()=>go(`#/cluster/${liveMembership.clusterId + 1}`)}>
-                  <td className="mono" style={{fontWeight:500}}>cluster {liveMembership.clusterId}</td>
-                  <td><span className={`pill ${liveMembership.state==="active" ? "ok" : "warn"}`} style={{fontSize:10}}>{liveMembership.state}</span></td>
+                  <td className="mono" style={{fontWeight:500}}>{cName(liveMembership.clusterId)}</td>
+                  <td>{(() => { const r = operatorRoleMeta(liveMembership.state); return (
+                    <span className={`pill ${r.tone === "neutral" ? "" : r.tone}`} style={{fontSize:10}}>{r.label}</span>
+                  ); })()}</td>
                   <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-300)"}}>
                     {liveMembership.blsPubkey ? fmtHashShort(liveMembership.blsPubkey, 14, 0) : "—"}
                   </td>
@@ -1332,7 +1637,7 @@ const OperatorPage = ({ addr, go }: any) => {
             <KVRow label="Chain address" value={operatorInfo.data?.chainAddress ? fmtAddr(operatorInfo.data.chainAddress, "user") : "—"} mono/>
             <KVRow label="Authority index" value={authorityIndex ?? "—"}/>
             <KVRow label="Lifecycle" value={operatorInfo.data?.lifecycleState ?? "—"}/>
-            <KVRow label="Bonded amount" value={operatorInfo.data?.bondedAmount ?? "—"} mono/>
+            <KVRow label="Bonded amount" value={fmtLythAmount(operatorInfo.data?.bondedAmount)} mono/>
             <KVRow label="BLS key" value={authority.data?.blsPubkey ? fmtHashShort(authority.data.blsPubkey) : operatorInfo.data?.blsKeyFingerprint ?? "—"} mono/>
             <KVRow label="Recent signed/missed" value={signedCount === null ? "—" : `${signedCount}/${missedCount ?? 0}`}/>
             <KVRow label="Miss rate" value={risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}%` : "—"}/>
@@ -1340,7 +1645,7 @@ const OperatorPage = ({ addr, go }: any) => {
             <KVRow label="Next key rotation" value={keyRotationLabel}/>
           </div>
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
-            Live telemetry appears when this page is opened from a live cluster member id. Mock operator profiles keep their fixture metrics until the indexer exposes reputation and membership aggregates.
+            Live telemetry appears when this page is opened from a live cluster member id. Offline preview profiles are hidden on live networks.
           </div>
         </Card>
         <Card title="Reputation timeline · 12 months">
@@ -1372,7 +1677,7 @@ const OperatorPage = ({ addr, go }: any) => {
             {Object.entries(op.caps).map(([k,v])=>(
               <div key={k} className={`ms-cap ${v?"is-on":""}`}>
                 <span className="ms-cap__check">{v?"✓":"—"}</span>
-                <span>{k}</span>
+                <span>{capabilityLabel(k)}</span>
               </div>
             ))}
           </div>
@@ -1383,17 +1688,65 @@ const OperatorPage = ({ addr, go }: any) => {
 };
 
 /* ============== CLUSTERS LIST (rebuilt — human-first) ============== */
-/* APY derived from 30d reward / TVS, annualized. */
+/* APY derived from 30d reward / TVS, annualized. Guards against a ~0 TVS
+   divisor (returns 0 rather than Infinity/NaN, keeping sorts/averages stable);
+   display sites pass the result through fmtClusterApy so a 0 reads as "—". */
 const clusterApy = (cl) => {
   const tvsMono = parseFloat(cl.tvs) * 1_000_000;
+  if (!(tvsMono > 0)) return 0;
   return (cl.reward30d * 12 / tvsMono) * 100;
+};
+// Render an APY number as a percent, or "—" when it is 0 / non-finite
+// (near-zero TVS divisor) so a fixture can't show a misleading 0.00%.
+export const fmtClusterApy = (apy: number) =>
+  Number.isFinite(apy) && apy > 0 ? `${apy.toFixed(2)}%` : "—";
+
+const _positiveInt = (value: any, fallback = 0) => {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
+};
+const _clusterId = (cl: any) => {
+  const id = Number(cl?.id);
+  return Number.isFinite(id) && id >= 0 ? Math.trunc(id) : 0;
+};
+export const liveClusterSlot = (cl: any) => _clusterId(cl) + 1;
+export const liveClusterLabel = (cl: any) => `C-${String(liveClusterSlot(cl)).padStart(3, "0")}`;
+export const liveClusterRosterFor = (cl: any, operators: readonly any[] = []) => {
+  const clusterId = _clusterId(cl);
+  return operators.filter((row) => Number(row?.clusterId) === clusterId);
+};
+const _operatorIsActive = (state: string | null | undefined) =>
+  state === "active" || state === "live" || state === "signing";
+const _operatorIsStandby = (state: string | null | undefined) =>
+  state === "standby" || state === "queued" || state === "backup";
+const _operatorRingState = (state: string | null | undefined) =>
+  _operatorIsActive(state) ? "live" : state === "lagging" || state === "degraded" ? "lag" : "standby";
+export const liveClusterSeatSummary = (cl: any, operators: readonly any[] = []) => {
+  const rosterRows = liveClusterRosterFor(cl, operators);
+  const size = _positiveInt(cl?.size, rosterRows.length || _positiveInt(cl?.threshold, 1));
+  const threshold = Math.min(size, _positiveInt(cl?.threshold, Math.max(1, Math.ceil(size * 0.7))));
+  const active = rosterRows.filter((row) => _operatorIsActive(row?.state)).length;
+  const standby = rosterRows.filter((row) => _operatorIsStandby(row?.state)).length;
+  return { size, threshold, active, standby, reported: rosterRows.length, known: rosterRows.length > 0 };
+};
+export const liveClusterRingMembers = (cl: any, operators: readonly any[] = []) => {
+  const rosterRows = liveClusterRosterFor(cl, operators);
+  if (rosterRows.length > 0) {
+    return rosterRows.map((row, i) => ({
+      id: row?.operatorId ?? `${_clusterId(cl)}-${i}`,
+      state: _operatorRingState(row?.state),
+    }));
+  }
+  return [];
 };
 
 const ClustersPage = ({go}: any) => {
   const liveClusters = useClusterSet();
   const activeClustersLive = useActiveClusters();
   const healthyClustersLive = useHealthyClusters();
+  const roster = useLiveOperatorRoster();
   const delegationCap = useDelegationCap();
+  const indexerAvailability = useIndexerAvailability();
   const [tab, setTab]       = useState("active"); // active|inactive
   const [filter, setFilter] = useState("all"); // all|nominal|maintenance|open (active tab) · all|jailed|queued (inactive tab)
   const [sort, setSort]     = useState("tvs"); // tvs|apy|members|diversity
@@ -1411,7 +1764,7 @@ const ClustersPage = ({go}: any) => {
   // The chain reports live cluster descriptors with id/size/threshold but no
   // TVS / APY / reward history yet. When live data resolves, surface that
   // gap instead of showing the fixture's invented economic aggregates.
-  const haveLiveDirectory = liveDescriptors !== null;
+  const haveLiveDirectory = indexerAvailability.liveChain || liveDescriptors !== null;
   const fixtureTvs = active.reduce((a,c)=>a+parseFloat(c.tvs),0);
   const fixtureAvgApy = active.reduce((a,c)=>a+clusterApy(c),0)/active.length;
   const fixtureTopApy = Math.max(...active.map(clusterApy));
@@ -1420,6 +1773,15 @@ const ClustersPage = ({go}: any) => {
   const avgApy     = haveLiveDirectory ? null : fixtureAvgApy;
   const topApy     = haveLiveDirectory ? null : fixtureTopApy;
   const minToEnter = haveLiveDirectory ? null : fixtureMinToEnter;
+  const liveActiveDescriptors = haveLiveDirectory ? (liveDescriptors ?? []).filter((c) => c.active) : [];
+  const liveInactiveDescriptors = haveLiveDirectory ? (liveDescriptors ?? []).filter((c) => !c.active) : [];
+  const liveDegradedCount = liveActiveDescriptors.filter((c) => c.aggregateHealth !== "ok").length;
+  const liveActiveFiltered = liveActiveDescriptors.filter((c) =>
+    filter === "all" ? true : filter === "nominal" ? c.aggregateHealth === "ok" : filter === "maintenance" ? c.aggregateHealth !== "ok" : true,
+  );
+  const liveInactiveFiltered = liveInactiveDescriptors.filter((c) =>
+    filter === "all" ? true : filter === "jailed" ? c.aggregateHealth === "jailed" : c.aggregateHealth !== "jailed",
+  );
   const firstLiveCluster = liveDescriptors && liveDescriptors.length > 0 ? liveDescriptors[0] : null;
   const liveQuorumLabel = firstLiveCluster
     ? `${firstLiveCluster.threshold ?? "?"}-of-${firstLiveCluster.size ?? "?"} BFT`
@@ -1458,7 +1820,9 @@ const ClustersPage = ({go}: any) => {
           <div className="ov-hero__tag">
             <span className="ov-livedot"/>
             <span className="mono" style={{fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--fg-300)"}}>
-              {liveActiveCount ?? active.length} active descriptors · {liveHealthyCount ?? nominal} healthy · {liveQuorumLabel ?? "5-of-7 BFT"}
+              {haveLiveDirectory
+                ? `${liveActiveCount ?? "—"} active descriptors · ${liveHealthyCount ?? "—"} healthy · ${liveQuorumLabel ?? "BFT pending"}`
+                : `${active.length} active descriptors · ${nominal} healthy · 5-of-7 BFT`}
             </span>
           </div>
           <h1 className="ov-hero__title">
@@ -1466,18 +1830,30 @@ const ClustersPage = ({go}: any) => {
             <span style={{color:"var(--fg-300)"}}>your stake.</span>
           </h1>
           <p className="ov-hero__desc">
-            Every cluster is a 7-operator DVT set. The protocol elects the top 100 by TVS into the active
-            cluster set — others wait in the wings until their stake grows. Stake with any active cluster; your
-            delegation will roll over automatically if rankings shift.
+            {haveLiveDirectory && firstLiveCluster
+              ? `The live chain reports ${liveDescriptorCount} cluster descriptor${liveDescriptorCount === 1 ? "" : "s"} with ${liveQuorumLabel ?? "BFT quorum"}. Roster and quorum come from RPC; TVS, APY, and reward history appear once the aggregate index lands.`
+              : haveLiveDirectory
+                ? "Awaiting the live cluster directory. Monoscan will not show seeded TVS, APY, reward, or standby-bench rows while connected to the live chain."
+              : "Every cluster is a 7-operator DVT set. The protocol elects the top 100 by TVS into the active cluster set — others wait in the wings until their stake grows. Stake with any active cluster; your delegation will roll over automatically if rankings shift."}
           </p>
           <div className="ov-hero__ctas">
-            <button onClick={()=>go(`#/cluster/${featured[0]?.slot||1}`)} className="ov-cta ov-cta--primary">Top-yield cluster →</button>
-            <button onClick={()=>setFilter("open")} className="ov-cta">● {openCount} open for ops</button>
+            <button onClick={()=>go(firstLiveCluster ? `#/cluster/${liveClusterSlot(firstLiveCluster)}` : haveLiveDirectory ? "#/clusters" : `#/cluster/${featured[0]?.slot||1}`)} className="ov-cta ov-cta--primary">
+              {haveLiveDirectory ? (firstLiveCluster ? "Open live cluster →" : "Live clusters pending") : "Top-yield cluster →"}
+            </button>
+            <button onClick={()=>haveLiveDirectory ? switchTab("active") : setFilter("open")} className="ov-cta">
+              {haveLiveDirectory
+                ? liveDescriptorCount !== null
+                  ? `${liveDescriptorCount} live descriptor${liveDescriptorCount === 1 ? "" : "s"}`
+                  : "checking live directory"
+                : `● ${openCount} open for ops`}
+            </button>
           </div>
         </div>
         <div className="ov-hero__stats">
-          <HeadlineStat label="Active clusters" value={liveActiveCount !== null ? `${liveActiveCount}` : `${active.length}/100`}
-            sub={liveDescriptorCount !== null ? `${liveDescriptorCount} descriptors from RPC` : `${inactive.length} inactive · ${jailed.length} jailed`} delta={liveHealthyCount !== null ? `${liveHealthyCount} healthy` : jailed.length===0?"all healthy":`${jailed.length} cooling down`} tone={jailed.length===0?"ok":"err"}/>
+          <HeadlineStat label="Active clusters" value={haveLiveDirectory ? (liveActiveCount !== null ? `${liveActiveCount}` : "—") : `${active.length}/100`}
+            sub={haveLiveDirectory ? (liveDescriptorCount !== null ? `${liveDescriptorCount} descriptors from RPC` : "awaiting live directory") : `${inactive.length} inactive · ${jailed.length} jailed`}
+            delta={haveLiveDirectory ? (liveHealthyCount !== null ? `${liveHealthyCount} healthy` : "") : jailed.length===0?"all healthy":`${jailed.length} cooling down`}
+            tone={haveLiveDirectory ? "neutral" : jailed.length===0?"ok":"err"}/>
           <HeadlineStat
             label="Total value staked"
             value={totalTvs !== null ? `${totalTvs.toFixed(0)}M LYTH` : "—"}
@@ -1506,14 +1882,76 @@ const ClustersPage = ({go}: any) => {
       </section>
 
       {/* ---------- FEATURED CLUSTERS ---------- */}
-      {haveLiveDirectory && liveDescriptorCount !== null && liveDescriptorCount < featured.length ? (
-        <section className="ms-card" style={{padding:"18px 20px"}}>
-          <div className="cap" style={{color:"var(--gold)",marginBottom:8}}>Featured clusters</div>
-          <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-            Live chain reports {liveDescriptorCount} cluster{liveDescriptorCount === 1 ? "" : "s"}.
-            Featured-by-yield rows are hidden until a reward-history aggregate is exposed by the node.
+      {haveLiveDirectory ? (
+      <section>
+        <div className="ov-feed__head" style={{marginBottom:14}}>
+          <div>
+            <h3 className="ov-section-title">Featured · live clusters</h3>
+            <p className="ov-section-desc">Live RPC drives roster, quorum, and health. Yield fields stay pending until reward history is indexed.</p>
           </div>
-        </section>
+        </div>
+        {liveActiveDescriptors.length === 0 ? (
+          <div className="ms-card" style={{padding:"18px 20px"}}>
+            <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
+              {liveClusters.isLoading
+                ? "Checking the live cluster directory."
+                : "No active clusters are currently reported by the live directory."}
+            </div>
+          </div>
+        ) : (
+        <div className="cl-featured">
+          {liveActiveDescriptors.slice(0, 6).map((cl, i)=>{
+            const summary = liveClusterSeatSummary(cl, roster.operators);
+            const ringMembers = liveClusterRingMembers(cl, roster.operators);
+            const healthOk = cl.aggregateHealth === "ok";
+            return (
+              <div key={cl.id} className="cl-card cl-card--live" onClick={()=>go(`#/cluster/${liveClusterSlot(cl)}`)}>
+                <div className="cl-card__head">
+                  <div style={{minWidth:0,flex:1}}>
+                    <div style={{display:"flex",alignItems:"baseline",gap:8}}>
+                      <div style={{fontSize:15,fontWeight:500,color:"var(--fg-100)",letterSpacing:"-0.005em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{liveClusterLabel(cl)}</div>
+                      <span className="cl-live-tag">RPC</span>
+                    </div>
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:2,letterSpacing:"0.03em"}}>
+                      <span className="cl-rank">#{i + 1}</span>
+                      <span style={{margin:"0 6px",color:"var(--fg-700)"}}>·</span>
+                      cluster id {cl.id}
+                      <span style={{margin:"0 6px",color:"var(--fg-700)"}}>·</span>
+                      {summary.threshold}-of-{summary.size} BFT
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right",flexShrink:0}}>
+                    <div className="mono num" style={{fontSize:16,color:healthOk ? "var(--ok)" : "var(--warn)",letterSpacing:"-0.01em"}}>
+                      {cl.aggregateHealth ?? "unknown"}
+                    </div>
+                    <div className="mono" style={{fontSize:9.5,color:"var(--fg-500)",letterSpacing:"0.08em"}}>HEALTH</div>
+                  </div>
+                </div>
+                <MiniRing
+                  members={ringMembers}
+                  size={112}
+                  threshold={summary.threshold}
+                  centerValue={summary.known ? `${summary.active}/${summary.size}` : `${summary.threshold}/${summary.size}`}
+                  centerLabel={summary.known ? "ACTIVE" : "BFT"}
+                />
+                <div className="cl-card__bench mono">
+                  <span style={{color:"var(--fg-500)",fontSize:10,letterSpacing:"0.08em"}}>ROSTER</span>
+                  <span style={{color:"var(--fg-400)",fontSize:10.5}}>
+                    {summary.known ? `${summary.reported} operator${summary.reported === 1 ? "" : "s"} reported` : "status resolving"}
+                  </span>
+                  <span className="cl-closed-tag">YIELD PENDING</span>
+                </div>
+                <div className="cl-card__foot">
+                  <div><div className="cap">Quorum</div><div className="mono num">{summary.threshold}/{summary.size}</div></div>
+                  <div><div className="cap">TVS</div><div className="mono num" style={{color:"var(--fg-500)"}}>{fmtClusterStake(cl)}</div></div>
+                  <div><div className="cap">Reward 30d</div><div className="mono num" style={{color:"var(--fg-500)"}}>not indexed</div></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        )}
+      </section>
       ) : (
       <section>
         <div className="ov-feed__head" style={{marginBottom:14}}>
@@ -1541,7 +1979,7 @@ const ClustersPage = ({go}: any) => {
                     </div>
                   </div>
                   <div style={{textAlign:"right",flexShrink:0}}>
-                    <div className="mono num" style={{fontSize:20,color:"var(--gold)",letterSpacing:"-0.01em"}}>{apy.toFixed(2)}%</div>
+                    <div className="mono num" style={{fontSize:20,color:"var(--gold)",letterSpacing:"-0.01em"}}>{fmtClusterApy(apy)}</div>
                     <div className="mono" style={{fontSize:9.5,color:"var(--fg-500)",letterSpacing:"0.08em"}}>APY</div>
                   </div>
                 </div>
@@ -1575,7 +2013,7 @@ const ClustersPage = ({go}: any) => {
           <div className="mono" style={{color:"var(--fg-300)",fontSize:12.5,lineHeight:1.55}}>
             Live RPC reports {liveDescriptorCount} cluster{liveDescriptorCount === 1 ? "" : "s"}
             {liveQuorumLabel ? ` · ${liveQuorumLabel}` : ""}.
-            TVS/APY/reward columns degrade to "—" because no reward-history aggregate is exposed yet.
+            This view now keeps the card and table layout while marking TVS/APY/reward history as pending until the aggregate endpoint exists.
           </div>
         </section>
       )}
@@ -1585,33 +2023,40 @@ const ClustersPage = ({go}: any) => {
         <div className="cl-tabs">
           <button className={`cl-tab ${tab==="active"?"is-active":""}`} onClick={()=>switchTab("active")}>
             <span className="cl-tab__label">Active</span>
-            <span className="cl-tab__count mono">{active.length}</span>
-            <span className="cl-tab__sub">earning rewards</span>
+            <span className="cl-tab__count mono">{haveLiveDirectory ? liveActiveDescriptors.length : active.length}</span>
+            <span className="cl-tab__sub">{haveLiveDirectory ? "reported live" : "earning rewards"}</span>
           </button>
           <button className={`cl-tab ${tab==="inactive"?"is-active":""}`} onClick={()=>switchTab("inactive")}>
             <span className="cl-tab__label">Inactive</span>
-            <span className="cl-tab__count mono">{inactive.length}</span>
-            <span className="cl-tab__sub">{jailed.length} jailed · {queued.length} queued</span>
+            <span className="cl-tab__count mono">{haveLiveDirectory ? liveInactiveDescriptors.length : inactive.length}</span>
+            <span className="cl-tab__sub">{haveLiveDirectory ? `${liveDegradedCount} degraded active` : `${jailed.length} jailed · ${queued.length} queued`}</span>
           </button>
         </div>
 
         {tab==="active" ? (
           <>
             <p className="ov-section-desc" style={{marginBottom:14,maxWidth:720}}>
-              Top 100 by TVS. These are the active clusters earning rewards this epoch. If a cluster is jailed, it drops into Inactive and must complete a 100-round cooldown before re-election.
+              {haveLiveDirectory
+                ? "Active rows come from the live cluster directory. Economic rank, APY, TVS, and rewards remain pending until the node exposes reward-history aggregates."
+                : "Top 100 by TVS. These are the active clusters earning rewards this epoch. If a cluster is jailed, it drops into Inactive and must complete a 100-round cooldown before re-election."}
             </p>
             <div className="cl-chips">
               <div className="cl-chipgroup">
-                {[["all",`All · ${active.length}`],["nominal",`Live · ${nominal}`],["maintenance",`Degraded · ${maint}`],["open",`● Open for ops · ${openCount}`]].map(([k,l])=>(
+                {(haveLiveDirectory
+                  ? [["all",`All · ${liveActiveDescriptors.length}`],["nominal",`Healthy · ${liveHealthyCount ?? liveActiveDescriptors.filter((c) => c.aggregateHealth === "ok").length}`],["maintenance",`Degraded · ${liveDegradedCount}`]]
+                  : [["all",`All · ${active.length}`],["nominal",`Live · ${nominal}`],["maintenance",`Degraded · ${maint}`],["open",`● Open for ops · ${openCount}`]]
+                ).map(([k,l])=>(
                   <button key={k} className={`cl-chip ${filter===k?"is-active":""}`} onClick={()=>setFilter(k)}>{l}</button>
                 ))}
               </div>
+              {!haveLiveDirectory && (
               <div className="cl-chipgroup">
                 <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em",marginRight:8}}>SORT BY</span>
                 {[["tvs","TVS"],["apy","APY"],["members","Members"],["diversity","Diversity"]].map(([k,l])=>(
                   <button key={k} className={`cl-chip cl-chip--sort ${sort===k?"is-active":""}`} onClick={()=>setSort(k)}>{l}</button>
                 ))}
               </div>
+              )}
             </div>
 
             <Card title="">
@@ -1627,11 +2072,20 @@ const ClustersPage = ({go}: any) => {
                   <th style={{textAlign:"right"}}>Vertex incl.</th>
                 </tr></thead>
                 <tbody>
-                  {haveLiveDirectory ? (liveDescriptors ?? []).filter(c => c.active).map((cl)=>{
-                    const slotLabel = `C-${String(cl.id + 1).padStart(3, "0")}`;
+                  {haveLiveDirectory ? (liveActiveFiltered.length === 0 ? (
+                    <tr>
+                      <td colSpan={8}>
+                        <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
+                          No active live clusters match this filter.
+                        </div>
+                      </td>
+                    </tr>
+                  ) : liveActiveFiltered.map((cl, i)=>{
+                    const slotLabel = liveClusterLabel(cl);
+                    const summary = liveClusterSeatSummary(cl, roster.operators);
                     return (
                       <tr key={cl.id} onClick={()=>go(`#/cluster/${cl.id + 1}`)}>
-                        <td className="mono" style={{color:"var(--gold)",fontWeight:600}}>#{cl.id + 1}</td>
+                        <td className="mono" style={{color:"var(--gold)",fontWeight:600}}>#{i + 1}</td>
                         <td>
                           <div style={{fontWeight:500,fontSize:13,color:"var(--fg-100)"}}>{slotLabel}</div>
                           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1,letterSpacing:"0.02em"}}>cluster id {cl.id} · {cl.threshold}-of-{cl.size} BFT</div>
@@ -1641,14 +2095,16 @@ const ClustersPage = ({go}: any) => {
                             {cl.aggregateHealth ?? "unknown"}
                           </span>
                         </td>
-                        <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)"}}>—</td>
-                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
-                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
-                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
-                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                        <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)"}}>
+                          {summary.known ? `${summary.active}/${summary.size} active` : `${summary.threshold}/${summary.size} BFT`}
+                        </td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>{fmtClusterStake(cl)}</td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>not indexed</td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>not indexed</td>
+                        <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>not indexed</td>
                       </tr>
                     );
-                  }) : activeFiltered.map(cl=>(
+                  })) : activeFiltered.map(cl=>(
                     <tr key={cl.slot} onClick={()=>go(`#/cluster/${cl.slot}`)}>
                       <td className="mono" style={{color:cl.rank<=10?"var(--gold)":"var(--fg-400)",fontWeight:cl.rank<=10?600:400}}>#{cl.rank}</td>
                       <td>
@@ -1668,7 +2124,7 @@ const ClustersPage = ({go}: any) => {
                         </span>
                       </td>
                       <td className="mono num" style={{textAlign:"right"}}>{cl.tvs}M</td>
-                      <td className="mono num" style={{textAlign:"right",color:"var(--gold)"}}>{clusterApy(cl).toFixed(2)}%</td>
+                      <td className="mono num" style={{textAlign:"right",color:"var(--gold)"}}>{fmtClusterApy(clusterApy(cl))}</td>
                       <td className="mono num" style={{textAlign:"right",color:"var(--gold)"}}>+{fmt(cl.reward30d)}</td>
                       <td className="mono num" style={{textAlign:"right"}}>{pct(cl.vertexInclude,1)}</td>
                     </tr>
@@ -1680,11 +2136,16 @@ const ClustersPage = ({go}: any) => {
         ) : (
           <>
             <p className="ov-section-desc" style={{marginBottom:14,maxWidth:720}}>
-              Not earning this epoch. <span style={{color:"var(--state-jail, #ff6b6b)"}}>Jailed</span> clusters were demoted after a slashing event and must stay live for <span style={{color:"var(--fg-200)"}}>100 rounds</span> before they're eligible for re-election. <span style={{color:"var(--fg-300)"}}>Queued</span> clusters are fully formed but sit below the rank-100 threshold of <span style={{color:"var(--fg-200)"}}>{minToEnter !== null ? `${minToEnter.toFixed(2)}M LYTH` : "—"}</span>.
+              {haveLiveDirectory
+                ? "Inactive rows come only from the live cluster directory. Jail cooldowns, queued-rank gaps, and promotion thresholds stay blank until those live aggregates are exposed."
+                : <>Not earning this epoch. <span style={{color:"var(--state-jail, #ff6b6b)"}}>Jailed</span> clusters were demoted after a slashing event and must stay live for <span style={{color:"var(--fg-200)"}}>100 rounds</span> before they're eligible for re-election. <span style={{color:"var(--fg-300)"}}>Queued</span> clusters are fully formed but sit below the rank-100 threshold of <span style={{color:"var(--fg-200)"}}>{minToEnter !== null ? `${minToEnter.toFixed(2)}M LYTH` : "—"}</span>.</>}
             </p>
             <div className="cl-chips">
               <div className="cl-chipgroup">
-                {[["all",`All · ${inactive.length}`],["jailed",`Jailed · ${jailed.length}`],["queued",`Queued · ${queued.length}`]].map(([k,l])=>(
+                {(haveLiveDirectory
+                  ? [["all",`All · ${liveInactiveDescriptors.length}`],["jailed","Jailed · —"],["queued","Queued · —"]]
+                  : [["all",`All · ${inactive.length}`],["jailed",`Jailed · ${jailed.length}`],["queued",`Queued · ${queued.length}`]]
+                ).map(([k,l])=>(
                   <button key={k} className={`cl-chip ${filter===k?"is-active":""}`} onClick={()=>setFilter(k)}>{l}</button>
                 ))}
               </div>
@@ -1702,7 +2163,15 @@ const ClustersPage = ({go}: any) => {
                   <th style={{textAlign:"right"}}>Cooldown</th>
                 </tr></thead>
                 <tbody>
-                  {haveLiveDirectory ? (liveDescriptors ?? []).filter(c => !c.active).map((cl)=>(
+                  {haveLiveDirectory ? (liveInactiveFiltered.length === 0 ? (
+                    <tr>
+                      <td colSpan={7}>
+                        <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
+                          No inactive clusters are reported by the live directory.
+                        </div>
+                      </td>
+                    </tr>
+                  ) : liveInactiveFiltered.map((cl)=>(
                     <tr key={cl.id} onClick={()=>go(`#/cluster/${cl.id + 1}`)} className="cl-waiting-row">
                       <td className="mono" style={{color:"var(--fg-500)"}}>#{cl.id + 1}</td>
                       <td>
@@ -1719,7 +2188,7 @@ const ClustersPage = ({go}: any) => {
                       <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
                       <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
                     </tr>
-                  )) : inactiveFiltered.map(cl=>{
+                  ))) : inactiveFiltered.map(cl=>{
                     const isJailed = cl.inactiveReason==="jailed";
                     const cdPct = isJailed ? ((100 - cl.cooldownRoundsLeft) / 100) : 0;
                     return (
@@ -1779,13 +2248,13 @@ const ClustersPage = ({go}: any) => {
 };
 
 /* Small operator ring — 7 dots around a circle with quorum arc, compact */
-const MiniRing = ({ members, size=110, threshold=5 }: any) => {
+const MiniRing = ({ members, size=110, threshold=5, centerValue, centerLabel = "LIVE" }: any) => {
   const cx = size/2, cy = size/2;
   const r  = size*0.34;
   const live = members.filter(m=>m.state==="live").length;
   const total = members.length;
   const circ = 2*Math.PI*(r+10);
-  const filled = (live/total)*circ;
+  const filled = total > 0 ? (live/total)*circ : 0;
   const healthy = live>=threshold;
   const stroke = healthy ? "var(--state-nominal, #73d13d)" : "var(--state-jail, #ff6b6b)";
   return (
@@ -1806,8 +2275,8 @@ const MiniRing = ({ members, size=110, threshold=5 }: any) => {
         })}
       </svg>
       <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-        <div className="mono num" style={{fontSize:14,color:"var(--fg-100)",letterSpacing:"-0.01em"}}>{live}/{total}</div>
-        <div className="mono" style={{fontSize:8.5,color:"var(--fg-500)",letterSpacing:"0.12em"}}>LIVE</div>
+        <div className="mono num" style={{fontSize:14,color:"var(--fg-100)",letterSpacing:"-0.01em"}}>{centerValue ?? `${live}/${total}`}</div>
+        <div className="mono" style={{fontSize:8.5,color:"var(--fg-500)",letterSpacing:"0.12em"}}>{centerLabel}</div>
       </div>
     </div>
   );
@@ -1825,7 +2294,7 @@ const OperatorsPage = ({go}: any) => {
   // operator opts in via the node registry precompile). Fall back to the
   // fixture roster only when the cluster directory is unreachable — show
   // a typed empty/operator-id row whenever the live data resolves.
-  const useLiveRoster = roster.loaded && roster.operators.length > 0;
+  const useLiveRoster = indexerAvailability.liveChain || (roster.loaded && roster.operators.length > 0);
   return (
     <div className="ms-page">
       <h1 className="ms-h1">
@@ -1844,11 +2313,23 @@ const OperatorsPage = ({go}: any) => {
       )}
       <Card title="">
         <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        {useLiveRoster ? (
         <table className="ms-table">
-          <thead><tr><th>Operator</th><th>State</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Uptime 90d</th><th style={{textAlign:"right"}}>Bonded</th><th style={{textAlign:"right"}}>Clusters</th><th style={{textAlign:"right"}}>Slash</th></tr></thead>
+          <thead><tr><th>Operator</th><th>State</th><th style={{textAlign:"right"}}>Cluster</th><th style={{textAlign:"right"}}>BLS pubkey</th><th style={{textAlign:"right"}}>Source</th></tr></thead>
           <tbody>
-            {useLiveRoster ? roster.operators.map((op)=>{
+            {roster.operators.length === 0 ? (
+              <tr>
+                <td colSpan={5}>
+                  <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
+                    {roster.loaded
+                      ? "No live operator roster rows are reported by the connected cluster-status endpoints."
+                      : "Checking live operator roster."}
+                  </div>
+                </td>
+              </tr>
+            ) : roster.operators.map((op)=>{
               const opShort = fmtHashShort(op.operatorId, 10, 4);
+              const cluster = `C-${String(op.clusterId + 1).padStart(3, "0")}`;
               return (
                 <tr key={op.operatorId} onClick={()=>go(`#/operator/${encodeURIComponent(op.operatorId)}`)}>
                   <td>
@@ -1856,19 +2337,26 @@ const OperatorsPage = ({go}: any) => {
                       <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${op.operatorId.charCodeAt(2)*9%360})`}}/>
                       <div>
                         <div style={{fontWeight:500,fontSize:13}} className="mono">{opShort}</div>
-                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>cluster {op.clusterId} · BLS {op.blsPubkey ? fmtHashShort(op.blsPubkey, 10, 0) : "—"}</div>
+                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}} title={op.operatorId}>{fmtHashShort(op.operatorId, 14, 8)}</div>
                       </div>
                     </div>
                   </td>
-                  <td><span className={`pill ${op.state==="active" ? "ok" : "warn"}`} style={{fontSize:10}}>{op.state}</span></td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
-                  <td className="mono num" style={{textAlign:"right"}}>1</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-500)"}}>—</td>
+                  <td>{(() => { const r = operatorRoleMeta(op.state); return (
+                    <span className={`pill ${r.tone === "neutral" ? "" : r.tone}`} style={{fontSize:10}}>{r.label}</span>
+                  ); })()}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)"}}>{cluster}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)"}}>{op.blsPubkey ? fmtHashShort(op.blsPubkey, 12, 0) : "not reported"}</td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--ok)"}}>live cluster status</td>
                 </tr>
               );
-            }) : SCAN.operators.map(op=>(
+            })}
+          </tbody>
+        </table>
+        ) : (
+        <table className="ms-table">
+          <thead><tr><th>Operator</th><th>State</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Uptime 90d</th><th style={{textAlign:"right"}}>Bonded</th><th style={{textAlign:"right"}}>Clusters</th><th style={{textAlign:"right"}}>Slash</th></tr></thead>
+          <tbody>
+            {SCAN.operators.map(op=>(
               <tr key={op.addrShort} onClick={()=>go(`#/operator/${op.addrShort}`)}>
                 <td>
                   <div style={{display:"flex",gap:10,alignItems:"center"}}>
@@ -1889,12 +2377,12 @@ const OperatorsPage = ({go}: any) => {
             ))}
           </tbody>
         </table>
+        )}
         </div>
         {useLiveRoster && (
           <div className="mono" style={{color:"var(--fg-500)",fontSize:11,padding:"10px 14px",lineHeight:1.55,borderTop:"1px solid var(--fg-700)"}}>
-            Reputation / uptime / bonded / slash aggregates require an indexed peer
+            Only live cluster-status fields are shown here. Reputation, uptime, bonded amount, and slash history are hidden until a real operator aggregate endpoint is indexed
             {indexerAvailability.disabled ? ` (${indexerAvailability.reason ?? "indexer disabled"})` : ""}.
-            Rows are sourced from live cluster statuses; identity columns are authoritative.
           </div>
         )}
       </Card>
@@ -1922,8 +2410,10 @@ const App = () => {
   // `sdk/client.ts::isWebSocketEnabled`).
   const head = useChainHead();
   const strip = useChainStrip();
+  const liveMode = isRpcConfigured();
   const [mockRound, setMockRound] = useState(SCAN.consensus.round);
   const hasLiveHead =
+    liveMode ||
     (strip.data?.round !== null && strip.data?.round !== undefined) ||
     (head.data?.round !== null && head.data?.round !== undefined);
   useEffect(()=>{
@@ -1931,7 +2421,7 @@ const App = () => {
     const id = setInterval(()=>setMockRound(r=>r+1), 380);
     return ()=>clearInterval(id);
   },[hasLiveHead]);
-  const round = strip.data?.round ?? head.data?.round ?? mockRound;
+  const round = strip.data?.round ?? head.data?.round ?? (liveMode ? null : mockRound);
 
   // Live counterparts to the three previously-mocked strip fields. Each
   // has a documented chain source today; the strip displays the live
@@ -2016,6 +2506,7 @@ const App = () => {
         attestationRate={attestationRate}
         liveClusterUp={liveClusterUp}
         liveClusterTotal={liveClusterTotal}
+        liveMode={liveMode}
       />
       <Header go={go} route={route}/>
       <main className="ms-main">{page}</main>

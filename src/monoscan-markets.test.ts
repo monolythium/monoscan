@@ -19,9 +19,14 @@ import {
   buildNftListingCancelWalletRequest,
   buildNftListingCreateWalletRequest,
   buildNftListingSweepWalletRequest,
+  liveMarketRowsFromNativeState,
+  mkQuote,
+  nativeMarketEventFieldSummary,
+  nativeTradeRowsFromMarketEvents,
   nextNftListingNonceForSeller,
   nextSpotOrderNonceForOwner,
   ownerStateAccount,
+  quoteUnitLabel,
 } from "./monoscan-markets";
 
 const typedContract = (address: string) => addressToTypedBech32("contract", address);
@@ -45,6 +50,112 @@ function capabilitiesWithMarketForwarder(
     },
   };
 }
+
+describe("liveMarketRowsFromNativeState", () => {
+  it("builds market-list rows from native-market-state spot markets", () => {
+    const rows = liveMarketRowsFromNativeState([{
+      marketId: `0x${"ab".repeat(32)}`,
+      baseAssetId: `0x${"11".repeat(32)}`,
+      quoteAssetId: `0x${"22".repeat(32)}`,
+      lastPrice: "100",
+      totalVolumeBase: "5",
+      tradeCount: "1",
+      tickSize: "1",
+      lotSize: "1",
+      createdAtBlock: 16261,
+      updatedAtBlock: 16848,
+    }], []);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      sym: "CLOB-1",
+      price: 100,
+      // vol24h is now base volume only — price*baseVolume of unscaled tick/lot
+      // integers is not a real quote notional, so it is no longer fabricated.
+      vol24h: 5,
+      tradeCount: 1,
+      totalVolumeBase: 5,
+      tickSize: 1,
+      lotSize: 1,
+      createdAtBlock: 16261,
+      // Permissionless live CLOB — nothing verifies the market.
+      verified: false,
+      live: true,
+      source: "native_market_state",
+    });
+    expect(rows[0].trades[0].round).toBe(16848);
+  });
+});
+
+describe("mkQuote / quoteUnitLabel", () => {
+  it("renders a live quote-tick value in quote-asset terms, never as fiat", () => {
+    const out = mkQuote(100, `0x${"22".repeat(32)}`);
+    expect(out).not.toContain("$");
+    expect(out).toContain("quote ");
+    // numeric portion is the integer 100 (>=100 -> 2 dp) with no decimal scaling
+    expect(out.startsWith("100")).toBe(true);
+  });
+
+  it("falls back to a neutral quote label when no quote asset id is known", () => {
+    expect(quoteUnitLabel(null)).toBe("quote");
+    expect(quoteUnitLabel(undefined)).toBe("quote");
+    expect(mkQuote(5, null)).toBe("5.000 quote");
+  });
+
+  it("returns an em dash for null / non-finite values", () => {
+    expect(mkQuote(null)).toBe("—");
+    expect(mkQuote(Number.NaN)).toBe("—");
+  });
+
+  it("derives a stable truncated label from the quote asset id", () => {
+    const quote = `0x${"ab".repeat(32)}`;
+    expect(quoteUnitLabel(quote)).toBe(`quote ${quote.slice(0, 10)}…${quote.slice(-6)}`);
+  });
+});
+
+describe("nativeTradeRowsFromMarketEvents", () => {
+  it("turns native settled-order events into market detail trade rows", () => {
+    const rows = nativeTradeRowsFromMarketEvents([{
+      blockHeight: 16848,
+      txIndex: 0,
+      logIndex: 1,
+      eventName: "market.spot.order_settled",
+      account: "mono1mg2ja9n9uusyjp0g9kraq23747a5clyxzsasq8",
+      counterparty: null,
+      decodedFields: [["amount", "5"]],
+    } as any], { fallbackPrice: 100 });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      side: "fill",
+      px: 100,
+      sz: 5,
+      value: 500,
+      venue: "native",
+      round: 16848,
+      attest: "indexed",
+    });
+  });
+});
+
+describe("nativeMarketEventFieldSummary", () => {
+  it("prioritizes readable trade fields and hides raw ids/noisy scores", () => {
+    const fields = nativeMarketEventFieldSummary({
+      decodedFields: [
+        ["account", "mono1mg2ja9n9uusyjp0g9kraq23747a5clyxzsasq8"],
+        ["market_order_id", `0x${"33".repeat(32)}`],
+        ["accuracy_score", "—"],
+        ["price", "100"],
+        ["quantity", "5"],
+        ["side", "bid"],
+        ["status", "filled"],
+      ],
+    } as any);
+
+    expect(fields.map((field) => field.key)).toEqual(["side", "quantity", "price", "status", "account"]);
+    expect(fields.map((field) => `${field.label}:${field.value}`)).toContain("qty:5");
+  });
+});
 
 describe("buildMarketOrderWalletRequest", () => {
   const baseTokenId = `0x${"11".repeat(32)}`;

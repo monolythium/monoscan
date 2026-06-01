@@ -971,7 +971,57 @@ function decodedNativeEventObject(decoded: unknown, decodedJson: string): Record
   }
 }
 
+function nativeByteArray(value: unknown): Uint8Array | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const bytes = value.map((entry) => typeof entry === "number" && Number.isInteger(entry) ? entry : Number.NaN);
+  if (bytes.some((entry) => !Number.isFinite(entry) || entry < 0 || entry > 255)) return null;
+  return Uint8Array.from(bytes);
+}
+
+function nativeAddressKind(value: unknown): Parameters<typeof CoreSdk.addressToTypedBech32>[0] | null {
+  if (typeof value !== "string") return null;
+  switch (value.trim().toLowerCase().replace(/[_\s-]+/g, "")) {
+    case "user":
+    case "account":
+      return "user";
+    case "contract":
+      return "contract";
+    case "cluster":
+      return "cluster";
+    case "multisig":
+      return "multisig";
+    case "smart":
+    case "smartaccount":
+      return "smartAccount";
+    case "system":
+    case "module":
+    case "systemmodule":
+      return "systemModule";
+    default:
+      return null;
+  }
+}
+
+function nativeAccountDisplay(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const bytes = nativeByteArray(record.bytes);
+  if (!bytes) return null;
+  const hex = bytesToHex(bytes);
+  if (bytes.length !== 20) return hex;
+  const kind = nativeAddressKind(record.kind) ?? "user";
+  try {
+    return CoreSdk.addressToTypedBech32(kind, hex);
+  } catch {
+    return hex;
+  }
+}
+
 function nativeFieldDisplay(value: unknown): string {
+  const account = nativeAccountDisplay(value);
+  if (account) return account;
+  const bytes = nativeByteArray(value);
+  if (bytes) return bytesToHex(bytes);
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return String(value);
   if (value === null || value === undefined) return "—";
@@ -982,6 +1032,10 @@ function readNativeEventIdentity(decoded: Record<string, unknown> | null, keys: 
   if (!decoded) return null;
   for (const key of keys) {
     const value = decoded[key];
+    const account = nativeAccountDisplay(value);
+    if (account) return account;
+    const bytes = nativeByteArray(value);
+    if (bytes) return bytesToHex(bytes);
     if (typeof value === "string" && value.trim().length > 0) return value;
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
     if (typeof value === "bigint") return value.toString();
@@ -1041,14 +1095,14 @@ function nativeMarketStateRow(
     nonce: readNativeStateString(row, ["nonce", "orderNonce", "order_nonce"]),
     side: readNativeStateString(row, ["side", "orderSide", "order_side"]),
     status: readNativeStateString(row, ["status", "state", "listingStatus", "listing_status"]),
-    price: readNativeStateString(row, ["price", "priceLythoshi", "price_lythoshi", "limitPrice", "limit_price"]),
-    amount: readNativeStateString(row, ["amount", "amountBase", "amount_base", "remainingAmount", "remaining_amount", "royaltyBps", "royalty_bps"]),
+    price: readNativeStateString(row, ["price", "lastPrice", "last_price", "priceLythoshi", "price_lythoshi", "limitPrice", "limit_price"]),
+    amount: readNativeStateString(row, ["amount", "amountBase", "amount_base", "totalVolumeBase", "total_volume_base", "remainingAmount", "remaining_amount", "royaltyBps", "royalty_bps"]),
     baseAsset: readNativeStateString(row, ["baseAssetId", "base_asset_id", "baseAsset", "base_asset", "baseToken", "base_token"]),
-    quoteAsset: readNativeStateString(row, ["quoteAsset", "quote_asset", "quoteToken", "quote_token", "paymentAsset", "payment_asset"]),
+    quoteAsset: readNativeStateString(row, ["quoteAssetId", "quote_asset_id", "quoteAsset", "quote_asset", "quoteToken", "quote_token", "paymentAsset", "payment_asset"]),
     blockHeight: readNativeStateNumber(row, ["blockHeight", "block_height", "updatedAtBlock", "updated_at_block", "registeredAtBlock", "registered_at_block"]),
     fields: row
       ? Object.entries(row)
-          .filter(([key]) => ![
+          .filter(([key, value]) => ![
             "id",
             "marketId",
             "market_id",
@@ -1082,6 +1136,8 @@ function nativeMarketStateRow(
             "listingStatus",
             "listing_status",
             "price",
+            "lastPrice",
+            "last_price",
             "priceLythoshi",
             "price_lythoshi",
             "limitPrice",
@@ -1089,6 +1145,8 @@ function nativeMarketStateRow(
             "amount",
             "amountBase",
             "amount_base",
+            "totalVolumeBase",
+            "total_volume_base",
             "remainingAmount",
             "remaining_amount",
             "royaltyBps",
@@ -1099,6 +1157,8 @@ function nativeMarketStateRow(
             "base_asset",
             "baseToken",
             "base_token",
+            "quoteAssetId",
+            "quote_asset_id",
             "quoteAsset",
             "quote_asset",
             "quoteToken",
@@ -1111,7 +1171,7 @@ function nativeMarketStateRow(
             "updated_at_block",
             "registeredAtBlock",
             "registered_at_block",
-          ].includes(key))
+          ].includes(key) && value !== null && value !== undefined)
           .map(([key, value]) => [key, nativeFieldDisplay(value)] as [string, string])
       : [],
   };
@@ -1320,7 +1380,9 @@ function nativeEventDisplayRow(event: {
   const decoded = decodedNativeEventObject(event.decoded, event.decodedJson);
   const decodedFields = decoded
     ? Object.entries(decoded)
-        .filter(([key]) => !["block_height", "tx_index", "sequence", "family", "event_name", "payload_hash"].includes(key))
+        .filter(([key, value]) => !["block_height", "tx_index", "sequence", "family", "event_name", "payload_hash"].includes(key)
+          && value !== null
+          && value !== undefined)
         .map(([key, value]) => [key, nativeFieldDisplay(value)] as [string, string])
     : [];
 
@@ -3210,7 +3272,7 @@ export function nativeMarketEventRows(
         : readNativeEventIdentity(decoded, ["tx_index"]) !== null
           ? Number(readNativeEventIdentity(decoded, ["tx_index"]))
           : null,
-      primaryId: readNativeEventIdentity(decoded, ["market_id", "listing_id", "order_id", "trade_id"]),
+      primaryId: readNativeEventIdentity(decoded, ["primary_id", "market_id", "listing_id", "order_id", "trade_id"]),
       relatedId: readNativeEventIdentity(decoded, ["related_id", "maker_order_id", "taker_order_id", "collection_id", "token_id"]),
       account: readNativeEventIdentity(decoded, ["account", "owner", "seller", "buyer", "maker", "taker"]),
       counterparty: readNativeEventIdentity(decoded, ["counterparty", "seller", "buyer", "maker", "taker"]),
@@ -3337,7 +3399,25 @@ function apiClusterStatusToRpcStatus(row: ApiClusterStatus): ClusterStatusRespon
 export interface ClusterDescriptor {
   id: number;
   pubkey: string | null;
+  /**
+   * Total bonded stake / vote weight for the cluster, as a raw lythoshi string
+   * (8 decimals, `1 LYTH = 1e8 lythoshi`) — same scale as every other LYTH
+   * amount in this file. `null` whenever the value is not available, in which
+   * case {@link stakeIndexed} explains *why* it is null:
+   *   - `stakeIndexed === false` → the source endpoint does not carry a stake
+   *     field at all (honest "not indexed" empty-state, not a fabricated zero).
+   *   - `stakeIndexed === true` with `stake === null` → reserved for a future
+   *     endpoint that exposes stake but returned no value for this cluster.
+   */
   stake: string | null;
+  /**
+   * Whether {@link stake} reflects a value the source endpoint actually
+   * carries. Lets renderers distinguish "not indexed" from a real zero/value
+   * instead of showing a dead "pending"/"—". The cluster-directory descriptor
+   * does not expose stake today, so directory-sourced descriptors set this
+   * `false`. See `directoryEntryToCluster`.
+   */
+  stakeIndexed: boolean;
   active: boolean;
   size: number | null;
   threshold: number | null;
@@ -4262,11 +4342,19 @@ export function useBurnSummary(
 /* Cluster + address surfaces.                                                 */
 /* -------------------------------------------------------------------------- */
 
-function directoryEntryToCluster(row: ClusterDirectoryEntryResponse): ClusterDescriptor {
+export function directoryEntryToCluster(row: ClusterDirectoryEntryResponse): ClusterDescriptor {
+  // TODO(core-sdk): cluster directory entry lacks stake/weight field —
+  // ClusterDirectoryEntryResponse only carries { clusterId, size, threshold,
+  // aggregateHealth, regionDiversity, active } and lyth_clusterStatus only adds
+  // reputation/liveness scores, so there is no bonded/TVS/vote-weight value to
+  // map. Set stake:null + stakeIndexed:false so consumers render an honest
+  // "not indexed" instead of a fabricated number; wire stake through once the
+  // directory descriptor exposes a stake/weight field.
   return {
     id: row.clusterId,
     pubkey: null,
     stake: null,
+    stakeIndexed: false,
     active: row.active,
     size: row.size,
     threshold: row.threshold,
@@ -4727,7 +4815,7 @@ export function useOperatorCapabilities() {
 
 /** Indexer availability digest for surfaces that depend on indexed history. */
 export interface IndexerAvailability {
-  /** True when chainStats has responded — the explorer is talking to a real node. */
+  /** True when a live node has responded or a configured live node is being probed. */
   liveChain: boolean;
   /** True when the node's indexer is reporting active. */
   available: boolean;
@@ -4748,6 +4836,10 @@ export interface IndexerAvailability {
  *   2. `lyth_chainStats.indexer` — the indexer block reported alongside chain
  *      stats. A null block means no indexer is wired up on this peer.
  *
+ * `liveChain=true` is sticky whenever an RPC endpoint is configured. A live
+ * deployment must not fall back to seeded demo rows just because a first read
+ * failed or an aggregate endpoint has not landed.
+ *
  * `available=false` + `disabled=true` is a hard confirmation that
  * markets/address-activity/NFT-listing endpoints will fail; callers should
  * render an explanatory empty state instead of falling back to the fixture
@@ -4758,9 +4850,10 @@ export function deriveIndexerAvailability(input: {
   capabilitiesLoading?: boolean;
   stats: ChainStatsResponse | null | undefined;
   statsLoading?: boolean;
+  rpcConfigured?: boolean;
 }): IndexerAvailability {
   const surfaceStatus = input.capabilities?.surfaces?.indexer_history?.status ?? null;
-  const liveChain = Boolean(input.stats);
+  const liveChain = Boolean(input.stats) || Boolean(input.rpcConfigured);
 
   if (surfaceStatus === "disabled") {
     return {
@@ -4796,6 +4889,7 @@ export function useIndexerAvailability(): IndexerAvailability {
     capabilitiesLoading: capabilities.isLoading,
     stats: stats.data,
     statsLoading: stats.isLoading,
+    rpcConfigured: isRpcConfigured(),
   });
 }
 
@@ -6126,6 +6220,28 @@ export function useAddressProfile(addr: string | undefined) {
       }
     },
     staleTime: 30_000,
+  });
+}
+
+export function useAddressProfiles(addrs: readonly string[], limit = 30) {
+  const rowLimit = Math.max(1, Math.min(Math.trunc(limit), 50));
+  const selected = addrs.filter(Boolean).slice(0, rowLimit);
+  return useQueries({
+    queries: selected.map((addr) => ({
+      queryKey: QK.addressProfile(addr),
+      enabled: Boolean(addr) && isRpcConfigured(),
+      queryFn: async (): Promise<AddressProfileResponse | null> => {
+        try {
+          return await getApiClient()
+            .addressProfile(addr)
+            .then((response) => response.data)
+            .catch(() => getRpcClient().lythAddressProfile(addr));
+        } catch {
+          return null;
+        }
+      },
+      staleTime: 30_000,
+    })),
   });
 }
 

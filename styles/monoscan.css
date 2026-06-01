@@ -296,11 +296,11 @@ body::after {
   .ms-search-btn__kbd { display: none; }
 }
 
-/* Nav contains all 8 routes inline. On narrow widths the parent
-   .ms-header is itself flex-wrap, so the nav drops to its own row
-   below the search/Ask cluster — all links stay visible without a
-   "More" dropdown. */
-.ms-nav { display: flex; flex-wrap: wrap; gap: 2px; flex: 1 1 auto; justify-content: flex-end; }
+/* Nav: 7 primary tabs inline + a single "Network" dropdown holding the
+   specialized surfaces. With only 8 elements the row no longer overflows at
+   desktop widths; below 1080px the parent .ms-header wraps so the nav drops to
+   its own row and the dropdown anchors beneath its trigger. */
+.ms-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; flex: 1 1 auto; justify-content: flex-end; }
 @media (max-width: 1080px) {
   .ms-nav { flex-basis: 100%; order: 9; justify-content: flex-start; }
 }
@@ -325,8 +325,49 @@ body::after {
   box-shadow: 0 0 10px rgba(var(--gold-glow), 0.8);
   border-radius: 2px;
 }
-/* Overflow-dropdown styles retired: all eight nav items render inline
-   and the header wraps below 1080px so the nav owns its own row.  */
+/* ---- Network dropdown (groups the specialized surfaces) ---- */
+.ms-nav__group { position: relative; display: inline-flex; }
+.ms-nav__trigger {
+  border: none; background: transparent; cursor: pointer; font: inherit;
+  font-size: 13px; font-weight: 450; color: var(--fg-300);
+}
+.ms-nav__caret {
+  font-size: 9px; opacity: 0.7; margin-left: 1px;
+  transition: transform 180ms var(--e-out);
+}
+.ms-nav__trigger.is-open .ms-nav__caret { transform: rotate(180deg); }
+.ms-nav__menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 40;
+  min-width: 184px; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+  border-radius: 14px;
+  border: 1px solid var(--fg-700);
+  background: rgba(14,14,26,0.86);
+  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+  box-shadow: 0 18px 48px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+  animation: ms-nav-menu-in 160ms var(--e-out);
+}
+@keyframes ms-nav-menu-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ms-nav__menu-item {
+  display: flex; align-items: center;
+  padding: 9px 12px; border-radius: 9px;
+  font-size: 13px; color: var(--fg-300); font-weight: 450;
+  white-space: nowrap;
+  transition: all 150ms var(--e-out);
+}
+.ms-nav__menu-item:hover { color: var(--fg-100); background: rgba(255,255,255,0.05); }
+.ms-nav__menu-item.is-active { color: var(--fg-100); background: rgba(255,255,255,0.07); }
+.ms-nav__menu-item.is-active::before {
+  content: ""; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--gold); box-shadow: 0 0 8px rgba(var(--gold-glow), 0.8);
+  margin-right: 8px; margin-left: -2px;
+}
+@media (max-width: 1080px) {
+  .ms-nav__menu { right: auto; left: 0; }
+}
 
 /* ============ MAIN + PAGE ============ */
 .ms-main { flex: 1; padding: 28px 28px 48px; max-width: 1440px; width: 100%; margin: 0 auto; position: relative; z-index: 1; }
@@ -1238,6 +1279,22 @@ body::after {
   transform: translateY(-1px);
   box-shadow: 0 4px 20px rgba(0,0,0,0.3);
 }
+.cl-card--live {
+  border-color: rgba(242,180,65,0.28);
+  background:
+    linear-gradient(180deg, rgba(242,180,65,0.035), rgba(255,255,255,0.01)),
+    rgba(255,255,255,0.01);
+}
+.cl-live-tag {
+  padding: 1px 5px;
+  border: 1px solid rgba(115,209,61,0.32);
+  border-radius: 4px;
+  background: rgba(115,209,61,0.08);
+  color: var(--ok);
+  font-family: var(--f-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+}
 .cl-card__head { display: flex; justify-content: space-between; align-items: flex-start; }
 .cl-card__foot {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
@@ -1574,6 +1631,24 @@ body::after {
 .wl-legend__pct { font-size: 11px; color: var(--fg-400); font-variant-numeric: tabular-nums; }
 
 .wl-table td { vertical-align: middle; }
+.wl-holder-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin-top: 5px;
+  font-size: 10.5px;
+  color: var(--fg-400);
+  white-space: normal;
+}
+.wl-holder-metrics span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.wl-holder-metrics b {
+  color: var(--fg-500);
+  font-weight: 500;
+}
 
 /* ============ WALLET DETAIL ============ */
 .ms-wallet-detail { display: flex; flex-direction: column; gap: 32px; }

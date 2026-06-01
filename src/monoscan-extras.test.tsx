@@ -6,14 +6,18 @@ import type { ReactElement } from "react";
 import {
   AgentReputationCard,
   BridgeTrustDisclosuresCard,
+  BurnPage,
   MrvNativeEvidenceCard,
   NativeAgentActionsCard,
   NativeAgentStateCard,
+  StatsPage,
   adr0039FeeDetailText,
   executionUnitPriceValueLabel,
+  holderActivityDisplay,
   mrcPolicyAllowedAssetsSummary,
   mrcPolicyBodySummary,
   redemptionTicketStatusText,
+  richListRowsForDisplay,
   tokenBalanceMetadataLines,
   tokenBalancePrimaryWithMetadata,
   tokenBalanceStandardLabel,
@@ -317,6 +321,64 @@ describe("redemptionTicketStatusText", () => {
     expect(redemptionTicketStatusText(true)).toBe("Cooldown complete · payout unavailable");
     expect(redemptionTicketStatusText(false)).toBe("Cooldown active");
     expect(redemptionTicketStatusText(null)).toBe("Cooldown state pending");
+  });
+});
+
+describe("StatsPage / BurnPage supply-and-burn merge", () => {
+  const noop = () => {};
+
+  it("renders the folded-in Supply & burn section with the burn derivation copy", () => {
+    const html = renderWithQueryClient(<StatsPage go={noop} />);
+
+    // The standalone Burn page was folded into Statistics as a dedicated
+    // section with an anchor id so #/burn deep-links still resolve.
+    expect(html).toContain('id="burn"');
+    expect(html).toContain("Supply &amp; burn");
+    expect(html).toContain("LYTH removed from supply");
+    // Burn metrics that BurnPage used to own must survive inside the section.
+    expect(html).toContain("Current LYTH supply");
+    expect(html).toContain("Total fees scanned");
+    expect(html).toContain("Burning txs scanned");
+    expect(html).toContain("How this number is derived.");
+    // 50% burn split honesty banner preserved.
+    expect(html).toContain("burn = floor(fee.total_lythoshi × 5000 / 10000)");
+  });
+
+  it("delegates BurnPage to StatsPage so the route keeps rendering the burn section", () => {
+    const statsHtml = renderWithQueryClient(<StatsPage go={noop} />);
+    const burnHtml = renderWithQueryClient(<BurnPage go={noop} />);
+
+    // BurnPage is a thin wrapper around StatsPage with focusBurn, so it renders
+    // the same Statistics page (hero + counters) including the burn section.
+    expect(burnHtml).toContain('id="burn"');
+    expect(burnHtml).toContain("Supply &amp; burn");
+    expect(burnHtml).toContain("Monolythium");
+    expect(burnHtml).toContain("Current LYTH supply");
+    // Both render the same Statistics shell (the burn section is part of it).
+    expect(burnHtml).toContain("Total fees scanned");
+    expect(statsHtml).toContain("Total fees scanned");
+  });
+});
+
+describe("richListRowsForDisplay", () => {
+  it("derives display ranks from raw balance when node ranks are stale", () => {
+    const rows = richListRowsForDisplay([
+      { address: "small", balance: "3000000000", rank: 1 },
+      { address: "large", balance: "9000000000000000", rank: 2 },
+      { address: "mid", balance: "996998000000", rank: 3 },
+    ]);
+
+    expect(rows.map((row) => row.address)).toEqual(["large", "mid", "small"]);
+    expect(rows.map((row) => row.displayRank)).toEqual([1, 2, 3]);
+    expect(rows.map((row) => row.sourceRank)).toEqual([2, 3, 1]);
+  });
+});
+
+describe("holderActivityDisplay", () => {
+  it("uses indexed tx counts before nonce/activity fallbacks", () => {
+    expect(holderActivityDisplay({ txCount: 12 }).text).toBe("12");
+    expect(holderActivityDisplay({}, { account: { nonce: 11 } }).text).toBe("nonce 11");
+    expect(holderActivityDisplay({}, { account: { nonce: 0 }, activity: { kind: "found" } }).text).toBe("activity seen");
   });
 });
 

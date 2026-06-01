@@ -30,6 +30,7 @@ import {
   fetchNativeMarketState,
   nativeMarketEventRows,
   nativeMarketStateRows,
+  type NativeMarketEventDisplayRow,
   type NativeMarketStateDisplayRow,
   useChainHead,
   useClobMarket,
@@ -65,6 +66,35 @@ const mkDec = (value: any, fallback = 0) => {
   return Number.isFinite(n) ? n : fallback;
 };
 const _shortMarketId = (id: string) => `${id.slice(0, 10)}…${id.slice(-6)}`;
+
+/**
+ * Derive a short, human-readable label for a market's quote asset so a bare
+ * on-chain quote-tick integer can be shown with the unit it is denominated in.
+ * The chain has no ticker registry, so for an unnamed quote we fall back to a
+ * truncated asset id ("quote 0xab…12") or a neutral "quote" placeholder.
+ *
+ * TODO(core-sdk): no quote-decimals / quote-symbol metadata on lyth_clobMarket —
+ * once exposed, render the symbol and scale values by the quote token decimals.
+ */
+export const quoteUnitLabel = (quoteAssetId?: string | null): string =>
+  quoteAssetId ? `quote ${_shortMarketId(quoteAssetId)}` : "quote";
+
+/**
+ * Shared quote-unit formatter for LIVE markets. Renders a numeric value in the
+ * market's quote-asset terms WITHOUT a fiat "$" prefix — there is no USD oracle
+ * and no decimal scaling on-chain, so the raw CLOB tick/lot integer is the
+ * truth. Appends the quote-asset label when one is known. Use this everywhere a
+ * live price / order-book level / trade value is shown; reserve mkMoney/mkUsd
+ * for the offline (non-live) fixture preview path only.
+ *
+ * TODO(core-sdk): no USD price oracle and no quote-decimal metadata on CLOB
+ * markets — live values are quote-tick/lot integers, never real fiat.
+ */
+export const mkQuote = (n: any, quoteAssetId?: string | null, dp?: any) => {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  const unit = quoteUnitLabel(quoteAssetId);
+  return `${mkFmt(Number(n), dp)} ${unit}`;
+};
 
 /**
  * Write `text` to the clipboard and flash a "copied" pill for one second.
@@ -120,6 +150,204 @@ const _shortAddr = (id: string, head = 8, tail = 4) =>
   id && id.length > head + tail + 3 ? `${id.slice(0, head)}…${id.slice(-tail)}` : id;
 const _shortHash = (id: string | null | undefined, head = 10, tail = 6) =>
   id ? _shortAddr(id, head, tail) : "—";
+const _marketRecord = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+const _marketString = (row: Record<string, unknown> | null, keys: string[]): string | null => {
+  if (!row) return null;
+  for (const key of keys) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    if (typeof value === "bigint") return value.toString();
+  }
+  return null;
+};
+const _marketNumber = (row: Record<string, unknown> | null, keys: string[], fallback = 0): number => {
+  const value = _marketString(row, keys);
+  if (value === null) return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+};
+const _marketEventLabel = (eventName: string | null | undefined): string => {
+  if (!eventName) return "Native market event";
+  const label = eventName.replace(/^market\./, "");
+  return label
+    .split(/[._-]+/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+const MARKET_EVENT_FIELD_ORDER = [
+  "side",
+  "quantity",
+  "amount",
+  "price",
+  "remaining",
+  "status",
+  "nonce",
+  "account",
+  "counterparty",
+  "tick_size",
+  "lot_size",
+  "min_quantity",
+  "min_notional",
+  "expires_at_block",
+  "market_surface",
+];
+const MARKET_EVENT_FIELD_LABELS: Record<string, string> = {
+  expires_at_block: "expires",
+  lot_size: "lot",
+  market_surface: "surface",
+  min_notional: "min notional",
+  min_quantity: "min qty",
+  quantity: "qty",
+  tick_size: "tick",
+};
+const MARKET_EVENT_FIELD_HIDDEN = new Set([
+  "accuracy_score",
+  "category_id",
+  "communication_score",
+  "market_asset_id",
+  "market_order_id",
+  "market_related_asset_id",
+  "market_related_order_id",
+  "payload_hash",
+  "primary_id",
+  "quality_score",
+  "related_id",
+  "speed_score",
+  "token_id",
+]);
+const _marketEventFieldValue = (key: string, value: string) => {
+  if (key === "account" || key === "counterparty" || key === "owner" || key === "seller" || key === "buyer") {
+    return fmtAddrShort(value, "user", 9, 5);
+  }
+  if (/(^|_)id$/.test(key) || key.endsWith("_hash")) return _shortHash(value, 9, 5);
+  return value;
+};
+export function nativeMarketEventFieldSummary(
+  event: Pick<NativeMarketEventDisplayRow, "decodedFields">,
+  limit = 6,
+): Array<{ key: string; label: string; value: string }> {
+  return event.decodedFields
+    .filter(([key, value]) => value !== "—" && !MARKET_EVENT_FIELD_HIDDEN.has(key))
+    .sort(([a], [b]) => {
+      const ai = MARKET_EVENT_FIELD_ORDER.indexOf(a);
+      const bi = MARKET_EVENT_FIELD_ORDER.indexOf(b);
+      return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    })
+    .slice(0, limit)
+    .map(([key, value]) => ({
+      key,
+      label: MARKET_EVENT_FIELD_LABELS[key] ?? key.replace(/_/g, " "),
+      value: _marketEventFieldValue(key, value),
+    }));
+}
+const _nativeEventField = (event: Pick<NativeMarketEventDisplayRow, "decodedFields">, keys: readonly string[]) => {
+  const wanted = new Set(keys);
+  return event.decodedFields.find(([key]) => wanted.has(key))?.[1] ?? null;
+};
+export function nativeTradeRowsFromMarketEvents(
+  events: readonly NativeMarketEventDisplayRow[],
+  options: { fallbackPrice?: number | null; symbol?: string | null } = {},
+) {
+  const fallbackPrice = typeof options.fallbackPrice === "number" && Number.isFinite(options.fallbackPrice)
+    ? options.fallbackPrice
+    : 0;
+  return events
+    .filter((event) => {
+      const name = event.eventName?.toLowerCase() ?? "";
+      return name.includes("order_settled") || name.includes("trade") || name.includes("fill");
+    })
+    .map((event, i) => {
+      const priceField = _nativeEventField(event, ["price", "price_lythoshi", "quote_price"]);
+      const px = priceField === null ? fallbackPrice : mkDec(priceField, fallbackPrice);
+      const sz = mkDec(_nativeEventField(event, ["quantity", "amount", "base_amount"]), 0);
+      const maker = event.account ? fmtAddrShort(event.account, "user", 7, 4) : "—";
+      const taker = event.counterparty ? fmtAddrShort(event.counterparty, "user", 7, 4) : maker;
+      return {
+        t: 0,
+        live: true,
+        side: "fill",
+        px,
+        sz,
+        value: px * sz,
+        maker,
+        taker,
+        venue: "native",
+        round: event.blockHeight ?? 0,
+        attest: "indexed",
+        txIndex: event.txIndex ?? 0,
+        logIndex: event.logIndex,
+        key: `native-${event.blockHeight ?? 0}-${event.txIndex ?? 0}-${event.logIndex}-${i}`,
+      };
+    })
+    .filter((row) => row.px > 0 || row.sz > 0);
+}
+export function liveMarketRowsFromNativeState(
+  spotMarkets: readonly unknown[],
+  fallbackMarkets: readonly any[] = [],
+) {
+  return spotMarkets
+    .map((raw, i) => {
+      const row = _marketRecord(raw);
+      const marketId = _marketString(row, ["marketId", "market_id", "id"]);
+      if (!marketId) return null;
+      const fallback = fallbackMarkets.find((m: any) => getMarketIdForSymbol(m.sym) === marketId);
+      const price = _marketNumber(row, ["lastPrice", "last_price", "price", "priceLythoshi", "price_lythoshi"], 0);
+      const baseVolume = _marketNumber(row, ["totalVolumeBase", "total_volume_base", "volumeBase", "volume_base", "amount"], 0);
+      const tradeCount = _marketNumber(row, ["tradeCount", "trade_count", "trades"], 0);
+      const lastBlockHeight = _marketNumber(row, ["lastBlockHeight", "last_block_height", "updatedAtBlock", "updated_at_block", "createdAtBlock", "created_at_block"], 0);
+      const createdAtBlock = _marketNumber(row, ["createdAtBlock", "created_at_block", "registeredAtBlock", "registered_at_block"], 0);
+      const updatedAtBlock = _marketNumber(row, ["updatedAtBlock", "updated_at_block", "lastBlockHeight", "last_block_height"], lastBlockHeight);
+      const tickSize = _marketNumber(row, ["tickSize", "tick_size"], 1);
+      const lotSize = _marketNumber(row, ["lotSize", "lot_size"], 1);
+      const minQuantity = _marketNumber(row, ["minQuantity", "min_quantity"], 0);
+      const minNotional = _marketNumber(row, ["minNotional", "min_notional"], 0);
+      const baseAssetId = _marketString(row, ["baseAssetId", "base_asset_id", "baseAsset", "base_asset"]);
+      const quoteAssetId = _marketString(row, ["quoteAssetId", "quote_asset_id", "quoteAsset", "quote_asset"]);
+      const owner = _marketString(row, ["owner", "account"]);
+      return {
+        rank: i + 1,
+        sym: fallback?.sym ?? `CLOB-${i + 1}`,
+        name: fallback?.name ?? `CLOB ${_shortMarketId(marketId)}`,
+        kind: fallback?.kind ?? "native",
+        price,
+        chg24h: 0,
+        sparkline: [price || 0, price || 0],
+        tick: tickSize,
+        // Base volume only. price*baseVolume multiplies two unscaled integers
+        // (tick-int * lot-int) and is NOT a real quote notional, so we do not
+        // present it as one — the list shows base units with the base label.
+        // TODO(core-sdk): no quote-notional traded-volume aggregate endpoint.
+        vol24h: baseVolume,
+        liquidity: 0,
+        mcap: 0,
+        holders: 0,
+        // Nothing verifies a permissionless live CLOB market — no listing
+        // authority exists. The honest source pill carries provenance instead.
+        verified: false,
+        trades: lastBlockHeight > 0 ? [{ round: lastBlockHeight }] : [],
+        marketId,
+        tradeCount,
+        totalVolumeBase: baseVolume,
+        baseAssetId,
+        quoteAssetId,
+        owner,
+        tickSize,
+        lotSize,
+        minQuantity,
+        minNotional,
+        createdAtBlock,
+        updatedAtBlock,
+        lastBlockHeight,
+        hasFallback: false,
+        live: true,
+        source: "native_market_state",
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+}
 const _positiveIntegerText = (value: unknown, fallback: string): string => {
   if (typeof value === "string" && /^[1-9]\d*$/.test(value)) return value;
   if (typeof value === "number" && Number.isFinite(value) && value > 0) return String(Math.trunc(value));
@@ -688,32 +916,67 @@ const NativeMarketEventsCard = ({ rows, latestBlock, loading, scope }: any) => (
             </tr>
           </thead>
           <tbody>
-            {rows.map((event: any, i: number)=>(
-              <tr key={`${event.blockHeight ?? "x"}-${event.txIndex ?? "x"}-${event.logIndex}-${event.eventTopic}-${i}`}>
-                <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
-                  {event.blockHeight === null ? "—" : event.blockHeight.toLocaleString()}
-                  <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>tx {event.txIndex ?? "—"} · log {event.logIndex}</div>
-                </td>
-                <td className="mono" style={{fontSize:11,color:"var(--fg-200)"}}>
-                  {event.eventName ?? _shortHash(event.eventTopic)}
-                  <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>{event.family ?? "market"}</div>
-                </td>
-                <td className="mono" title={event.primaryId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>
-                  {_shortHash(event.primaryId)}
-                  {event.relatedId && <div title={event.relatedId} style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>rel {_shortHash(event.relatedId, 8, 4)}</div>}
-                </td>
-                <td className="mono" title={fmtAddr(event.address, "contract")} style={{fontSize:11,color:"var(--fg-300)"}}>{fmtAddrShort(event.address, "contract", 9, 5)}</td>
-                <td className="mono" style={{fontSize:10.5,color:"var(--fg-400)",maxWidth:360}}>
-                  {event.decodedFields.slice(0, 4).map(([k, v]: [string, string])=>`${k}=${v}`).join(" · ") || "decoded payload unavailable"}
-                </td>
-              </tr>
-            ))}
+            {rows.map((event: any, i: number)=>{
+              const fields = nativeMarketEventFieldSummary(event, 6);
+              return (
+                <tr key={`${event.blockHeight ?? "x"}-${event.txIndex ?? "x"}-${event.logIndex}-${event.eventTopic}-${i}`}>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
+                    {event.blockHeight === null ? "—" : event.blockHeight.toLocaleString()}
+                    <div style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>tx {event.txIndex ?? "—"} · log {event.logIndex}</div>
+                  </td>
+                  <td className="mono" style={{fontSize:11,color:"var(--fg-200)"}}>
+                    <span className="pill gold" style={{fontSize:10,padding:"2px 7px",letterSpacing:"0.02em"}}>{_marketEventLabel(event.eventName)}</span>
+                    <div style={{fontSize:10,color:"var(--fg-500)",marginTop:4}}>{event.eventName ?? _shortHash(event.eventTopic)}</div>
+                  </td>
+                  <td className="mono" title={event.primaryId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>
+                    {_shortHash(event.primaryId)}
+                    {event.relatedId && <div title={event.relatedId} style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>rel {_shortHash(event.relatedId, 8, 4)}</div>}
+                  </td>
+                  <td className="mono" title={fmtAddr(event.address, "contract")} style={{fontSize:11,color:"var(--fg-300)"}}>
+                    {fmtAddrShort(event.address, "contract", 9, 5)}
+                    {event.account && <div title={fmtAddr(event.account, "user")} style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>actor {fmtAddrShort(event.account, "user", 8, 4)}</div>}
+                  </td>
+                  <td className="mono" style={{fontSize:10.5,color:"var(--fg-400)",maxWidth:420,whiteSpace:"normal"}}>
+                    {fields.length > 0 ? (
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                        {fields.map((field) => (
+                          <span key={`${field.key}-${field.value}`} style={{display:"inline-flex",gap:4,alignItems:"baseline",padding:"2px 7px",borderRadius:6,background:"rgba(255,255,255,0.035)",border:"1px solid var(--fg-700)"}}>
+                            <span style={{color:"var(--fg-500)"}}>{field.label}</span>
+                            <span style={{color:"var(--fg-200)"}}>{field.value}</span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : "decoded payload unavailable"}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
     )}
   </div>
 );
+
+/**
+ * Render decoded native-market-state key/value fields as labeled chips,
+ * matching the events table (no raw "k=v · k=v" text). Keys are humanized via
+ * the shared field-label map and id/hash/address values are truncated.
+ */
+const MarketFieldChips = ({ fields, limit = 3 }: { fields: Array<[string, string]>; limit?: number }) => {
+  const shown = (fields ?? []).slice(0, limit);
+  if (shown.length === 0) return <>—</>;
+  return (
+    <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+      {shown.map(([key, value]) => (
+        <span key={`${key}-${value}`} style={{display:"inline-flex",gap:4,alignItems:"baseline",padding:"2px 7px",borderRadius:6,background:"rgba(255,255,255,0.035)",border:"1px solid var(--fg-700)"}}>
+          <span style={{color:"var(--fg-500)"}}>{MARKET_EVENT_FIELD_LABELS[key] ?? key.replace(/_/g, " ")}</span>
+          <span style={{color:"var(--fg-200)"}}>{_marketEventFieldValue(key, value)}</span>
+        </span>
+      ))}
+    </div>
+  );
+};
 
 const NativeMarketStateTable = ({ title, rows, empty }: any) => (
   <div style={{overflowX:"auto"}}>
@@ -744,11 +1007,14 @@ const NativeMarketStateTable = ({ title, rows, empty }: any) => (
               </td>
               <td className="mono" title={row.account ? fmtAddr(row.account, "user") : undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{fmtAddrShort(row.account, "user", 8, 5)}</td>
               <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{row.side ?? "—"}</td>
-              <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-200)"}}>{row.price ?? "—"}</td>
-              <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-300)"}}>{row.amount ?? "—"}</td>
+              {/* Price is a raw quote-tick integer (no USD oracle / decimals) —
+                  render in quote-asset terms via the shared formatter, never "$". */}
+              <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-200)"}}>{row.price == null ? "—" : mkQuote(mkDec(row.price), row.quoteAsset)}</td>
+              {/* Amount is a raw base-lot integer — show base count with the base label. */}
+              <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-300)"}}>{row.amount == null ? "—" : `${mkNum(mkDec(row.amount))}${row.baseAsset ? ` ${_shortMarketId(row.baseAsset)}` : ""}`}</td>
               <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{row.status ?? "—"}</td>
-              <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)",maxWidth:300}}>
-                {row.fields.slice(0, 3).map(([k, v]: [string, string])=>`${k}=${v}`).join(" · ") || "—"}
+              <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)",maxWidth:300,whiteSpace:"normal"}}>
+                <MarketFieldChips fields={row.fields} limit={3}/>
               </td>
             </tr>
           ))}
@@ -1214,10 +1480,11 @@ const NativeNftListingsTable = ({
                   <td className="mono" title={row.collectionId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.collectionId, 8, 5)}</td>
                   <td className="mono" title={row.account ? fmtAddr(row.account, "user") : undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{fmtAddrShort(row.account, "user", 8, 5)}</td>
                   <td className="mono" title={row.tokenId ?? undefined} style={{fontSize:11,color:"var(--fg-300)"}}>{_shortHash(row.tokenId, 7, 4)}</td>
-                  <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-200)"}}>{row.price ?? "—"}</td>
+                  {/* Listing price is a raw quote-asset integer — render in quote terms, never "$". */}
+                  <td className="mono num" style={{textAlign:"right",fontSize:11,color:"var(--fg-200)"}}>{row.price == null ? "—" : mkQuote(mkDec(row.price), row.quoteAsset)}</td>
                   <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{row.status ?? "—"}</td>
-                  <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)",maxWidth:260}}>
-                    {row.fields.slice(0, 3).map(([k, v])=>`${k}=${v}`).join(" · ") || "—"}
+                  <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)",maxWidth:260,whiteSpace:"normal"}}>
+                    <MarketFieldChips fields={row.fields} limit={3}/>
                     {activeSubmit && activeSubmit.state !== "idle" && (
                       <div style={{
                         marginTop:4,
@@ -1388,6 +1655,28 @@ const TokenMark = ({ sym, size=24 }: any) => {
   );
 };
 
+/**
+ * Neutral market-id glyph for an UNNAMED live CLOB market. Unlike TokenMark it
+ * does not hue-seed a colored "coin" that could be mistaken for a branded
+ * asset — it renders a muted monospace chip seeded off the stable market id so
+ * it reads as generic and is consistent per-market.
+ */
+const MarketIdMark = ({ id, size=24 }: { id: string; size?: number }) => {
+  const seed = String(id || "");
+  const glyph = seed.replace(/^0x/i, "").replace(/[^0-9a-zA-Z]/g, "").slice(0, 2).toUpperCase() || "·";
+  return (
+    <span style={{
+      width:size, height:size, borderRadius:6,
+      display:"inline-grid", placeItems:"center",
+      background:"rgba(255,255,255,0.04)",
+      color:"var(--fg-400)", fontFamily:"var(--f-mono)", fontWeight:600,
+      fontSize:size*0.38, letterSpacing:"-0.02em",
+      border:"1px solid var(--fg-700)",
+      flexShrink:0,
+    }} title={seed || undefined}>{glyph}</span>
+  );
+};
+
 /* Sparkline — positive/negative aware */
 const Spark = ({ data, up, w=100, h=28 }: any) => {
   const min = Math.min(...data), max = Math.max(...data);
@@ -1416,38 +1705,53 @@ const MarketsPage = ({ go }: any) => {
   const nativeMarketEvents = useNativeMarketEvents({ latestBlock: head.data?.blockNumber ?? null, limit: 25 });
   const nativeMarketRows = useMemo(() => nativeMarketEventRows(nativeMarketEvents.data), [nativeMarketEvents.data]);
 
-  const liveRows = useMemo(() => {
+  const clobSummaryRows = useMemo(() => {
     return (liveMarkets.data?.markets ?? []).map((row: any, i: number) => {
-      const fallback = MARKETS.find((m: any) => getMarketIdForSymbol(m.sym) === row.marketId);
-      const price = mkDec(row.lastPrice, fallback?.price ?? 0);
+      const price = mkDec(row.lastPrice, 0);
       const baseVolume = mkDec(row.totalVolumeBase, 0);
-      const fallbackSpark = fallback?.sparkline ?? [price || 0, price || 0];
       return {
-        ...(fallback ?? {}),
         rank: i + 1,
-        sym: fallback?.sym ?? `MKT-${i + 1}`,
-        name: fallback?.name ?? `CLOB ${_shortMarketId(row.marketId)}`,
-        kind: fallback?.kind ?? "native",
+        // Unnamed market — no ticker registry on-chain. Carry the marketId so
+        // the row renders a neutral market-id chip instead of a branded glyph.
+        sym: `MKT-${i + 1}`,
+        name: `CLOB ${_shortMarketId(row.marketId)}`,
+        kind: "native",
         price,
-        chg24h: fallback?.chg24h ?? 0,
-        sparkline: fallbackSpark,
-        vol24h: price > 0 ? baseVolume * price : baseVolume,
-        liquidity: fallback?.liquidity ?? 0,
-        mcap: fallback?.mcap ?? 0,
-        holders: fallback?.holders ?? 0,
-        verified: fallback?.verified ?? true,
-        trades: fallback?.trades?.length ? fallback.trades : [{ round: row.lastBlockHeight }],
+        chg24h: 0,
+        sparkline: [price || 0, price || 0],
+        // Base volume only. The CLOB summary has no quote-notional aggregate and
+        // price*baseVolume of two unscaled integers is not a real notional.
+        // TODO(core-sdk): no quote-notional traded-volume aggregate endpoint.
+        vol24h: baseVolume,
+        liquidity: 0,
+        mcap: 0,
+        holders: 0,
+        // Permissionless CLOB — no listing authority verifies a market.
+        verified: false,
+        trades: row.lastBlockHeight ? [{ round: row.lastBlockHeight }] : [],
         marketId: row.marketId,
         tradeCount: row.tradeCount,
         totalVolumeBase: baseVolume,
-        hasFallback: Boolean(fallback),
+        // ClobMarketSummary carries no base/quote asset ids — the quote-unit
+        // label degrades to a neutral "quote" placeholder for these rows.
+        // TODO(core-sdk): expose base/quote asset ids + symbols on ClobMarketSummary.
+        baseAssetId: null,
+        quoteAssetId: null,
+        hasFallback: false,
         live: true,
+        source: "indexed_trades",
       };
     });
   }, [liveMarkets.data]);
+  const nativeSpotRows = useMemo(
+    () => liveMarketRowsFromNativeState(nativeMarketState.data?.spotMarkets ?? []),
+    [nativeMarketState.data],
+  );
+  const liveRows = clobSummaryRows.length > 0 ? clobSummaryRows : nativeSpotRows;
 
   const indexerAvailability = useIndexerAvailability();
-  const hasLiveMarketResponse = liveMarkets.data !== undefined && liveMarkets.data !== null;
+  const hasLiveMarketResponse = (liveMarkets.data !== undefined && liveMarkets.data !== null)
+    || (nativeMarketState.data !== undefined && nativeMarketState.data !== null);
   // Once the chain is reachable (liveChain) the CLOB endpoint speaks for
   // itself — even an empty array is the truth. Only fall back to the
   // 100-row demo fixture in offline / RPC-unreachable mode.
@@ -1512,8 +1816,11 @@ const MarketsPage = ({ go }: any) => {
             </div>
           </div>
           <div style={{textAlign:"right"}}>
-            <div className="cap">{usingLiveMarkets ? "Indexed volume" : "24H volume"}</div>
-            <div className="mono num" style={{fontSize:20,color:"var(--fg-100)",marginTop:2}}>{mkUsd(totalVOL)}</div>
+            <div className="cap">{usingLiveMarkets ? "Indexed base volume" : "24H volume"}</div>
+            {/* Live: sum of per-market base volumes (mixed base assets) — not a
+                fiat total. No quote-notional aggregate exists upstream.
+                TODO(core-sdk): no quote-notional traded-volume aggregate endpoint. */}
+            <div className="mono num" style={{fontSize:20,color:"var(--fg-100)",marginTop:2}}>{usingLiveMarkets ? mkNum(totalVOL) : mkUsd(totalVOL)}</div>
           </div>
           <div style={{textAlign:"right"}}>
             <div className="cap">{usingLiveMarkets ? "Trades indexed" : "Total liquidity"}</div>
@@ -1578,7 +1885,9 @@ const MarketsPage = ({ go }: any) => {
                     {indexerAvailability.disabled
                       ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}. Markets list will populate once a peer with an indexer is reachable.`
                       : usingLiveMarkets
-                        ? "The live CLOB index responded, but it has no indexed markets matching this view yet."
+                        ? nativeMarketRows.length > 0
+                          ? `The live market index has ${nativeMarketRows.length.toLocaleString()} recent event${nativeMarketRows.length === 1 ? "" : "s"}, but no market rows match this filter.`
+                          : "The live market index responded, but it has no market rows matching this view yet."
                         : "No fallback markets matched this filter."}
                   </div>
                 </td>
@@ -1589,24 +1898,45 @@ const MarketsPage = ({ go }: any) => {
                   <td className="mono num" style={{color:"var(--fg-500)",fontSize:11.5}}>{t.rank}</td>
                   <td>
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <TokenMark sym={t.sym} size={26}/>
+                      {t.live && !t.hasFallback
+                        ? <MarketIdMark id={t.marketId ?? t.sym} size={26}/>
+                        : <TokenMark sym={t.sym} size={26}/>}
                       <div style={{minWidth:0}}>
                         <div style={{display:"flex",alignItems:"center",gap:6}}>
                           <span style={{fontWeight:500,color:"var(--fg-100)",fontSize:13}}>{t.sym}</span>
+                          {/* Nothing verifies a permissionless live CLOB — the ✓ is
+                              reserved for a real listing-verification signal. */}
                           {t.verified && <span title="verified" style={{color:"var(--gold)",fontSize:11,lineHeight:1}}>✓</span>}
                         </div>
                         <div className="mono" style={{fontSize:10.5,color:"var(--fg-500)",marginTop:1,letterSpacing:"0.02em"}}>
-                          {t.live && !t.hasFallback ? `market ${_shortMarketId(t.marketId)}` : t.name}
+                          {t.live && !t.hasFallback
+                            ? t.baseAssetId && t.quoteAssetId
+                              ? `${_shortMarketId(t.baseAssetId)} / ${_shortMarketId(t.quoteAssetId)}`
+                              : `market ${_shortMarketId(t.marketId)}`
+                            : t.name}
                         </div>
                       </div>
                     </div>
                   </td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)",fontSize:12.5}}>{mkMoney(t.price)}</td>
-                  <td className="mono num" style={{textAlign:"right",color: t.chg24h>=0?"var(--ok)":"var(--err)", fontSize:12}}>{t.chg24h>=0?"+":""}{t.chg24h.toFixed(2)}%</td>
-                  <td style={{textAlign:"center"}}>
-                    <span style={{display:"inline-block"}}><Spark data={t.sparkline} up={t.chg24h>=0} w={96} h={24}/></span>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)",fontSize:12.5}}>
+                    {t.live && !t.hasFallback ? mkQuote(t.price, t.quoteAssetId) : mkMoney(t.price)}
                   </td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:12}}>{mkUsd(t.vol24h)}</td>
+                  <td className="mono num" style={{textAlign:"right",color: t.live && !t.hasFallback ? "var(--fg-500)" : t.chg24h>=0?"var(--ok)":"var(--err)", fontSize:12}}>
+                    {t.live && !t.hasFallback ? "—" : `${t.chg24h>=0?"+":""}${t.chg24h.toFixed(2)}%`}
+                  </td>
+                  <td style={{textAlign:"center"}}>
+                    {t.live && !t.hasFallback ? (
+                      <span className="mono" style={{fontSize:11,color:"var(--fg-500)"}}>—</span>
+                    ) : (
+                      <span style={{display:"inline-block"}}><Spark data={t.sparkline} up={t.chg24h>=0} w={96} h={24}/></span>
+                    )}
+                  </td>
+                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:12}}>
+                    {/* Live: base-volume count only — no quote-notional aggregate. */}
+                    {t.live && !t.hasFallback
+                      ? `${mkNum(t.vol24h)}${t.baseAssetId ? ` ${_shortMarketId(t.baseAssetId)}` : " base"}`
+                      : mkUsd(t.vol24h)}
+                  </td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFallback ? "—" : mkUsd(t.liquidity)}</td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFallback ? "—" : mkUsd(t.mcap)}</td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:12}}>{t.live && !t.hasFallback ? "—" : mkNum(t.holders)}</td>
@@ -1642,7 +1972,9 @@ const MarketsPage = ({ go }: any) => {
         {indexerAvailability.disabled
           ? `${indexerAvailability.reason ?? "Indexer disabled on this node"}. Markets read through an indexed peer.`
           : usingLiveMarkets
-            ? "Live CLOB index. Empty rows mean the node has no indexed markets yet."
+            ? liveRows.length > 0
+              ? `Live market rows from ${liveRows[0]?.source === "native_market_state" ? "native-market-state" : "indexed trade summaries"}.`
+              : "Live market index. Empty rows mean the node has no indexed markets yet."
             : "Listing policy: top 100 markets by rolling 24h volume · re-ranked every 240 rounds · full list on the Monoscan API"}
       </div>
     </div>
@@ -1688,6 +2020,13 @@ const MarketPage = ({ sym, go }: any) => {
   const liveBook = useClobOrderBook(marketId, 9);
   const nativeMarketState = useNativeMarketState({ primaryId: marketId ?? null });
   const nativeStateRows = useMemo(() => nativeMarketStateRows(nativeMarketState.data), [nativeMarketState.data]);
+  const nativeLiveSummaries = useMemo(
+    () => liveMarketRowsFromNativeState(nativeMarketState.data?.spotMarkets ?? []),
+    [nativeMarketState.data],
+  );
+  const matchedNativeSummary = nativeLiveSummaries.find((row: any) =>
+    row.marketId === marketId || row.marketId === routeKey,
+  ) ?? null;
   const nativeMarketEvents = useNativeMarketEvents({ latestBlock: head.data?.blockNumber ?? null, limit: 25, primaryId: marketId ?? null });
   const nativeMarketRows = useMemo(() => nativeMarketEventRows(nativeMarketEvents.data), [nativeMarketEvents.data]);
   const liveMarket = clob.data?.market ?? null;
@@ -1696,21 +2035,52 @@ const MarketPage = ({ sym, go }: any) => {
   // chain (zero markets) this is false for every route, so we render an
   // honest "no markets" page instead of the seeded MARKETS[0] fixture below.
   const liveChain = indexerAvailability.liveChain;
-  const marketIsLive = Boolean(liveMarket || matchedLiveSummary);
+  const marketIsLive = Boolean(liveMarket || matchedLiveSummary || matchedNativeSummary);
   const matchedLiveIndex = matchedLiveSummary ? liveMarkets.data?.markets.indexOf(matchedLiveSummary) ?? -1 : -1;
-  const tkn = MARKETS.find((m: any) => m.sym === routeKey || getMarketIdForSymbol(m.sym) === marketId) || {
-    ...MARKETS[0],
-    rank: matchedLiveSummary ? matchedLiveIndex + 1 : MARKETS[0].rank,
-    sym: matchedLiveSummary ? `MKT-${matchedLiveIndex + 1}` : MARKETS[0].sym,
-    name: matchedLiveSummary ? `CLOB ${_shortMarketId(matchedLiveSummary.marketId)}` : MARKETS[0].name,
-    contract: marketId ?? MARKETS[0].contract,
-    price: matchedLiveSummary ? mkDec(matchedLiveSummary.lastPrice, MARKETS[0].price) : MARKETS[0].price,
-    vol24h: matchedLiveSummary ? mkDec(matchedLiveSummary.totalVolumeBase, 0) : MARKETS[0].vol24h,
+  const matchedSummary = matchedLiveSummary ?? matchedNativeSummary;
+  const matchedSummaryRow: any = matchedSummary ?? null;
+  const matchedSummaryIndex = matchedLiveSummary ? matchedLiveIndex : matchedNativeSummary ? nativeLiveSummaries.indexOf(matchedNativeSummary) : -1;
+  const fixtureMarket = !liveChain
+    ? MARKETS.find((m: any) => m.sym === routeKey || getMarketIdForSymbol(m.sym) === marketId)
+    : null;
+  const liveTokenSource: any = matchedSummaryRow ?? liveMarket ?? null;
+  const liveToken = liveTokenSource ? {
+    rank: matchedSummaryIndex >= 0 ? matchedSummaryIndex + 1 : 1,
+    sym: matchedSummaryRow?.sym ?? `MKT-${matchedSummaryIndex >= 0 ? matchedSummaryIndex + 1 : 1}`,
+    name: matchedSummaryRow?.name ?? `CLOB ${_shortMarketId(marketId ?? "")}`,
+    kind: "native",
+    contract: marketId ?? "",
+    price: mkDec(matchedSummaryRow?.lastPrice ?? matchedSummaryRow?.price ?? liveMarket?.lastTradePrice ?? liveMarket?.bestBidPrice, 0),
+    chg24h: 0,
+    tick: mkDec(matchedSummaryRow?.tickSize ?? matchedSummaryRow?.tick ?? liveMarket?.tickSize, 1),
+    vol24h: mkDec(matchedSummaryRow?.totalVolumeBase ?? matchedSummaryRow?.vol24h ?? liveMarket?.totalVolumeBase, 0),
     liquidity: 0,
     mcap: 0,
     holders: 0,
-    verified: Boolean(matchedLiveSummary),
-  };
+    // Permissionless live CLOB — nothing verifies the market.
+    verified: false,
+    // Quote/base asset ids drive the quote-unit label on price displays.
+    quoteAssetId: liveMarket?.quoteToken ?? matchedSummaryRow?.quoteAssetId ?? null,
+    baseAssetId: liveMarket?.baseToken ?? matchedSummaryRow?.baseAssetId ?? null,
+    age: { days: 0 },
+    ohlc: [],
+    trades: [],
+    venues: [],
+    supply: 0,
+  } : null;
+  const tkn = fixtureMarket || liveToken || MARKETS[0];
+  // A live market detail is being shown when the chain resolved a real market.
+  const tknIsLive = Boolean(liveToken && !fixtureMarket);
+  const quoteAssetId: string | null = (tkn as any).quoteAssetId ?? null;
+  const baseAssetId: string | null = (tkn as any).baseAssetId ?? null;
+  // Price/value display: quote-asset units (no fiat) on a live chain; the
+  // USD-style fixture formatters are reserved for the offline demo preview.
+  const fmtPrice = (n: any) => (tknIsLive || liveChain) ? mkQuote(n, quoteAssetId) : mkMoney(n);
+  // Quote-notional value (px*sz). On-chain this is a product of unscaled
+  // integers, not real fiat — show it in quote-asset terms, never "$".
+  const fmtValue = (n: any) => (tknIsLive || liveChain) ? mkQuote(n, quoteAssetId) : `$${Number(n).toLocaleString(undefined,{maximumFractionDigits:2})}`;
+  // Base-size display with the base-asset label.
+  const fmtBase = (n: any) => `${mkNum(Number(n))}${baseAssetId ? ` ${_shortMarketId(baseAssetId)}` : ""}`;
   const [range, setRange] = useState("1D");
   // Range -> (lookback-in-blocks, bucket-size-in-blocks) under the
   // ADR-0031 3 s round cadence. Buckets are sized so a typical range
@@ -1748,6 +2118,8 @@ const MarketPage = ({ sym, go }: any) => {
   const ranges = ["1H","4H","1D","7D","1M","1Y","All"];
   const chg = tkn.chg24h;
   const up = chg >= 0;
+  const nativeStatePrice = matchedNativeSummary ? mkDec(matchedNativeSummary.price, 0) : null;
+  const liveMarketSourceLabel = liveMarket ? "live CLOB" : matchedNativeSummary ? "native market state" : matchedLiveSummary ? "indexed CLOB" : null;
   const bestBid = liveMarket ? mkDec(liveMarket.bestBidPrice, tkn.price - tkn.tick) : null;
   const bestAsk = liveMarket ? mkDec(liveMarket.bestAskPrice, tkn.price + tkn.tick) : null;
   const lastTrade = liveMarket ? mkDec(liveMarket.lastTradePrice, 0) : null;
@@ -1755,18 +2127,20 @@ const MarketPage = ({ sym, go }: any) => {
     ? lastTrade
     : bestBid !== null && bestAsk !== null && bestBid > 0 && bestAsk > 0
       ? (bestBid + bestAsk) / 2
-      : null;
-  const tick = liveMarket ? mkDec(liveMarket.tickSize, tkn.tick) : tkn.tick;
-  const totalVolumeBase = liveMarket ? mkDec(liveMarket.totalVolumeBase, tkn.vol24h) : tkn.vol24h;
-  const takerFeeBps = liveMarket?.takerFeeBps ?? 5;
-  const orderBaseTokenId = liveMarket?.baseToken ?? null;
-  const orderQuoteTokenId = liveMarket?.quoteToken ?? null;
+      : nativeStatePrice && nativeStatePrice > 0
+        ? nativeStatePrice
+        : null;
+  const tick = liveMarket ? mkDec(liveMarket.tickSize, tkn.tick) : matchedNativeSummary ? mkDec(matchedNativeSummary.tickSize, tkn.tick) : tkn.tick;
+  const totalVolumeBase = liveMarket ? mkDec(liveMarket.totalVolumeBase, tkn.vol24h) : matchedNativeSummary ? mkDec(matchedNativeSummary.totalVolumeBase, tkn.vol24h) : tkn.vol24h;
+  const takerFeeBps = liveMarket?.takerFeeBps ?? null;
+  const orderBaseTokenId = liveMarket?.baseToken ?? matchedNativeSummary?.baseAssetId ?? null;
+  const orderQuoteTokenId = liveMarket?.quoteToken ?? matchedNativeSummary?.quoteAssetId ?? null;
   const nativeMarketForwarderAddress = getNativeMarketForwarderAddress(capabilities.data);
   const suggestedOrderPrice = _positiveIntegerText(
     orderSide === "buy" ? liveMarket?.bestBidPrice : liveMarket?.bestAskPrice,
-    _positiveIntegerText(liveMarket?.lastTradePrice, _positiveIntegerText(liveMarket?.tickSize, "1")),
+    _positiveIntegerText(liveMarket?.lastTradePrice ?? matchedNativeSummary?.price, _positiveIntegerText(liveMarket?.tickSize ?? matchedNativeSummary?.tickSize, "1")),
   );
-  const suggestedOrderQuantity = _positiveIntegerText(liveMarket?.lotSize, "1");
+  const suggestedOrderQuantity = _positiveIntegerText(liveMarket?.lotSize ?? matchedNativeSummary?.lotSize, "1");
   const orderNonceStatus = orderNonceResolution
     ? orderNonceResolution.source === "indexed"
       ? `indexed next ${orderNonceResolution.nonce}`
@@ -1774,7 +2148,7 @@ const MarketPage = ({ sym, go }: any) => {
     : "indexed after wallet connect";
 
   useEffect(() => {
-    if (!marketId || !liveMarket || orderMarketSeed === marketId) return;
+    if (!marketId || (!liveMarket && !matchedNativeSummary) || orderMarketSeed === marketId) return;
     setOrderPrice(suggestedOrderPrice);
     setOrderQuantity(suggestedOrderQuantity);
     setOrderNonce("0");
@@ -1782,7 +2156,7 @@ const MarketPage = ({ sym, go }: any) => {
     setOrderExpiryBlock("0");
     setOrderMarketSeed(marketId);
     setOrderSubmit({ state: "idle" });
-  }, [liveMarket, marketId, orderMarketSeed, suggestedOrderPrice, suggestedOrderQuantity]);
+  }, [liveMarket, matchedNativeSummary, marketId, orderMarketSeed, suggestedOrderPrice, suggestedOrderQuantity]);
 
   const orderCanSubmit = orderType === "limit"
     && orderSubmit.state !== "submitting"
@@ -1886,6 +2260,20 @@ const MarketPage = ({ sym, go }: any) => {
   const mid = livePrice ?? tkn.price;
   const midY = sy(mid);
 
+  // Chart X-axis labels. Live OHLC is block-bucketed (startBlock/endBlock), so
+  // the design's hardcoded wall-clock strings are meaningless on a live chain —
+  // derive eight evenly-spaced block-height labels from the candle range. The
+  // static clock labels stay only for the offline fixture chart.
+  const STATIC_TIME_LABELS = ["13:00","16:00","19:00","22:00","01:00","04:00","07:00","10:00"];
+  const liveCandleStart = liveCandles.length > 0 ? mkDec(liveCandles[0]?.startBlock, 0) : 0;
+  const liveCandleEnd = liveCandles.length > 0 ? mkDec(liveCandles[liveCandles.length - 1]?.endBlock ?? liveCandles[liveCandles.length - 1]?.startBlock, liveCandleStart) : 0;
+  const timeAxisLabels = (liveChain && liveCandles.length > 0 && liveCandleEnd >= liveCandleStart)
+    ? Array.from({ length: 8 }, (_, i) => {
+        const b = Math.round(liveCandleStart + ((liveCandleEnd - liveCandleStart) * i) / 7);
+        return `#${b.toLocaleString()}`;
+      })
+    : STATIC_TIME_LABELS;
+
   // orderbook derived from trades — make plausible levels
   const bookLevels = 9;
   const syntheticAsks = Array.from({length:bookLevels},(_,i)=>{
@@ -1936,18 +2324,46 @@ const MarketPage = ({ sym, go }: any) => {
       key: `${row.blockHeight}-${row.txIndex}-${row.logIndex}-${i}`,
     };
   });
+  const nativeTradeRows = nativeTradeRowsFromMarketEvents(nativeMarketRows, {
+    fallbackPrice: mid,
+    symbol: tkn.sym,
+  });
   // On a live chain, an absent trade index means "no trades indexed yet" —
   // never the fabricated `tkn.trades` rows (which carry fake "attested 11/11"
   // quorum lines). Only the offline preview shows the fixture trades.
-  const tradeRows = liveTradeRows.length ? liveTradeRows : liveChain ? [] : tkn.trades;
-  const buyVol  = liveBids.length ? (bids[bids.length - 1]?.total ?? 0) * mid : liveChain ? null : liveBookResponded ? null : tkn.trades.filter(t=>t.side==="buy").reduce((a,t)=>a+t.value,0);
-  const sellVol = liveAsks.length ? (asks[asks.length - 1]?.total ?? 0) * mid : liveChain ? null : liveBookResponded ? null : tkn.trades.filter(t=>t.side==="sell").reduce((a,t)=>a+t.value,0);
+  const tradeRows = liveTradeRows.length ? liveTradeRows : nativeTradeRows.length ? nativeTradeRows : liveChain ? [] : tkn.trades;
+  // Depth = cumulative book SIZE in base units. (Old code did total*mid =
+  // lot-int * tick-int, a fabricated quote notional with no decimal scaling.)
+  // On a live chain we show base size and drop the "$"; the offline fixture
+  // keeps its synthetic quote-notional sum.
+  const buyVol  = liveBids.length ? (bids[bids.length - 1]?.total ?? 0) : liveChain ? null : liveBookResponded ? null : tkn.trades.filter(t=>t.side==="buy").reduce((a,t)=>a+t.value,0);
+  const sellVol = liveAsks.length ? (asks[asks.length - 1]?.total ?? 0) : liveChain ? null : liveBookResponded ? null : tkn.trades.filter(t=>t.side==="sell").reduce((a,t)=>a+t.value,0);
 
   // The chain is reachable but this deep-link does not resolve to a live
   // market. On a near-empty chain (zero CLOB markets) every market route
   // lands here. Render an honest page rather than the seeded MARKETS[0]
   // fixture (which would fabricate price/holders/supply/order-book/trades).
-  if (liveChain && !marketIsLive) {
+  const marketLookupPending = liveMarkets.isLoading || clob.isLoading || nativeMarketState.isLoading;
+  if (liveChain && !marketIsLive && marketLookupPending) {
+    return (
+      <div className="ms-page ms-market">
+        <div className="ms-crumb">
+          <a href="#/markets" onClick={()=>go("#/markets")}>Markets</a>
+          <span>›</span>
+          <b>{_shortMarketId(marketId ?? routeKey) || "market"}</b>
+        </div>
+        <div className="ms-card" style={{padding:"28px 24px",marginTop:14}}>
+          <div className="mono" style={{color:"var(--fg-200)",fontSize:15,letterSpacing:"-0.01em"}}>
+            Resolving live market…
+          </div>
+          <div className="mono" style={{color:"var(--fg-400)",fontSize:12.5,lineHeight:1.55,marginTop:8,maxWidth:560}}>
+            Checking indexed CLOB summaries and native-market-state before deciding whether this market exists.
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (liveChain && !marketIsLive && !marketLookupPending) {
     return (
       <div className="ms-page ms-market">
         <div className="ms-crumb">
@@ -1986,13 +2402,16 @@ const MarketPage = ({ sym, go }: any) => {
 
       {/* HEADER */}
       <section style={{display:"flex",alignItems:"center",gap:18,flexWrap:"wrap",padding:"14px 0 10px"}}>
-        <TokenMark sym={tkn.sym} size={56}/>
+        {tknIsLive ? <MarketIdMark id={marketId ?? tkn.sym} size={56}/> : <TokenMark sym={tkn.sym} size={56}/>}
         <div style={{minWidth:0}}>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
             <h1 className="ms-h1" style={{fontSize:30,margin:0,letterSpacing:"-0.02em"}}>{tkn.name}</h1>
             <span className="mono" style={{color:"var(--fg-400)",fontSize:18,letterSpacing:"0.02em"}}>({tkn.sym})</span>
-            {tkn.verified && <span className="pill ok" style={{fontSize:10.5}}>✓ verified</span>}
-            {liveMarket && <span className="pill ok" style={{fontSize:10.5}}>live CLOB</span>}
+            {/* No listing authority verifies a permissionless live CLOB market —
+                show ✓ only for the offline fixture; live rows keep the honest
+                source pill below as their provenance. */}
+            {tkn.verified && !tknIsLive && <span className="pill ok" style={{fontSize:10.5}}>✓ verified</span>}
+            {liveMarketSourceLabel && <span className="pill ok" style={{fontSize:10.5}}>{liveMarketSourceLabel}</span>}
           </div>
           <div className="mono" style={{display:"flex",alignItems:"center",gap:10,marginTop:6,color:"var(--fg-400)",fontSize:11.5,letterSpacing:"0.02em"}}>
             <span style={{padding:"3px 8px",background:"rgba(255,255,255,0.04)",border:"1px solid var(--fg-700)",borderRadius:4}}>{fmtAddr(tkn.contract, "contract")}</span>
@@ -2000,15 +2419,15 @@ const MarketPage = ({ sym, go }: any) => {
             <CopyToClipboard text={marketId ?? tkn.contract} title={marketId ? `copy ${marketId}` : `copy ${tkn.contract}`}/>
             <TryApiLink marketId={marketId}/>
             <span>·</span>
-            {/* TODO: missing lyth_clobMarket listing-age field to return market registration age */}
-            <span>{liveChain ? "listed —" : `listed ${tkn.age.days}d ago`}</span>
+            {/* TODO(core-sdk): missing lyth_clobMarket listing-age field to return market registration age */}
+            <span>{matchedNativeSummary?.createdAtBlock ? `created block ${Number(matchedNativeSummary.createdAtBlock).toLocaleString()}` : liveChain ? "listed pending" : `listed ${tkn.age.days}d ago`}</span>
           </div>
         </div>
         <div style={{flex:1}}/>
         <div style={{textAlign:"right"}}>
-          <div className="mono num" style={{fontSize:28,color:"var(--fg-100)",letterSpacing:"-0.02em",fontWeight:300}}>{mkMoney(mid)}</div>
+          <div className="mono num" style={{fontSize:28,color:"var(--fg-100)",letterSpacing:"-0.02em",fontWeight:300}}>{fmtPrice(mid)}</div>
           <div className="mono" style={{fontSize:12,marginTop:2,color: up?"var(--ok)":"var(--err)"}}>
-            {liveMarket ? "live CLOB midpoint" : `${up?"▲":"▼"} ${Math.abs(chg).toFixed(3)}% · 24h`}
+            {liveMarket ? "live CLOB midpoint" : matchedNativeSummary ? "native market last price" : `${up?"▲":"▼"} ${Math.abs(chg).toFixed(3)}% · 24h`}
           </div>
         </div>
       </section>
@@ -2016,15 +2435,15 @@ const MarketPage = ({ sym, go }: any) => {
       {/* QUICK STATS STRIP */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(6,minmax(0,1fr))",gap:10,padding:"10px 0"}}>
         {[
-          ["Price", mkMoney(mid), up?"var(--ok)":"var(--err)", liveMarket ? "lyth_clobMarket" : `${chg>=0?"+":""}${chg.toFixed(2)}%`],
-          // TODO: missing liquidity aggregate endpoint to return market liquidity in quote terms
-          ["Liquidity", liveChain ? "—" : mkUsd(tkn.liquidity)],
-          [liveMarket ? "Base volume" : "24h volume", liveMarket ? mkNum(totalVolumeBase) : mkUsd(tkn.vol24h)],
-          // TODO: missing market-cap aggregate endpoint to return base-token MCAP
-          ["MCAP", liveChain ? "—" : mkUsd(tkn.mcap)],
-          // TODO: missing holder-count endpoint to return base-token holders for a CLOB market
-          ["Holders", liveChain ? "—" : mkNum(tkn.holders)],
-          [liveMarket ? "Taker fee" : "Age", liveMarket ? `${takerFeeBps} bps` : liveChain ? "—" : `${tkn.age.days}d`],
+          ["Price", fmtPrice(mid), up?"var(--ok)":"var(--err)", liveMarket ? "lyth_clobMarket" : matchedNativeSummary ? "native-market-state" : `${chg>=0?"+":""}${chg.toFixed(2)}%`],
+          // TODO(core-sdk): missing liquidity aggregate endpoint to return market liquidity in quote terms
+          ["Liquidity", liveChain ? "pending" : mkUsd(tkn.liquidity)],
+          [marketIsLive ? "Base volume" : "24h volume", marketIsLive ? fmtBase(totalVolumeBase) : mkUsd(tkn.vol24h)],
+          // TODO(core-sdk): missing market-cap aggregate endpoint to return base-token MCAP
+          ["MCAP", liveChain ? "pending" : mkUsd(tkn.mcap)],
+          // TODO(core-sdk): missing holder-count endpoint to return base-token holders for a CLOB market
+          ["Holders", liveChain ? "pending" : mkNum(tkn.holders)],
+          [liveMarket ? "Taker fee" : matchedNativeSummary ? "Trades indexed" : "Age", liveMarket ? (takerFeeBps !== null ? `${takerFeeBps} bps` : "—") : matchedNativeSummary ? mkNum(matchedNativeSummary.tradeCount) : liveChain ? "pending" : `${tkn.age.days}d`],
         ].map(([k,v,col,sub])=>(
           <div key={k} style={{padding:"10px 14px",borderRadius:8,border:"1px solid var(--fg-700)",background:"rgba(255,255,255,0.02)"}}>
             <div className="cap" style={{fontSize:9.5}}>{k}</div>
@@ -2087,9 +2506,9 @@ const MarketPage = ({ sym, go }: any) => {
                 const v = chartHi - f*(chartHi-chartLo);
                 return <text key={i} x={W-4} y={H*f+3} fontFamily="var(--f-mono)" fontSize="9.5" textAnchor="end" fill="var(--fg-500)">{mkFmt(v)}</text>;
               })}
-              {/* time axis */}
-              {["13:00","16:00","19:00","22:00","01:00","04:00","07:00","10:00"].map((t,i)=>(
-                <text key={t} x={20 + i*((W-68)/7)} y={H-3} fontFamily="var(--f-mono)" fontSize="9" fill="var(--fg-500)">{t}</text>
+              {/* time axis — block heights when live, static clock labels offline */}
+              {timeAxisLabels.map((t,i)=>(
+                <text key={`${t}-${i}`} x={20 + i*((W-68)/7)} y={H-3} fontFamily="var(--f-mono)" fontSize="9" fill="var(--fg-500)">{t}</text>
               ))}
             </svg>
             <div className="mono" style={{position:"absolute",left:12,top:10,fontSize:10.5,color:"var(--fg-400)",letterSpacing:"0.06em",display:"flex",alignItems:"center",gap:10}}>
@@ -2153,14 +2572,23 @@ const MarketPage = ({ sym, go }: any) => {
               />
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"rgba(255,255,255,0.03)",borderRadius:6,border:"1px solid var(--fg-700)"}}>
-              <TokenMark sym="USDC" size={22}/>
-              <span className="mono" style={{fontSize:12,fontWeight:500}}>USDC</span>
+              {(tknIsLive || liveChain) ? (
+                <>
+                  <MarketIdMark id={orderQuoteTokenId ?? "quote"} size={22}/>
+                  <span className="mono" style={{fontSize:12,fontWeight:500}}>{orderQuoteTokenId ? _shortMarketId(orderQuoteTokenId) : "quote"}</span>
+                </>
+              ) : (
+                <>
+                  <TokenMark sym="USDC" size={22}/>
+                  <span className="mono" style={{fontSize:12,fontWeight:500}}>USDC</span>
+                </>
+              )}
               <span style={{color:"var(--fg-400)",fontSize:11}}>▾</span>
             </div>
           </div>
           <div style={{display:"flex",justifyContent:"space-between",padding:"0 4px",fontSize:10,color:"var(--fg-500)"}}>
             <span className="mono">Balance 0 · <span style={{color:"var(--gold)",cursor:"pointer"}}>half</span> · <span style={{color:"var(--gold)",cursor:"pointer"}}>max</span></span>
-            <span className="mono">≈ $0</span>
+            <span className="mono">{(tknIsLive || liveChain) ? "≈ —" : "≈ $0"}</span>
           </div>
 
           <div style={{textAlign:"center",color:"var(--fg-500)",margin:"-2px 0"}}>
@@ -2179,8 +2607,17 @@ const MarketPage = ({ sym, go }: any) => {
               />
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"rgba(255,255,255,0.03)",borderRadius:6,border:"1px solid var(--fg-700)"}}>
-              <TokenMark sym={tkn.sym} size={22}/>
-              <span className="mono" style={{fontSize:12,fontWeight:500}}>{tkn.sym}</span>
+              {tknIsLive ? (
+                <>
+                  <MarketIdMark id={marketId ?? tkn.sym} size={22}/>
+                  <span className="mono" style={{fontSize:12,fontWeight:500}}>{_shortMarketId(marketId ?? tkn.sym)}</span>
+                </>
+              ) : (
+                <>
+                  <TokenMark sym={tkn.sym} size={22}/>
+                  <span className="mono" style={{fontSize:12,fontWeight:500}}>{tkn.sym}</span>
+                </>
+              )}
               <span style={{color:"var(--fg-400)",fontSize:11}}>▾</span>
             </div>
           </div>
@@ -2244,13 +2681,13 @@ const MarketPage = ({ sym, go }: any) => {
           )}
 
           <div className="mono" style={{fontSize:10,color:"var(--fg-500)",paddingTop:8,borderTop:"1px solid var(--fg-700)",display:"grid",gridTemplateColumns:"1fr auto",rowGap:3}}>
-            <span>Rate</span><span style={{color:"var(--fg-300)"}}>1 {tkn.sym} ≈ {mkMoney(mid)}</span>
-            {/* TODO: missing routing endpoint to return the matched venue/pool for a quote */}
+            <span>Rate</span><span style={{color:"var(--fg-300)"}}>1 {tkn.sym} ≈ {fmtPrice(mid)}</span>
+            {/* TODO(core-sdk): missing quote-routing endpoint to return the matched venue/pool for a quote */}
             <span>Route</span><span style={{color:"var(--fg-300)"}}>{liveChain ? "on-chain CLOB" : "coinzen · pool #14"}</span>
-            {/* TODO: missing maker-fee field on lyth_clobMarket to return the maker rebate/fee */}
-            <span>Maker · taker</span><span style={{color:"var(--fg-300)"}}>{liveChain ? `— · ${(takerFeeBps / 100).toFixed(2)}%` : `0.02% · ${(takerFeeBps / 100).toFixed(2)}%`}</span>
-            <span>Settles</span><span style={{color:"var(--ok)"}}>{liveChain ? "1 anchor" : "~1 round · 340ms"}</span>
-            {/* TODO: missing per-fill attestation-quorum endpoint to return the signing quorum */}
+            {/* TODO(core-sdk): missing maker-fee field on lyth_clobMarket to return the maker rebate/fee */}
+            <span>Maker · taker</span><span style={{color:"var(--fg-300)"}}>{liveChain ? (takerFeeBps !== null ? `— · ${(takerFeeBps / 100).toFixed(2)}%` : "—") : `0.02% · ${((takerFeeBps ?? 5) / 100).toFixed(2)}%`}</span>
+            <span>Settles</span><span style={{color: liveChain ? "var(--fg-300)" : "var(--ok)"}}>{liveChain ? "—" : "~1 round · 340ms"}</span>
+            {/* TODO(core-sdk): missing per-fill attestation-quorum endpoint to return the signing quorum */}
             <span>Attestation</span><span style={{color: liveChain ? "var(--fg-300)" : "var(--ok)"}}>{liveChain ? "—" : "quorum 11/11 · SLH-DSA"}</span>
           </div>
         </div>
@@ -2261,7 +2698,10 @@ const MarketPage = ({ sym, go }: any) => {
         {/* LEFT: trade activity tabs */}
         <div className="ms-card" style={{padding:0,overflow:"hidden"}}>
           <div style={{display:"flex",alignItems:"center",gap:18,padding:"10px 14px",borderBottom:"1px solid var(--fg-700)"}}>
-            {["Trades","Traders","Holders","Pools","Makers"].map((t,i)=>(
+            {/* Only Trades is backed by data — Traders/Holders/Pools/Makers were
+                decorative labels with no panel. Drop them when live so the strip
+                does not imply views that do not exist; the fixture keeps them. */}
+            {((tknIsLive || liveChain) ? ["Trades"] : ["Trades","Traders","Holders","Pools","Makers"]).map((t,i)=>(
               <span key={t} className="mono" style={{
                 fontSize:11.5,letterSpacing:"0.04em",cursor:"pointer",position:"relative",padding:"4px 0",
                 color: i===0 ? "var(--fg-100)" : "var(--fg-400)",fontWeight: i===0 ? 600:400,
@@ -2279,7 +2719,7 @@ const MarketPage = ({ sym, go }: any) => {
           {/* Buy/sell summary bar — SuiVision-esque. Fabricated rolling-window
               buy/sell counts; no live endpoint exposes them, so the bar is
               only shown in the offline preview. */}
-          {/* TODO: missing rolling buy/sell-pressure endpoint to return windowed taker counts */}
+          {/* TODO(core-sdk): missing rolling buy/sell-pressure endpoint to return windowed taker counts */}
           {liveChain ? null : (
           <div style={{display:"flex",gap:20,padding:"10px 14px",borderBottom:"1px solid var(--fg-700)",background:"rgba(0,0,0,0.1)"}}>
             {[
@@ -2347,8 +2787,8 @@ const MarketPage = ({ sym, go }: any) => {
                         );
                       })()}
                     </td>
-                    <td className="mono num" style={{textAlign:"right",color: t.side==="buy"?"var(--ok)":t.side==="sell"?"var(--err)":"var(--gold)",fontSize:12}}>{mkMoney(t.px)}</td>
-                    <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:11.5}}>${t.value.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+                    <td className="mono num" style={{textAlign:"right",color: t.side==="buy"?"var(--ok)":t.side==="sell"?"var(--err)":"var(--gold)",fontSize:12}}>{t.live ? mkQuote(t.px, quoteAssetId) : mkMoney(t.px)}</td>
+                    <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:11.5}}>{t.live ? mkQuote(t.value, quoteAssetId) : fmtValue(t.value)}</td>
                     <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:11.5}}>{mkNum(t.sz)} {tkn.sym}</td>
                     <td>
                       <div style={{display:"flex",alignItems:"center",gap:8,fontSize:10.5}}>
@@ -2379,7 +2819,8 @@ const MarketPage = ({ sym, go }: any) => {
           <div className="ms-card" style={{padding:"12px 14px"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
               <h3 style={{margin:0,fontSize:13,fontWeight:500}}>Order book</h3>
-              <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.06em"}}>tick {tick}</span>
+              {/* Tick size is a raw quote-tick integer — append the quote-asset label. */}
+              <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.06em"}}>tick {mkFmt(tick)}{(tknIsLive || liveChain) ? ` ${quoteUnitLabel(quoteAssetId)}` : ""}</span>
             </div>
             <div className="mono" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",fontSize:9.5,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase",paddingBottom:6,borderBottom:"1px solid var(--fg-700)"}}>
               <span>Price</span><span style={{textAlign:"right"}}>Size</span><span style={{textAlign:"right"}}>Total</span>
@@ -2406,7 +2847,7 @@ const MarketPage = ({ sym, go }: any) => {
               <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.06em"}}>{up?"↑":"↓"} {Math.abs(chg).toFixed(2)}%</span>
               <span style={{flex:1}}/>
               <span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
-                spread {liveMarket && bestBid !== null && bestAsk !== null ? mkFmt(Math.max(0, bestAsk - bestBid)) : (tick*2).toFixed(3)}
+                spread {liveMarket && bestBid !== null && bestAsk !== null ? mkFmt(Math.max(0, bestAsk - bestBid)) : (tick*2).toFixed(3)}{(tknIsLive || liveChain) ? ` ${quoteUnitLabel(quoteAssetId)}` : ""}
               </span>
             </div>
             {/* bids */}
@@ -2423,9 +2864,9 @@ const MarketPage = ({ sym, go }: any) => {
               </div>
             ))}
             <div className="mono" style={{marginTop:10,paddingTop:8,borderTop:"1px solid var(--fg-700)",fontSize:10,color:"var(--fg-500)"}}>
-              <div style={{display:"flex",justifyContent:"space-between"}}><span>Buy depth</span><span style={{color:"var(--ok)"}}>{buyVol === null ? "—" : mkUsd(buyVol)}</span></div>
-              <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span>Sell depth</span><span style={{color:"var(--err)"}}>{sellVol === null ? "—" : mkUsd(sellVol)}</span></div>
-              {/* TODO: missing per-market venue-share endpoint to return executing venues */}
+              <div style={{display:"flex",justifyContent:"space-between"}}><span>Buy depth</span><span style={{color:"var(--ok)"}}>{buyVol === null ? "—" : (tknIsLive || liveChain) ? fmtBase(buyVol) : mkUsd(buyVol)}</span></div>
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span>Sell depth</span><span style={{color:"var(--err)"}}>{sellVol === null ? "—" : (tknIsLive || liveChain) ? fmtBase(sellVol) : mkUsd(sellVol)}</span></div>
+              {/* TODO(core-sdk): missing per-market venue-share endpoint to return executing venues */}
               <div style={{display:"flex",justifyContent:"space-between",marginTop:2}}><span>Venues</span><span style={{color:"var(--fg-300)"}}>{liveChain ? "on-chain CLOB" : tkn.venues.slice(0,3).map(v=>v.name).join(" · ")}</span></div>
             </div>
           </div>
@@ -2435,21 +2876,21 @@ const MarketPage = ({ sym, go }: any) => {
             <div className="mono" style={{fontSize:11,color:"var(--fg-400)",display:"grid",gridTemplateColumns:"auto 1fr",gap:"6px 12px"}}>
               <span>Contract</span><span style={{color:"var(--fg-200)",wordBreak:"break-all"}}>{fmtAddr(tkn.contract, "contract")}</span>
               {marketId && <><span>Market id</span><span style={{color:"var(--fg-200)",wordBreak:"break-all"}}>{marketId}</span></>}
-              {liveMarket && <><span>Registered</span><span style={{color:"var(--fg-200)"}}>block {Number(liveMarket.registeredAtBlock).toLocaleString()}</span></>}
-              {/* TODO: missing base-token supply endpoint to return circulating supply for a CLOB market */}
-              <span>Supply</span><span style={{color:"var(--fg-200)"}}>{liveChain ? "—" : mkNum(tkn.supply)}</span>
-              {/* TODO: missing market-cap aggregate endpoint to return base-token MCAP */}
-              <span>MCAP</span><span style={{color:"var(--fg-200)"}}>{liveChain ? "—" : mkUsd(tkn.mcap)}</span>
-              {/* TODO: missing holder-count endpoint to return base-token holders for a CLOB market */}
-              <span>Holders</span><span style={{color:"var(--fg-200)"}}>{liveChain ? "—" : mkNum(tkn.holders)}</span>
-              {/* TODO: missing market-ranking endpoint to return volume rank */}
-              <span>Rank</span><span style={{color:"var(--gold)"}}>{liveChain ? "—" : `#${tkn.rank}`}</span>
-              {/* TODO: missing lyth_clobMarket listing-age field to return market registration age */}
-              <span>Listed</span><span style={{color:"var(--fg-200)"}}>{liveChain ? "—" : `${tkn.age.days}d ago`}</span>
+              {(liveMarket || matchedNativeSummary?.createdAtBlock) && <><span>Registered</span><span style={{color:"var(--fg-200)"}}>block {Number(liveMarket?.registeredAtBlock ?? matchedNativeSummary?.createdAtBlock).toLocaleString()}</span></>}
+              {/* TODO(core-sdk): missing base-token supply endpoint to return circulating supply for a CLOB market */}
+              <span>Supply</span><span style={{color:"var(--fg-200)"}}>{liveChain ? "pending" : mkNum(tkn.supply)}</span>
+              {/* TODO(core-sdk): missing market-cap aggregate endpoint to return base-token MCAP */}
+              <span>MCAP</span><span style={{color:"var(--fg-200)"}}>{liveChain ? "pending" : mkUsd(tkn.mcap)}</span>
+              {/* TODO(core-sdk): missing holder-count endpoint to return base-token holders for a CLOB market */}
+              <span>Holders</span><span style={{color:"var(--fg-200)"}}>{liveChain ? "pending" : mkNum(tkn.holders)}</span>
+              {/* TODO(core-sdk): missing market-ranking endpoint to return volume rank */}
+              <span>Rank</span><span style={{color:"var(--gold)"}}>{marketIsLive ? `#${tkn.rank}` : liveChain ? "pending" : `#${tkn.rank}`}</span>
+              {/* TODO(core-sdk): missing lyth_clobMarket listing-age field to return market registration age */}
+              <span>Listed</span><span style={{color:"var(--fg-200)"}}>{matchedNativeSummary?.createdAtBlock ? `block ${Number(matchedNativeSummary.createdAtBlock).toLocaleString()}` : liveChain ? "pending" : `${tkn.age.days}d ago`}</span>
             </div>
             <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid var(--fg-700)"}}>
               <div className="cap" style={{fontSize:9,marginBottom:8}}>Venue share · 24h</div>
-              {/* TODO: missing per-market venue-share endpoint to return 24h volume distribution across venues */}
+              {/* TODO(core-sdk): missing per-market venue-share endpoint to return 24h volume distribution across venues */}
               {liveChain ? (
                 <div className="mono" style={{fontSize:10.5,color:"var(--fg-500)",lineHeight:1.5}}>
                   Venue-share breakdown requires an indexed aggregate the connected node does not expose yet.
