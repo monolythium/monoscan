@@ -442,6 +442,11 @@ body::after {
     linear-gradient(180deg, oklch(0.14 0.02 260 / 0.6), oklch(0.10 0.015 260 / 0.6));
   border-color: var(--denom-private-ring);
 }
+.ms-denom--total {
+  grid-column: 1 / -1;
+  background: linear-gradient(180deg, rgba(242,180,65,0.04), rgba(255,255,255,0.018));
+  border-color: rgba(242,180,65,0.22);
+}
 .ms-bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.04); margin: 10px 0 4px; overflow: hidden; }
 .ms-bar > div { height: 100%; box-shadow: 0 0 10px currentColor; }
 
@@ -2534,4 +2539,3 @@ html[data-theme="light"] .ms-theme__pop {
   }
   .cookie-notice__ok { width: 100%; padding: 10px 18px; }
 }
-
