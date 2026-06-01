@@ -3875,14 +3875,120 @@ export function useLatestTransactions(limit = 50, blockWindow = 24, cursor: stri
 }
 
 /* -------------------------------------------------------------------------- */
+/* Native LYTH supply.                                                        */
+/* -------------------------------------------------------------------------- */
+
+/** 100M LYTH at 8 decimals, pinned by the runtime burn-counter baseline. */
+export const NATIVE_INITIAL_SUPPLY_LYTHOSHI = "10000000000000000";
+
+export interface NativeSupply {
+  /** Genesis supply baseline, in lythoshi. */
+  initialSupplyLythoshi: string;
+  /** Current native supply view returned by the node, in lythoshi. */
+  circulatingSupplyLythoshi: string;
+  /** Cumulative on-chain burn counter, in lythoshi. */
+  totalBurnedLythoshi: string;
+  /** RPC path used to build this view. */
+  source: "lyth_circulatingSupply" | "lyth_totalBurned";
+}
+
+function readNonNegativeBigInt(value: string | number | bigint | null | undefined): bigint | null {
+  if (value === null || value === undefined || value === "") return null;
+  try {
+    const parsed = typeof value === "bigint" ? value : BigInt(value);
+    return parsed >= 0n ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export function nativeSupplyFromTotalBurned(
+  totalBurnedLythoshi: string | number | bigint | null | undefined,
+  source: NativeSupply["source"] = "lyth_totalBurned",
+): NativeSupply | null {
+  const initial = BigInt(NATIVE_INITIAL_SUPPLY_LYTHOSHI);
+  const burned = readNonNegativeBigInt(totalBurnedLythoshi);
+  if (burned === null) return null;
+  const circulating = burned > initial ? 0n : initial - burned;
+  return {
+    initialSupplyLythoshi: initial.toString(),
+    circulatingSupplyLythoshi: circulating.toString(),
+    totalBurnedLythoshi: burned.toString(),
+    source,
+  };
+}
+
+export function normalizeNativeSupplyResponse(
+  value: unknown,
+  source: NativeSupply["source"] = "lyth_circulatingSupply",
+): NativeSupply | null {
+  const root = unknownRecord(unknownRecord(value)?.data ?? value);
+  if (!root) return null;
+
+  const initial =
+    readNonNegativeBigInt(readStringField(root, ["initialSupplyLythoshi", "initial_supply_lythoshi"])) ??
+    BigInt(NATIVE_INITIAL_SUPPLY_LYTHOSHI);
+  const circulating = readNonNegativeBigInt(readStringField(root, [
+    "circulatingSupplyLythoshi",
+    "circulating_supply_lythoshi",
+    "totalSupplyLythoshi",
+    "total_supply_lythoshi",
+  ]));
+  const burned = readNonNegativeBigInt(readStringField(root, [
+    "totalBurnedLythoshi",
+    "total_burned_lythoshi",
+  ]));
+
+  if (circulating === null && burned === null) return null;
+  const normalizedBurned = burned ?? (circulating !== null && initial >= circulating ? initial - circulating : 0n);
+  const normalizedCirculating = circulating ?? (normalizedBurned > initial ? 0n : initial - normalizedBurned);
+  return {
+    initialSupplyLythoshi: initial.toString(),
+    circulatingSupplyLythoshi: normalizedCirculating.toString(),
+    totalBurnedLythoshi: normalizedBurned.toString(),
+    source,
+  };
+}
+
+export async function fetchNativeSupply(): Promise<NativeSupply | null> {
+  if (!isRpcConfigured()) return null;
+  const rpc = getRpcClient();
+  try {
+    const response = await rpc.call<unknown>("lyth_circulatingSupply", []);
+    const supply = normalizeNativeSupplyResponse(response, "lyth_circulatingSupply");
+    if (supply) return supply;
+  } catch {
+    // Older nodes may expose only the burn counter. Try that before giving up.
+  }
+  try {
+    const response = await rpc.call<unknown>("lyth_totalBurned", []);
+    const root = unknownRecord(unknownRecord(response)?.data ?? response);
+    const burned = readStringField(root, ["totalBurnedLythoshi", "total_burned_lythoshi"]);
+    return nativeSupplyFromTotalBurned(burned, "lyth_totalBurned");
+  } catch {
+    return null;
+  }
+}
+
+export function useNativeSupply() {
+  return useQuery<NativeSupply | null>({
+    queryKey: QK.nativeSupply(),
+    enabled: isRpcConfigured(),
+    queryFn: fetchNativeSupply,
+    staleTime: 60_000,
+  });
+}
+
+/* -------------------------------------------------------------------------- */
 /* LYTH burn — indexer-DERIVED estimate.                                        */
 /*                                                                             */
 /* chain-69420 splits every transaction fee 50% burn / 30% operator / 20%      */
 /* treasury (milestone `fee_burn_bps = 5000`). The burn is debited from the    */
 /* sender and credited to no account — it is removed from supply outright.     */
 /* There is NO burn address (the SDK `BURN_ADDR` zero-address carries a 0       */
-/* balance on this chain), NO burn event, and NO chain-side `total_burned`     */
-/* counter or `lyth_totalBurned` / supply RPC today.                           */
+/* balance on this chain) and NO burn event. Newer nodes expose the            */
+/* consensus-critical `lyth_totalBurned` / `lyth_circulatingSupply` counters   */
+/* above; the daily breakdown below is still derived from retained tx fees.    */
 /*                                                                             */
 /* So total-burned must be DERIVED from the per-tx fee the indexer retains.    */
 /* Every transaction carries `fee.total_lythoshi` (base + tip) via the         */
@@ -4148,8 +4254,7 @@ export function useBurnSummary(
     queryKey: QK.burnSummary(pageSize, maxPages),
     enabled: isRpcConfigured(),
     queryFn: () => fetchBurnDigest(pageSize, maxPages),
-    refetchInterval: 60_000,
-    staleTime: 30_000,
+    staleTime: 60_000,
   });
 }
 

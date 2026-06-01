@@ -42,9 +42,11 @@ import {
   useDelegationCap,
   useEntityRatchet,
   useMetricsRange,
+  useNativeSupply,
   useIndexerAvailability,
   useLiveOperatorRoster,
   useOperatorCapabilities,
+  NATIVE_INITIAL_SUPPLY_LYTHOSHI,
 } from "./data/hooks";
 import { AskPage } from "./nl/AskPage";
 import { MsThemeSwitcher } from "./monoscan-theme";
@@ -290,6 +292,23 @@ const Header = ({ go, route }: any) => {
 
 /* ============== LANDING (rebuilt — calm, human-first) ============== */
 const fmtUsd = (n) => n>=1e9 ? `$${(n/1e9).toFixed(2)}B` : n>=1e6 ? `$${(n/1e6).toFixed(1)}M` : n>=1e3 ? `$${(n/1e3).toFixed(1)}K` : `$${n.toFixed(0)}`;
+const LYTHOSHI_PER_LYTH = 100_000_000n;
+const lythoshiToLythNumber = (value: string | bigint | number | null | undefined) => {
+  if (value === null || value === undefined || value === "") return 0;
+  try {
+    const raw = BigInt(value);
+    return Number(raw / LYTHOSHI_PER_LYTH) + Number(raw % LYTHOSHI_PER_LYTH) / Number(LYTHOSHI_PER_LYTH);
+  } catch {
+    const n = Number(value);
+    return Number.isFinite(n) ? n / Number(LYTHOSHI_PER_LYTH) : 0;
+  }
+};
+const fmtLythSupplyCompact = (value: string | bigint | number | null | undefined) => {
+  const lyth = lythoshiToLythNumber(value);
+  if (lyth >= 1_000_000) return `${(lyth / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 })}M`;
+  if (lyth >= 1_000) return `${(lyth / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}K`;
+  return lyth.toLocaleString(undefined, { maximumFractionDigits: 4 });
+};
 const surfaceLabel = (method = "") =>
   method
     .replace(/^lyth_/, "")
@@ -314,6 +333,7 @@ const Landing = ({ go }: any) => {
   // headers for the richer vertex shape once it lands.
   const liveBlocks = useLatestBlocks(8);
   const chainStats = useChainStats();
+  const nativeSupply = useNativeSupply();
   const liveClobMarkets = useClobMarkets(25);
   const indexerAvailability = useIndexerAvailability();
   const liveClusters = useClusterSet();
@@ -356,6 +376,10 @@ const Landing = ({ go }: any) => {
   const totalSupply = pubSupply / (pubPct/100);     // implied total (M)
   const privSupply  = totalSupply - pubSupply;      // M LYTH shielded
   const displayedVol24h = hasLiveMarketResponse ? liveClobVolume : vol24h;
+  const liveSupply = nativeSupply.data ?? null;
+  const liveInitialSupply = liveSupply?.initialSupplyLythoshi ?? NATIVE_INITIAL_SUPPLY_LYTHOSHI;
+  const liveCurrentSupply = liveSupply?.circulatingSupplyLythoshi ?? liveInitialSupply;
+  const liveBurnedSupply = liveSupply?.totalBurnedLythoshi ?? "0";
   const displayedRound = liveStats?.latestHeight ?? round;
   const liveClusterCount = liveStats?.clusters.total ?? liveClusters.data?.length ?? null;
   const livePeerCount = liveStats?.peerCount ?? null;
@@ -457,11 +481,16 @@ const Landing = ({ go }: any) => {
           />
           {hasLiveStats ? (
             <HeadlineStat
-              label="Supply split"
-              value="pending"
-              sub="no live supply/privacy aggregate yet"
-              delta="fixture hidden in live mode"
-              tone="neutral"
+              label="LYTH supply"
+              value={fmtLythSupplyCompact(liveCurrentSupply)}
+              sub={liveSupply
+                ? `genesis ${fmtLythSupplyCompact(liveInitialSupply)} · burned ${fmtLythSupplyCompact(liveBurnedSupply)}`
+                : nativeSupply.isLoading
+                  ? "checking lyth_circulatingSupply"
+                  : "100M genesis baseline; live counter pending"}
+              delta={liveSupply ? liveSupply.source : "supply RPC unavailable"}
+              tone={liveSupply ? "gold" : "neutral"}
+              onClick={()=>go("#/burn")}
             />
           ) : (
             <SupplySplitStat
@@ -676,25 +705,42 @@ const Landing = ({ go }: any) => {
         </Card>
 
         {/* TODO: missing lyth_supply endpoint to return {publicAmount, privateAmount, publicPct}.
-            On a live chain the split renders as "—"; the fixture percentages show only in the
-            offline preview (hasLiveStats === false). */}
+            On a live chain Monoscan shows the total native supply from lyth_circulatingSupply;
+            the public/private split still renders only in offline fixture preview. */}
         <Card title="Two denominations" right={<span className="cap">irreversible · by design</span>}>
           <p className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,margin:"0 0 14px"}}>
             Public LYTH is fully transparent. Private LYTH‑p hides amounts at the protocol layer —
             no mixers, no opt-in. You choose per transaction.
           </p>
           <div className="ms-denoms">
+            <div className="ms-denom ms-denom--total">
+              <div className="cap" style={{color:"var(--gold)"}}>Total LYTH supply</div>
+              <div className="mono" style={{fontSize:24,color:"var(--fg-100)",marginTop:6}}>
+                {hasLiveStats ? fmtLythSupplyCompact(liveCurrentSupply) : `${totalSupply.toFixed(0)}M`}
+              </div>
+              <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>
+                {hasLiveStats
+                  ? liveSupply
+                    ? `genesis ${fmtLythSupplyCompact(liveInitialSupply)} · burned ${fmtLythSupplyCompact(liveBurnedSupply)}`
+                    : "100M genesis baseline · live counter pending"
+                  : `${SCAN.supply.publicPct}% public · ${privPct.toFixed(0)}% shielded`}
+              </div>
+              <div className="ms-bar"><div style={{width:"100%", background:"var(--gold)"}}/></div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
+                {hasLiveStats ? (liveSupply?.source ?? "supply RPC unavailable") : "offline fixture total"}
+              </div>
+            </div>
             <div className="ms-denom">
               <div className="cap" style={{color:"var(--gold)"}}>Public · LYTH</div>
               <div className="mono" style={{fontSize:22,color:"var(--fg-100)",marginTop:6}}>
                 {hasLiveStats ? "—" : `${SCAN.supply.public}M`}
               </div>
               <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>
-                {hasLiveStats ? "no live supply endpoint yet" : "circulating · introspectable"}
+                {hasLiveStats ? "live split endpoint pending" : "circulating · introspectable"}
               </div>
               <div className="ms-bar"><div style={{width:`${hasLiveStats ? 0 : SCAN.supply.publicPct}%`, background:"var(--gold)"}}/></div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
-                {hasLiveStats ? "split unavailable until lyth_supply lands" : `${SCAN.supply.publicPct}% of total`}
+                {hasLiveStats ? "awaiting public/private supply split" : `${SCAN.supply.publicPct}% of total`}
               </div>
             </div>
             <div className="ms-denom ms-denom--private">
@@ -1877,10 +1923,14 @@ const App = () => {
   const head = useChainHead();
   const strip = useChainStrip();
   const [mockRound, setMockRound] = useState(SCAN.consensus.round);
+  const hasLiveHead =
+    (strip.data?.round !== null && strip.data?.round !== undefined) ||
+    (head.data?.round !== null && head.data?.round !== undefined);
   useEffect(()=>{
+    if (hasLiveHead) return;
     const id = setInterval(()=>setMockRound(r=>r+1), 380);
     return ()=>clearInterval(id);
-  },[]);
+  },[hasLiveHead]);
   const round = strip.data?.round ?? head.data?.round ?? mockRound;
 
   // Live counterparts to the three previously-mocked strip fields. Each

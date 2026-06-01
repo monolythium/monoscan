@@ -38,6 +38,7 @@ import {
   useMrcHoldersForTokenBalances,
   useMrcAccount,
   useMrcMetadataForTokenBalances,
+  useNativeSupply,
   useNetworkStatus,
   useOperatorCapabilities,
   usePeerSummary,
@@ -54,6 +55,7 @@ import {
   useVerticesAtRound,
   useWalletDelegations,
   useWalletDelegationHistory,
+  NATIVE_INITIAL_SUPPLY_LYTHOSHI,
   BRIDGE_ROUTE_DISCLOSURE_UPSTREAM_FIELD,
   bridgeRouteDisclosureFailureDetails,
   bridgeTrustDisclosureDisplaySlice,
@@ -159,6 +161,20 @@ const _rawToLythNumber = (value: string | bigint | number | null | undefined) =>
   } catch {
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
+  }
+};
+const _fmtLythCompactRaw = (value: string | bigint | number | null | undefined) =>
+  _abbr(_rawToLythNumber(value));
+const _subtractLythoshi = (
+  left: string | bigint | number | null | undefined,
+  right: string | bigint | number | null | undefined,
+) => {
+  try {
+    const a = BigInt(left ?? 0);
+    const b = BigInt(right ?? 0);
+    return a > b ? (a - b).toString() : "0";
+  } catch {
+    return null;
   }
 };
 export function transactionFeeValueLabel(
@@ -774,6 +790,7 @@ const StatsPage = ({ go }: any) => {
   const precompiles = useActivePrecompiles();
   const peerSummary = usePeerSummary();
   const metrics = useMetricsRange(LIVE_METRIC_SELECTORS);
+  const nativeSupply = useNativeSupply();
   const indexerAvailability = useIndexerAvailability();
   // Static fallback values when the live network-status query has no data.
   // The live hook polls on its own cadence; do not drive UI numbers from
@@ -792,6 +809,7 @@ const StatsPage = ({ go }: any) => {
   const liveLatestBlock = chainStats.data?.latestHeight ?? live.data?.blockNumber ?? null;
   const liveChainId = chainStats.data?.chainId ?? null;
   const liveGenesisHash = chainStats.data?.genesisHash ?? null;
+  const liveSupply = nativeSupply.data ?? null;
   const liveGenesisShort = liveGenesisHash
     ? `${liveGenesisHash.slice(0, 10)}…${liveGenesisHash.slice(-6)}`
     : null;
@@ -957,6 +975,14 @@ const StatsPage = ({ go }: any) => {
           value={liveLatestBlock !== null ? `${_fmtI(liveLatestBlock)} rounds` : S.network.chainAge}
           sub={liveGenesisShort ? `genesis ${liveGenesisShort}` : `genesis ${S.network.genesisDate}`}
           tone="neutral"
+        />
+        <StatCounter
+          label="LYTH supply"
+          value={_fmtLythCompactRaw(liveSupply?.circulatingSupplyLythoshi ?? NATIVE_INITIAL_SUPPLY_LYTHOSHI)}
+          sub={liveSupply
+            ? `burned ${_fmtLythCompactRaw(liveSupply.totalBurnedLythoshi)} · ${liveSupply.source}`
+            : nativeSupply.isLoading ? "checking supply RPC" : "100M genesis baseline"}
+          tone={liveSupply ? "gold" : "neutral"}
         />
       </section>
 
@@ -1166,21 +1192,27 @@ const HealthRow = ({ label, value, tone }: any) => (
    Every transaction fee on chain-69420 is split 50% burn / 30% operator /
    20% treasury (milestone fee_burn_bps = 5000). The burn is debited from the
    sender and credited to NO account — it leaves the supply outright. There is
-   no burn address, no burn event, and no chain-side total-burned counter or
-   supply RPC yet, so the figure here is DERIVED from the per-tx fee the
-   indexer retains: burn = sum(fee.total_lythoshi) × 50%. It is an indexed
-   ESTIMATE over the most recent slice of retained blocks, not an authoritative
-   on-chain number — every surface below labels it as such.
+   no burn address and no burn event. Newer nodes expose `lyth_totalBurned`
+   and `lyth_circulatingSupply`; the per-day and recent contribution views are
+   still DERIVED from retained per-tx fees. Every derived surface below labels
+   that estimate explicitly.
 ===================================================== */
 const BurnPage = ({ go }: any) => {
   const burn = useBurnSummary();
+  const nativeSupply = useNativeSupply();
   const chainStats = useChainStats();
   const digest = burn.data ?? null;
+  const supply = nativeSupply.data ?? null;
   const hasLive = digest !== null && digest !== undefined;
 
-  const totalBurnedLyth = hasLive ? _fmtLythRaw(digest.totalBurnedLythoshi) : null;
+  const initialSupplyLythoshi = supply?.initialSupplyLythoshi ?? NATIVE_INITIAL_SUPPLY_LYTHOSHI;
+  const currentSupplyLythoshi = supply?.circulatingSupplyLythoshi ??
+    (hasLive ? _subtractLythoshi(initialSupplyLythoshi, digest.totalBurnedLythoshi) : initialSupplyLythoshi);
+  const displayedBurnedLythoshi = supply?.totalBurnedLythoshi ?? digest?.totalBurnedLythoshi ?? null;
+  const totalBurnedLyth = displayedBurnedLythoshi ? _fmtLythRaw(displayedBurnedLythoshi) : null;
   const totalFeesLyth = hasLive ? _fmtLythRaw(digest.totalFeesLythoshi) : null;
   const latestBlock = chainStats.data?.latestHeight ?? digest?.latestBlock ?? null;
+  const refreshing = burn.isFetching || nativeSupply.isFetching;
 
   // Per-day series (oldest → newest) for the chart + the daily table. Buckets
   // with an unknown day (no block timestamp from the feed) are kept out of the
@@ -1217,30 +1249,45 @@ const BurnPage = ({ go }: any) => {
           <h1 className="ms-h1" style={{margin:"4px 0 0"}}>LYTH removed from supply</h1>
           <p className="mono" style={{color:"var(--fg-400)",margin:"8px 0 0",fontSize:13,maxWidth:760,lineHeight:1.55}}>
             Half of every transaction fee on chain-69420 is burned — debited from the sender and credited to no account.
-            There is no burn address and no on-chain total-burned counter yet, so this figure is
+            Current supply comes from the native supply counter when the node exposes it. The daily breakdown is
             <b style={{color:"var(--fg-200)"}}> derived</b> from the per-transaction fees the indexer retains
-            (burn = 50% of total fees). Treat it as an indexed estimate, not an authoritative chain number.
+            (burn = 50% of total fees), so treat that breakdown as an indexed estimate.
           </p>
         </div>
-        <button className="ov-cta ov-cta--ghost" onClick={()=>burn.refetch()}>
-          {burn.isFetching ? "Refreshing…" : "Refresh"}
+        <button className="ov-cta ov-cta--ghost" onClick={()=>{ void nativeSupply.refetch(); void burn.refetch(); }}>
+          {refreshing ? "Refreshing…" : "Refresh"}
         </button>
       </section>
 
       {/* Headline burn counters */}
       <section className="stats-econ-grid" style={{marginTop:20}}>
         <StatBig
-          label="Total LYTH burned · indexed estimate"
-          value={hasLive ? (totalBurnedLyth?.replace(/ LYTH$/, "") ?? "—") : "—"}
+          label="Current LYTH supply"
+          value={currentSupplyLythoshi ? (_fmtLythRaw(currentSupplyLythoshi)?.replace(/ LYTH$/, "") ?? "—") : "—"}
           unit="LYTH"
           tone="gold"
-          annotation={hasLive
+          annotation={supply
+            ? `genesis ${_fmtLythCompactRaw(initialSupplyLythoshi)} · burned ${_fmtLythCompactRaw(supply.totalBurnedLythoshi)}`
+            : nativeSupply.isLoading ? "checking lyth_circulatingSupply" : "100M genesis baseline"}
+          chart={null}
+          footer={supply ? `${supply.source} · on-chain counter` : "Falls back to the 100M genesis supply baseline."}
+        />
+        <StatBig
+          label={supply ? "Total LYTH burned" : "Total LYTH burned · indexed estimate"}
+          value={displayedBurnedLythoshi ? (totalBurnedLyth?.replace(/ LYTH$/, "") ?? "—") : "—"}
+          unit="LYTH"
+          tone="gold"
+          annotation={supply
+            ? "on-chain burn counter · includes fee dust, slash burns, and zero-address burns"
+            : hasLive
             ? `50% of ${totalFeesLyth ?? "—"} fees · ${_fmtI(digest.txCount)} txs`
             : burn.isLoading ? "scanning feed…" : "connect a node to derive the burn"}
           chart={daySeries.length > 1
             ? <MiniSpark data={daySeries} w={260} h={56} stroke="var(--gold)" fill="rgba(242,180,65,0.10)"/>
             : null}
-          footer={hasLive
+          footer={supply
+            ? `Authoritative counter from ${supply.source}.`
+            : hasLive
             ? `Derived from fees over ${scanCoverage}${digest.truncated ? " (recent slice only)" : ""}.`
             : "lyth_txFeed exposes per-tx fee.total_lythoshi"}
         />
@@ -1290,14 +1337,14 @@ const BurnPage = ({ go }: any) => {
         <div className="ms-card" style={{padding:"14px 18px",borderLeft:"3px solid var(--gold)"}}>
           <div className="mono" style={{color:"var(--fg-300)",fontSize:12,lineHeight:1.6}}>
             <b style={{color:"var(--fg-100)"}}>How this number is derived.</b>{" "}
-            chain-69420 has no burn address, no burn event, and no <span className="mono">lyth_totalBurned</span> /
-            supply RPC. The burn is computed from each transaction's retained
-            fee: <span className="mono">burn = floor(fee.total_lythoshi × 5000 / 10000)</span>, summed over the indexed feed.
-            It covers only blocks this node still retains and stops after a bounded walk, so on a long chain it is a
-            <b style={{color:"var(--fg-200)"}}> partial</b> figure. It also slightly under-counts: the 50/30/20 integer
-            split routes its division remainder to the burn, which the per-tx 50% floor here does not add back — the true
-            burn is <span className="mono">≥</span> this estimate. An authoritative total awaits a chain-side burn
-            counter + <span className="mono">lyth_totalBurned</span> RPC.
+            chain-69420 has no burn address and no burn event. When available,
+            <span className="mono"> lyth_circulatingSupply</span> supplies the current total and
+            <span className="mono"> lyth_totalBurned</span> supplies the authoritative burn counter.
+            The per-day chart and recent rows are computed from each retained transaction fee:
+            <span className="mono"> burn = floor(fee.total_lythoshi × 5000 / 10000)</span>, summed over the indexed feed.
+            That feed walk covers only blocks this node still retains and stops after a bound, so on a long chain those
+            rows are a <b style={{color:"var(--fg-200)"}}>partial</b> breakdown. The per-tx floor also omits split dust;
+            use the native counter as the authoritative total when it is present.
           </div>
         </div>
       </section>

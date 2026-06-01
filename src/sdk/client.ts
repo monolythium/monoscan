@@ -262,6 +262,7 @@ export const QK = {
   txStatus: (h: string) => ["mono", "tx", h, "status"] as const,
   txFeed: (limit: number, cursor: string | null = null) =>
     ["mono", "transactions", "feed", limit, cursor ?? "head"] as const,
+  nativeSupply: () => ["mono", "supply", "native"] as const,
   burnSummary: (pageSize: number, maxPages: number) =>
     ["mono", "burn", "summary", pageSize, maxPages] as const,
   latestTransactions: (limit: number, blockWindow: number, cursor: string | null = null) =>
