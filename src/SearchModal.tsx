@@ -6,10 +6,16 @@
 //   - Cmd/Ctrl + K anywhere → modal opens.
 //   - Escape or backdrop click → close without navigating.
 //   - Enter on the input → routes the same way the inline form did
-//     (number → round, 0x… → search, c-N → cluster, anything else →
-//     search) and closes the modal.
+//     (number → round, bech32m account mono1… → wallet, 0x… → search,
+//     c-N → cluster, anything else → search) and closes the modal.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+
+// A bech32m account address (`mono1…`, bech32 charset) routes straight to its
+// wallet/address page — mirroring how the design's header sent an operator
+// address to its profile. Other HRPs (cluster/contract) fall through to the
+// unified search, which disambiguates them.
+const BECH32M_ACCOUNT_RE = /^mono1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}$/i;
 
 interface SearchModalProps {
   open: boolean;
@@ -68,6 +74,7 @@ export function SearchModal({ open, onClose, go }: SearchModalProps) {
         "operator fees": "#/prover-market",
       };
       if (surfaceRoute[lower]) go(surfaceRoute[lower]);
+      else if (BECH32M_ACCOUNT_RE.test(v)) go(`#/wallet/${encodeURIComponent(v)}`);
       else if (/^\d+$/.test(v)) go(`#/round/${v}`);
       else if (v.startsWith("0x")) go(`#/search/${encodeURIComponent(v)}`);
       else if (/^c-\d+/i.test(v)) go(`#/cluster/${v.slice(2)}`);

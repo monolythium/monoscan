@@ -385,7 +385,8 @@ const ClusterRing = ({ members = [], threshold = 5, size = 260 }: any) => {
   // quorum arc — fraction filled = have / members.length
   const total = members.length;
   const circumference = 2 * Math.PI * (r + 22);
-  const filled = (have / total) * circumference;
+  const filled = total > 0 ? (have / total) * circumference : 0;
+  const thresholdAngle = total > 0 ? (threshold / total) * 360 - 90 : -90;
 
   return (
     <div style={{ position: "relative", width: size, height: size }}>
@@ -404,10 +405,10 @@ const ClusterRing = ({ members = [], threshold = 5, size = 260 }: any) => {
           style={{ filter: `drop-shadow(0 0 6px ${have >= threshold ? "var(--state-nominal)" : "var(--state-jail)"})`, transition: "stroke-dasharray 500ms var(--e-out)" }}
         />
         {/* threshold tick */}
-        <line
-          x1={cx} y1={cy - (r + 22) - 6} x2={cx} y2={cy - (r + 22) + 6}
-          stroke="var(--state-nominal)" strokeWidth="1.5"
-          transform={`rotate(${(threshold / total) * 360 - 90} ${cx} ${cy})`}
+          <line
+            x1={cx} y1={cy - (r + 22) - 6} x2={cx} y2={cy - (r + 22) + 6}
+            stroke="var(--state-nominal)" strokeWidth="1.5"
+          transform={`rotate(${thresholdAngle} ${cx} ${cy})`}
           opacity="0.6"
         />
         {/* inner glow */}
@@ -429,8 +430,11 @@ const ClusterRing = ({ members = [], threshold = 5, size = 260 }: any) => {
         const color = m.state === "live" ? "var(--state-nominal)" :
                       m.state === "lag"  ? "var(--state-maintenance)" :
                       "var(--state-jail)";
+        const title = [m.handle, m.addrShort, typeof m.rep === "number" ? `rep ${m.rep.toFixed(2)}` : null]
+          .filter(Boolean)
+          .join(" · ");
         return (
-          <div key={m.id} title={`${m.handle} · ${m.addrShort} · rep ${m.rep.toFixed(2)}`} style={{
+          <div key={m.id} title={title} style={{
             position: "absolute",
             left: x, top: y,
             width: 40, height: 40, borderRadius: "50%",
