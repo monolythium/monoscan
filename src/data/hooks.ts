@@ -58,6 +58,7 @@ import {
   type ClusterResignationsResponse,
   type DagParentsResponse,
   type ClusterStatusResponse,
+  type ClusterAprResponse,
   type DagSyncStatus,
   type DecodeTxResponse,
   type DelegationCapResponse,
@@ -4604,6 +4605,24 @@ export function useOperatorRisk(authorityIndex: number | undefined, windowRounds
       }
     },
     staleTime: 30_000,
+  });
+}
+
+// Per-cluster annualized reward rate (lyth_clusterApr, core-sdk 0.3.14). Closes
+// the cluster-APY gap: the detail hero previously showed "not indexed" in live
+// mode because no reward aggregate was exposed.
+export function useClusterApr(clusterId: number) {
+  return useQuery<ClusterAprResponse | null>({
+    queryKey: ["mono", "cluster", clusterId, "apr"],
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythClusterApr(clusterId);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
   });
 }
 

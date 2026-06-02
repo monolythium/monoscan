@@ -334,11 +334,11 @@ describe("StatsPage / BurnPage supply-and-burn merge", () => {
     // section with an anchor id so #/burn deep-links still resolve.
     expect(html).toContain('id="burn"');
     expect(html).toContain("Supply &amp; burn");
-    expect(html).toContain("LYTH removed from supply");
+    expect(html).toContain("Native supply totals and retained fee-burn estimates.");
     // Burn metrics that BurnPage used to own must survive inside the section.
-    expect(html).toContain("Current LYTH supply");
-    expect(html).toContain("Total fees scanned");
-    expect(html).toContain("Burning txs scanned");
+    expect(html).toContain("Current supply");
+    expect(html).toContain("Indexed fees");
+    expect(html).toContain("Txs scanned");
     expect(html).toContain("How this number is derived.");
     // 50% burn split honesty banner preserved.
     expect(html).toContain("burn = floor(fee.total_lythoshi × 5000 / 10000)");
@@ -353,10 +353,10 @@ describe("StatsPage / BurnPage supply-and-burn merge", () => {
     expect(burnHtml).toContain('id="burn"');
     expect(burnHtml).toContain("Supply &amp; burn");
     expect(burnHtml).toContain("Monolythium");
-    expect(burnHtml).toContain("Current LYTH supply");
+    expect(burnHtml).toContain("Current supply");
     // Both render the same Statistics shell (the burn section is part of it).
-    expect(burnHtml).toContain("Total fees scanned");
-    expect(statsHtml).toContain("Total fees scanned");
+    expect(burnHtml).toContain("Indexed fees");
+    expect(statsHtml).toContain("Indexed fees");
   });
 });
 
@@ -561,7 +561,6 @@ describe("AgentReputationCard", () => {
     const html = renderToStaticMarkup(<AgentReputationCard reputation={reputation}/>);
 
     expect(html).toContain("Agent reputation");
-    expect(html).toContain("lyth_agentReputation");
     expect(html).toContain("Category 7");
     expect(html).toContain("5");
     expect(html).toContain("123");
@@ -599,7 +598,7 @@ describe("AgentReputationCard", () => {
 
     expect(html).toContain("Category 12");
     expect(html).toContain("Reputation unavailable");
-    expect(html).toContain("No lyth_agentReputation aggregate returned for this provider category.");
+    expect(html).toContain("No reputation aggregate returned for this provider category.");
     // bech32m provider address, middle-truncated by fmtAddrShort (12/6).
     expect(html).toContain("mono1zg69v7y…ajvdc4");
   });
