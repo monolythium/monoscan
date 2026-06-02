@@ -140,7 +140,8 @@ function nativeReceiptFixture(
     receiptCommitment: `0x${"bb".repeat(32)}`,
     counters: { cycles: 44, syscallUnits: 3, stateIoUnits: 2 },
     fee: {
-      total_lythoshi: "440000000000",
+      // 4,400 LYTH total at the ADR-0037 18-decimal native scale.
+      total_lythoshi: "4400000000000000000000",
       total_lyth: "4,400",
       cycles_used: 44,
       base_price_per_cycle_lythoshi: "10000000000",
@@ -411,8 +412,9 @@ function apiEnvelope<T>(data: T) {
 }
 
 function nativeFee(overrides: Record<string, unknown> = {}) {
+  // 77 LYTH total at the ADR-0037 18-decimal native scale (77 × 1e18).
   return {
-    total_lythoshi: "7700000000",
+    total_lythoshi: "77000000000000000000",
     total_lyth: "77",
     cycles_used: 42,
     base_price_per_cycle_lythoshi: "100000000",
@@ -2616,7 +2618,7 @@ describe("API execution-unit transformations", () => {
     } as any);
 
     expect(pageRows[0]).toMatchObject({ value: "1234", executionUnitLimit: 42_000, fee });
-    expect(pageRows[0]?.feeDisplay?.totalLythoshi).toBe("7700000000");
+    expect(pageRows[0]?.feeDisplay?.totalLythoshi).toBe("77000000000000000000");
     expect(feedRows[0]).toMatchObject({ value: "999", executionUnitLimit: 21_000, fee });
     expect(feedRows[0]?.feeDisplay?.defaultFeeText).toBe("Network fee: 77 LYTH");
   });
@@ -2711,7 +2713,8 @@ describe("API execution-unit transformations", () => {
       receiptCommitment: `0x${"bb".repeat(32)}`,
       counters: { cycles: 44, syscallUnits: 3, stateIoUnits: 2 },
       fee: {
-        total_lythoshi: "440000000000",
+        // 4,400 LYTH total at the ADR-0037 18-decimal native scale.
+        total_lythoshi: "4400000000000000000000",
         total_lyth: "4,400",
         cycles_used: 44,
         base_price_per_cycle_lythoshi: "10000000000",
@@ -2780,7 +2783,8 @@ describe("API execution-unit transformations", () => {
       receiptCommitment: `0x${"bc".repeat(32)}`,
       counters: { cycles: 10, syscallUnits: 1, stateIoUnits: 0 },
       fee: {
-        total_lythoshi: "1",
+        // 0.00000001 LYTH total at the ADR-0037 18-decimal native scale (1e10 lythoshi).
+        total_lythoshi: "10000000000",
         total_lyth: "0.00000001",
         cycles_used: 10,
         base_price_per_cycle_lythoshi: "0",
@@ -2867,7 +2871,8 @@ describe("API execution-unit transformations", () => {
       noEvmProof: null,
       counters: { cycles: 44, syscallUnits: 3, stateIoUnits: 2 },
       fee: {
-        total_lythoshi: "440000000000",
+        // 4,400 LYTH total at the ADR-0037 18-decimal native scale.
+        total_lythoshi: "4400000000000000000000",
         total_lyth: "4,400",
         cycles_used: 44,
         base_price_per_cycle_lythoshi: "10000000000",
@@ -4105,7 +4110,7 @@ describe("LYTH burn derivation", () => {
   it("pins the milestone fee split to 50% burn", () => {
     expect(FEE_BURN_BPS).toBe(5000n);
     expect(FEE_BPS_DENOMINATOR).toBe(10000n);
-    expect(NATIVE_INITIAL_SUPPLY_LYTHOSHI).toBe("10000000000000000");
+    expect(NATIVE_INITIAL_SUPPLY_LYTHOSHI).toBe("100000000000000000000000000");
   });
 
   it("burns exactly 50% of a fee, flooring the integer division", () => {
@@ -4205,14 +4210,14 @@ describe("LYTH burn derivation", () => {
 
   it("normalizes the native circulating-supply RPC response", () => {
     const supply = normalizeNativeSupplyResponse({
-      initialSupplyLythoshi: "10000000000000000",
-      circulatingSupplyLythoshi: "9999999998765432",
+      initialSupplyLythoshi: "100000000000000000000000000",
+      circulatingSupplyLythoshi: "99999999999999999998765432",
       totalBurnedLythoshi: "1234568",
     });
 
     expect(supply).toEqual({
-      initialSupplyLythoshi: "10000000000000000",
-      circulatingSupplyLythoshi: "9999999998765432",
+      initialSupplyLythoshi: "100000000000000000000000000",
+      circulatingSupplyLythoshi: "99999999999999999998765432",
       totalBurnedLythoshi: "1234568",
       source: "lyth_circulatingSupply",
     });
@@ -4221,9 +4226,10 @@ describe("LYTH burn derivation", () => {
   it("derives current supply from total burned on older nodes", () => {
     const supply = nativeSupplyFromTotalBurned("250000000", "lyth_totalBurned");
 
+    // initial (100M LYTH at 18 decimals) − 250000000 burned lythoshi.
     expect(supply).toEqual({
-      initialSupplyLythoshi: "10000000000000000",
-      circulatingSupplyLythoshi: "9999999750000000",
+      initialSupplyLythoshi: "100000000000000000000000000",
+      circulatingSupplyLythoshi: "99999999999999999750000000",
       totalBurnedLythoshi: "250000000",
       source: "lyth_totalBurned",
     });

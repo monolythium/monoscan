@@ -97,6 +97,7 @@ import {
   type NativeAgentActionKind,
 } from "./monoscan-agent-actions";
 import type { AgentReputationRecord, AgentReputationResponse, CapabilitiesResponse, NativeReceiptFeeDisplay } from "@monolythium/core-sdk";
+import { LYTHOSHI_PER_LYTH, NATIVE_LYTH_DECIMALS } from "@monolythium/core-sdk";
 
 /* Light helpers — keep local so this file is self-contained */
 const _fmt  = (n: any) => n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -138,14 +139,13 @@ const _calldataArgDisplay = (value: unknown): string => {
   }
   return String(value);
 };
-const LYTHOSHI_PER_LYTH = 100_000_000n;
 const _fmtLythoshiAmount = (lythoshi: bigint) => {
   const sign = lythoshi < 0n ? "-" : "";
   const abs = lythoshi < 0n ? -lythoshi : lythoshi;
   const whole = abs / LYTHOSHI_PER_LYTH;
   const frac = abs % LYTHOSHI_PER_LYTH;
   if (frac === 0n) return `${sign}${whole.toLocaleString()}`;
-  const fracText = frac.toString().padStart(8, "0").replace(/0+$/, "");
+  const fracText = frac.toString().padStart(NATIVE_LYTH_DECIMALS, "0").replace(/0+$/, "");
   return `${sign}${whole.toLocaleString()}.${fracText}`;
 };
 const _fmtLyth = (lythoshi: bigint | null | undefined) => {

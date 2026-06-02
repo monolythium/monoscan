@@ -9,7 +9,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Fallback data is shape-driven only; strict types live in `./hooks.ts`.
 
-import { addressToTypedBech32, type AddressKind } from "@monolythium/core-sdk";
+import { addressToTypedBech32, LYTHOSHI_PER_LYTH, type AddressKind } from "@monolythium/core-sdk";
 
 const _hash = (n: number): string =>
   `0x${n.toString(16).padStart(8, "0")}…${(n * 7919).toString(16).slice(-4)}`;
@@ -671,9 +671,10 @@ import type {
   SpendingPolicyDimensions,
 } from "../sdk/surfaces";
 
-const LYTHOSHI = 100_000_000n;
+// Human LYTH → raw lythoshi string, preserving 6 fractional digits of the
+// float input. `LYTHOSHI_PER_LYTH` is the SDK source of truth (18 decimals).
 const _lythoshi = (lyth: number): string =>
-  (BigInt(Math.round(lyth * 1_000_000)) * (LYTHOSHI / 1_000_000n)).toString();
+  (BigInt(Math.round(lyth * 1_000_000)) * (LYTHOSHI_PER_LYTH / 1_000_000n)).toString();
 const _opId = (n: number): string =>
   `0x${(n * 0x9e3779b1).toString(16).padStart(8, "0").slice(-8).repeat(8).slice(0, 64)}`;
 const _bls = (n: number): string =>

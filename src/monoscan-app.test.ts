@@ -121,13 +121,13 @@ describe("cName — one-based padded cluster label", () => {
 
 describe("fmtLythAmount — precise bonded/stake amounts", () => {
   it("formats a raw lythoshi string as a precise LYTH amount with unit", () => {
-    // 5000 LYTH == 5000 * 1e8 lythoshi
-    expect(fmtLythAmount("500000000000")).toBe("5,000 LYTH");
+    // 5000 LYTH == 5000 * 1e18 lythoshi (ADR-0037 18-decimal native scale)
+    expect(fmtLythAmount("5000000000000000000000")).toBe("5,000 LYTH");
   });
 
   it("keeps up to two fractional digits", () => {
-    // 1.25 LYTH == 125000000 lythoshi
-    expect(fmtLythAmount("125000000")).toBe("1.25 LYTH");
+    // 1.25 LYTH == 1.25 * 1e18 == 1250000000000000000 lythoshi
+    expect(fmtLythAmount("1250000000000000000")).toBe("1.25 LYTH");
   });
 
   it("renders an em dash when the amount is missing", () => {
@@ -139,7 +139,8 @@ describe("fmtLythAmount — precise bonded/stake amounts", () => {
 
 describe("fmtClusterStake — defensive cluster TVS / stake-weight render", () => {
   it("formats a real lythoshi stake as LYTH", () => {
-    expect(fmtClusterStake({ stake: "500000000000" })).toBe("5,000 LYTH");
+    // 5000 LYTH at the ADR-0037 18-decimal native scale.
+    expect(fmtClusterStake({ stake: "5000000000000000000000" })).toBe("5,000 LYTH");
   });
 
   it("renders an honest 'not indexed' when the directory carries no stake field", () => {
