@@ -11,7 +11,7 @@ import {
   Icon, Sparkline, ClusterRing, StateMachinePill, Card,
 } from "./primitives";
 import { MONOSCAN_DATA, MARKETS } from "./data/fallback";
-import { StatsPage, BurnPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage, supplySourceLabel } from "./monoscan-extras";
+import { StatsPage, BurnPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage, liveMarketRowsFromNativeState } from "./monoscan-markets";
 import {
   DiversityPage,
@@ -23,11 +23,8 @@ import {
   BridgePage,
 } from "./monoscan-surfaces";
 import {
-  useChainHead,
-  useChainStrip,
   useChainStats,
   useClobMarkets,
-  useLatestBlocks,
   useClusterSet,
   useClusterStatus,
   useHealthyClusters,
@@ -53,7 +50,6 @@ import { AskPage } from "./nl/AskPage";
 import { MsThemeSwitcher } from "./monoscan-theme";
 import { SearchModal } from "./SearchModal";
 import { fmtAddr, fmtHashShort } from "./sdk/format";
-import { isRpcConfigured } from "./sdk/client";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -74,109 +70,6 @@ const openWalletStakeIntent = (cluster: any) => {
   window.__msToast?.(`Opening desktop/mobile wallet staking flow for ${label}; link copied.`);
   window.location.href = href;
 };
-
-/* ============== TOP STRIP ============== */
-/**
- * Renders the live top strip. `round` arrives already-resolved by the App
- * (live RPC long-poll first, mock fallback second); the rest of the fields
- * are best-effort live values from `useChainStrip` and degrade quietly to
- * the mocked values when the node is unreachable.
- */
-const ChainStrip = ({
-  round,
-  latencyMs,
-  ratePerSec,
-  signers,
-  strip,
-  proposerLatency,
-  attestationRate,
-  liveClusterUp,
-  liveClusterTotal,
-  liveMode,
-}: any) => {
-  const block = strip?.blockNumber;
-  const peers = strip?.peerCount;
-  const syncState = strip?.syncState;
-  const syncLag = strip?.syncLag;
-  const netVersion = strip?.netVersion;
-  // `web3_clientVersion` is the node's self-reported build identifier
-  // (commonly `protocore/v0.0.24-testnet-…/…` or similar). Surface just the
-  // protocore semver so the strip stays narrow and never cuts mid-token; the
-  // full string stays in the field's title tooltip. Fall back to "n/a" when
-  // the node didn't expose the call.
-  const clientVersion: string | null = strip?.clientVersion ?? null;
-  const clientShort = clientVersion
-    ? (clientVersion.match(/v\d+\.\d+\.\d+[\w.-]*/)?.[0]
-        ?? (clientVersion.length > 28 ? clientVersion.slice(0, 28) + "…" : clientVersion))
-    : null;
-
-  const commitDisplay = proposerLatency
-    ? `${proposerLatency.value.toFixed(0)}${proposerLatency.unit ? proposerLatency.unit : "ms"}`
-    : liveMode ? "—" : `${latencyMs}ms`;
-  const attestDisplay = attestationRate
-    ? `${(attestationRate.value / 100).toFixed(2)}%`
-    : liveMode ? "—" : `${(ratePerSec * 30).toFixed(1)}%`;
-  const clustersDisplay = liveClusterUp !== null && liveClusterTotal !== null
-    ? `${liveClusterUp}/${liveClusterTotal} live`
-    : liveMode ? "—" : `${signers.live}/${signers.total} live`;
-  const roundDisplay = typeof round === "number" && Number.isFinite(round) ? fmt(round) : "—";
-
-  return (
-    <div className="ms-strip">
-      <span className="ms-strip__dot"/>
-      <span className="ms-strip__label">CHAIN LIVE</span>
-      <Sep/>
-      <Field label="round" value={roundDisplay} accent/>
-      <Sep/>
-      {block !== null && block !== undefined ? (
-        <>
-          <Field label="block" value={fmt(block)}/>
-          <Sep/>
-        </>
-      ) : null}
-      <Field
-        label="attest"
-        value={attestDisplay}
-        title={attestationRate ? "lyth_metricsRange · attestation_rate" : liveMode ? "awaiting lyth_metricsRange" : "demo · node has no retained telemetry"}
-      />
-      <Sep/>
-      <Field
-        label="commit p95"
-        value={commitDisplay}
-        title={proposerLatency ? "lyth_metricsRange · proposer_latency" : liveMode ? "awaiting lyth_metricsRange" : "demo · node has no retained telemetry"}
-      />
-      <Sep/>
-      <Field
-        label="clusters"
-        value={clustersDisplay}
-        title={liveClusterUp !== null && liveClusterTotal !== null ? "useHealthyClusters / lyth_chainStats" : liveMode ? "awaiting live cluster set" : "demo · cluster set unavailable"}
-      />
-      {peers !== null && peers !== undefined ? (
-        <>
-          <Sep/>
-          <Field label="peers" value={fmt(peers)}/>
-        </>
-      ) : null}
-      {syncState ? (
-        <>
-          <Sep/>
-          <Field label="sync" value={syncLag !== null && syncLag !== undefined ? `${syncState} · lag ${fmt(syncLag)}` : syncState}/>
-        </>
-      ) : null}
-      <span style={{flex:1}}/>
-      <Field label="network" value={netVersion ? `chain-id ${netVersion}` : "testnet 69420"}/>
-      <Sep/>
-      <Field label="node" value={clientShort ?? "n/a"} title={clientVersion ?? undefined}/>
-    </div>
-  );
-};
-const Sep = () => <span className="ms-strip__sep"/>;
-const Field = ({label, value, accent, title}: any) => (
-  <span className="ms-strip__field" title={title}>
-    <span>{label}</span>
-    <b style={accent ? {color:"var(--gold)"} : {}}>{value}</b>
-  </span>
-);
 
 /* ============== HEADER NAV ============== */
 // Primary surfaces render inline (7 tabs). The specialized network surfaces
@@ -362,9 +255,20 @@ const lythoshiToLythNumber = (value: string | bigint | number | null | undefined
 };
 const fmtLythSupplyCompact = (value: string | bigint | number | null | undefined) => {
   const lyth = lythoshiToLythNumber(value);
-  if (lyth >= 1_000_000) return `${(lyth / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 2 })}M`;
+  if (lyth >= 1_000_000) {
+    const millions = lyth / 1_000_000;
+    const nearWholeMillion = Math.abs(millions - Math.round(millions)) < 0.0000005;
+    return `${millions.toLocaleString(undefined, { maximumFractionDigits: nearWholeMillion ? 2 : 5 })}M`;
+  }
   if (lyth >= 1_000) return `${(lyth / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}K`;
-  return lyth.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  return lyth.toLocaleString(undefined, { maximumFractionDigits: 5 });
+};
+const fmtLythSupplyReadable = (value: string | bigint | number | null | undefined) => {
+  const lyth = lythoshiToLythNumber(value);
+  return lyth.toLocaleString(undefined, {
+    minimumFractionDigits: lyth % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: lyth >= 1_000_000 ? 2 : 5,
+  });
 };
 // Precise (non-compacted) LYTH amount for bonded stake / TVS / vote weight.
 // Accepts a raw lythoshi value and returns e.g. "5,000 LYTH"; "—" on null/NaN.
@@ -397,6 +301,13 @@ const surfaceLabel = (method = "") =>
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (m) => m.toUpperCase());
+const surfaceSourceLabel = (method = "") => {
+  const label = surfaceLabel(method);
+  if (!method) return "Live surface";
+  if (method.startsWith("lyth_")) return label;
+  if (method.includes("_") || method.includes("-")) return label;
+  return label || "Live surface";
+};
 const LANDING_METRIC_SELECTORS = ["committed_round", "mempool_depth", "proposer_latency", "attestation_rate"] as const;
 
 const Landing = ({ go }: any) => {
@@ -405,15 +316,7 @@ const Landing = ({ go }: any) => {
   const [round, setRound] = useState(c.round);
   const [latencySeries, setLatencySeries] = useState(()=>Array.from({length:60},(_,i)=>340+Math.sin(i*0.4)*16+Math.random()*14));
   const [rateSeries, setRateSeries]       = useState(()=>Array.from({length:60},(_,i)=>2.8+Math.sin(i*0.3)*0.15+Math.random()*0.08));
-  const [showDeep, setShowDeep] = useState(false);
 
-  // Live latest blocks for the on-chain feed strip. Falls back to the fixture
-  // recent vertices only when no node is reachable so the offline preview
-  // never goes blank.
-  // TODO: missing indexer endpoint to return per-vertex breakdown (transaction
-  // count, BLS-agg ms, DAC coverage, cluster attribution) — swap these block
-  // headers for the richer vertex shape once it lands.
-  const liveBlocks = useLatestBlocks(8);
   const chainStats = useChainStats();
   const nativeSupply = useNativeSupply();
   const liveClobMarkets = useClobMarkets(25);
@@ -432,6 +335,7 @@ const Landing = ({ go }: any) => {
   );
   const liveMarketRows = liveClobRows.length > 0 ? liveClobRows : nativeSpotRows;
   const liveMarketSource = liveClobRows.length > 0 ? "lyth_clobMarkets" : nativeSpotRows.length > 0 ? "native-market-state" : "live market index";
+  const liveMarketSourceLabel = liveClobRows.length > 0 ? "CLOB market feed" : nativeSpotRows.length > 0 ? "native market state" : "live market index";
   const hasLiveMarketResponse = (liveClobMarkets.data !== undefined && liveClobMarkets.data !== null)
     || (nativeMarketState.data !== undefined && nativeMarketState.data !== null);
   const liveMarketCount = liveMarketRows.length;
@@ -439,7 +343,7 @@ const Landing = ({ go }: any) => {
   // (liveMarketSource) reads like a debug label on a headline card, so surface
   // plain copy and keep the method name only in the title tooltip.
   const liveMarketCaption = hasLiveMarketResponse
-    ? liveMarketCount > 0 ? "indexed on-chain" : "awaiting price feed"
+    ? liveMarketCount > 0 ? "" : "awaiting price feed"
     : liveMode ? "live endpoint pending" : "";
   // 24h-volume headline: there is no quote-notional traded-volume aggregate
   // on-chain yet — CLOB rows carry only unscaled tick/lot integers with no
@@ -522,6 +426,7 @@ const Landing = ({ go }: any) => {
     ? reportedSurfaces.slice(0, 6).map(([method, cap]: any) => ({
         label: surfaceLabel(method),
         method,
+        sourceLabel: surfaceSourceLabel(method),
         status: cap.status,
         tracking: cap.tracking ?? "reported by operator capabilities",
       }))
@@ -535,8 +440,9 @@ const Landing = ({ go }: any) => {
       ].map(([label, method]) => ({
         label,
         method,
+        sourceLabel: surfaceSourceLabel(method),
         status: operatorCapabilities.isLoading ? "loading" : liveMode ? "not reported" : "wired",
-        tracking: liveMode ? "capability advertisement not returned by live RPC" : "typed SDK method with null-safe page handling",
+        tracking: liveMode ? "capability advertisement not returned by live node" : "typed SDK method with null-safe page handling",
       }));
 
   return (
@@ -548,7 +454,7 @@ const Landing = ({ go }: any) => {
             <span className="ov-livedot"/>
             <span className="mono" style={{fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--fg-300)"}}>
               {hasLiveStats
-                ? `Monolythium · block ${fmt(liveStats.latestHeight)} · ${liveStats.peerCount} peers`
+                ? `Monolythium · round ${fmt(liveStats.latestHeight)} · ${liveStats.peerCount} peers`
                 : liveMode
                   ? "Monolythium · connecting to live node"
                 : `Monolythium · demo feed · ${c.ratePerSec.toFixed(1)} rounds/s`}
@@ -559,15 +465,14 @@ const Landing = ({ go }: any) => {
             <span style={{color:"var(--fg-300)"}}>in plain sight.</span>
           </h1>
           <p className="ov-hero__desc">
-            Monoscan is the public explorer for Monolythium — every transfer, every trade, every stake
-            reward, reconciled against {liveClusterCount ?? (liveMode ? "—" : c.signers.total)} live clusters.
-            Search anything, or dig into the data below.
+            Monoscan is the public explorer for Monolythium's Starfish DAG — every transfer,
+            trade, stake reward, vertex, and commit reconciled against {liveClusterCount ?? (liveMode ? "—" : c.signers.total)} live clusters.
+            Search anything, or jump straight into live markets, clusters, wallets, and rounds.
           </p>
           <div className="ov-hero__ctas">
             <button onClick={()=>go("#/markets")} className="ov-cta ov-cta--primary">Browse markets</button>
             <a href="https://monolythium.com/get-lyth" className="ov-cta">Get LYTH ↗</a>
             <button onClick={()=>go("#/clusters")} className="ov-cta">Stake with a cluster</button>
-            <button onClick={()=>document.getElementById("ov-feed")?.scrollIntoView({block:"center",behavior:"smooth"})} className="ov-cta ov-cta--ghost">See it live ↓</button>
           </div>
         </div>
 
@@ -576,41 +481,52 @@ const Landing = ({ go }: any) => {
           <HeadlineStat
             label="LYTH"
             value={hasLiveMarketResponse ? (liveMarketCount > 0 ? "live" : "not listed") : liveMode ? "—" : `$${mono.price.toFixed(3)}`}
-            sub={hasLiveMarketResponse ? `${liveMarketCount} indexed market${liveMarketCount === 1 ? "" : "s"}` : liveMode ? "checking live market state" : `mcap ${fmtUsd(mcap)}`}
+            sub={hasLiveMarketResponse ? `${liveMarketCount} market${liveMarketCount === 1 ? "" : "s"}` : liveMode ? "checking market state" : `mcap ${fmtUsd(mcap)}`}
             delta={hasLiveMarketResponse || liveMode ? liveMarketCaption : `${mono.chg24h>=0?"+":""}${mono.chg24h.toFixed(2)}% · 24h`}
-            deltaTitle={hasLiveMarketResponse ? `source · ${liveMarketSource}` : undefined}
+            deltaTitle={hasLiveMarketResponse ? `market source · ${liveMarketSourceLabel}` : undefined}
             tone={hasLiveMarketResponse ? (liveMarketCount > 0 ? "ok" : "neutral") : liveMode ? "neutral" : mono.chg24h>=0?"ok":"err"}
             spark={hasLiveMarketResponse || liveMode ? [] : mono.sparkline||[]}
             onClick={()=>go("#/market/LYTH")}
             accent
           />
-          <HeadlineStat
-            label={liveMode ? "Cluster set" : "Value staked"}
-            value={liveMode ? (liveClusterCount !== null ? `${liveClusterCount}` : "—") : `${tvs.toFixed(0)}M LYTH`}
-            sub={liveMode ? "live cluster descriptors; TVS aggregate pending" : `≈ ${fmtUsd(tvs*1_000_000 * mono.price)} · secures the chain`}
-            delta={liveMode ? `${livePeerCount ?? 0} peers` : `+${avgApy.toFixed(1)}% APY · average`}
-            tone={liveMode ? "neutral" : "gold"}
-            onClick={()=>go("#/clusters")}
-          />
+          {liveMode ? (
+            <HeadlineStat
+              label="LYTH burned"
+              value={liveSupply ? fmtLythSupplyCompact(liveBurnedSupply) : "—"}
+              sub={liveSupply ? "LYTH removed from circulating supply" : "checking burn"}
+              delta={liveSupply ? "" : "unavailable"}
+              tone={liveSupply ? "gold" : "neutral"}
+              onClick={()=>go("#/burn")}
+            />
+          ) : (
+            <HeadlineStat
+              label="Value staked"
+              value={`${tvs.toFixed(0)}M LYTH`}
+              sub={`≈ ${fmtUsd(tvs*1_000_000 * mono.price)} · secures the chain`}
+              delta={`+${avgApy.toFixed(1)}% APY · average`}
+              tone="gold"
+              onClick={()=>go("#/clusters")}
+            />
+          )}
           <HeadlineStat
             label="24h volume"
             value={displayedVol24h === null ? "—" : fmtUsd(displayedVol24h)}
-            sub={hasLiveMarketResponse ? `indexed across ${liveMarketCount} market${liveMarketCount === 1 ? "" : "s"}` : liveMode ? "checking live market state" : `across ${markets.length} markets`}
-            delta={hasLiveMarketResponse ? liveMarketCaption : liveMode ? "endpoint pending" : "+12.4% vs 7d avg"}
-            deltaTitle={hasLiveMarketResponse ? `source · ${liveMarketSource}` : undefined}
+            sub={hasLiveMarketResponse ? `${liveMarketCount} market${liveMarketCount === 1 ? "" : "s"} · volume pending` : liveMode ? "checking market state" : `across ${markets.length} markets`}
+            delta={hasLiveMarketResponse ? "" : liveMode ? "endpoint pending" : "+12.4% vs 7d avg"}
+            deltaTitle={hasLiveMarketResponse ? `market source · ${liveMarketSourceLabel}` : undefined}
             tone={hasLiveMarketResponse && liveMarketCount === 0 ? "neutral" : "ok"}
             onClick={()=>go("#/markets")}
           />
           {liveMode ? (
             <HeadlineStat
               label="LYTH supply"
-              value={fmtLythSupplyCompact(liveCurrentSupply)}
+              value={liveSupply ? fmtLythSupplyReadable(liveCurrentSupply) : "—"}
               sub={liveSupply
-                ? `genesis ${fmtLythSupplyCompact(liveInitialSupply)} · burned ${fmtLythSupplyCompact(liveBurnedSupply)}`
+                  ? `genesis ${fmtLythSupplyCompact(liveInitialSupply)} · burned ${fmtLythSupplyCompact(liveBurnedSupply)}`
                 : nativeSupply.isLoading
-                  ? "checking lyth_circulatingSupply"
-                  : "100M genesis baseline; live counter pending"}
-              delta={liveSupply ? (supplySourceLabel(liveSupply.source) ?? "on-chain counter") : "supply RPC unavailable"}
+                  ? "checking supply"
+                  : "supply pending"}
+              delta={liveSupply ? "" : "unavailable"}
               tone={liveSupply ? "gold" : "neutral"}
               onClick={()=>go("#/burn")}
             />
@@ -623,105 +539,24 @@ const Landing = ({ go }: any) => {
               privTxs30d={SCAN.supply.privateTxs30d}
             />
           )}
+          <HeroTelemetryStrip
+            mempoolDepth={liveMempoolDepth ?? (liveMode ? null : c.mempool)}
+            attestationPct={attestationRate ? attestationRate.value / 100 : (liveMode ? null : 97.8)}
+            latencyMs={proposerLatency ? proposerLatency.value : (liveMode ? null : c.commitLatencyP95Ms)}
+          />
         </div>
       </section>
-
-      {/* ---------- NETWORK CONFIDENCE STRIP ---------- */}
-      <section className="ov-conf">
-        <div className="ov-conf__item">
-          <div className="ov-conf__label">Round</div>
-          <div className="ov-conf__num mono num">{displayedRound === null ? "—" : fmt(displayedRound)}</div>
-          <div className="ov-conf__hint mono">
-            {chainStats.data?.latestHeight !== undefined
-              ? `block ${fmt(chainStats.data.latestHeight)} · ${chainStats.data.peerCount} peers`
-              : liveMode
-                ? "awaiting lyth_chainStats"
-              : "committed ~340ms ago"}
-          </div>
-        </div>
-        <div className="ov-conf__item">
-          <div className="ov-conf__label">Commit latency</div>
-          <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-            <div className="ov-conf__num mono num" style={{fontSize:24}}>
-              {proposerLatency ? `${proposerLatency.value.toFixed(0)}${proposerLatency.unit ? ` ${proposerLatency.unit}` : ""}` : liveMode ? "—" : `${c.commitLatencyP95Ms}ms`}
-            </div>
-            <span className="mono" style={{fontSize:10,color:"var(--ok)"}}>{proposerLatency ? "retained metric" : liveMode ? "not retained" : "p95 · healthy"}</span>
-          </div>
-          {liveMode
-            ? <LiveStripTrail samples={latencySamples} color="var(--ok)" height={28}/>
-            : <MiniSeries data={latencySeries} color="var(--ok)" height={28}/>}
-        </div>
-        <div className="ov-conf__item">
-          <div className="ov-conf__label">{liveMode ? "Mempool depth" : "Throughput"}</div>
-          <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-            <div className="ov-conf__num mono num" style={{fontSize:24}}>
-              {liveMode ? (liveMempoolDepth !== null ? fmt(liveMempoolDepth) : "—") : c.ratePerSec.toFixed(2)}
-              {!liveMode && <span style={{fontSize:14,color:"var(--fg-400)"}}>/s</span>}
-            </div>
-            <span className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>{liveMode ? "ready + pending" : "rounds"}</span>
-          </div>
-          {liveMode
-            ? <LiveStripTrail samples={mempoolSamples} color="var(--gold)" height={28}/>
-            : <MiniSeries data={rateSeries} color="var(--gold)" height={28}/>}
-        </div>
-        <div className="ov-conf__item">
-          <div className="ov-conf__label">{liveMode ? "Attestation rate" : "Operator quorum · last 100 rounds"}</div>
-          {liveMode ? (
-            <>
-              <div className="ov-conf__num mono num" style={{fontSize:24}}>
-                {attestationRate ? `${(attestationRate.value / 100).toFixed(2)}%` : "—"}
-              </div>
-              <LiveStripTrail samples={attestSamples.map((bps) => bps / 100)} color="var(--ok)" height={28}/>
-            </>
-          ) : (
-            <SignersHist data={c.signersHist}/>
-          )}
-          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:6,letterSpacing:"0.04em"}}>
-            {liveMode ? "lyth_metricsRange · node-local retention" : `${c.signers.total} clusters · DVT operators per cluster`}
-          </div>
-        </div>
-        <button className="ov-conf__toggle mono" onClick={()=>setShowDeep(s=>!s)}>
-          {showDeep ? "− Hide operator metrics" : "+ Operator metrics"}
-        </button>
-      </section>
-
-      {showDeep && (
-        <section className="ov-deep">
-          {liveMode ? (
-            <>
-              <Vital label="Latest block" value={liveStats ? fmt(liveStats.latestHeight) : "—"} delta="lyth_chainStats" tone="ok"/>
-              <Vital label="Peers" value={liveStats ? fmt(liveStats.peerCount) : "—"} delta="net peer aggregate" tone="ok"/>
-              <Vital label="Mempool depth" value={liveMempoolDepth !== null ? fmt(liveMempoolDepth) : "—"} delta="ready + pending" tone="neutral"/>
-              <Vital label="Markets" value={fmt(liveMarketCount)} delta={hasLiveMarketResponse ? liveMarketSource : "checking"} tone={liveMarketCount > 0 ? "ok" : "neutral"}/>
-              <Vital label="Proposer latency" value={proposerLatency ? `${proposerLatency.value.toFixed(0)}${proposerLatency.unit ? ` ${proposerLatency.unit}` : ""}` : "—"} delta="retained metric" tone="neutral"/>
-              <Vital label="Attestation rate" value={attestationRate ? `${(attestationRate.value / 100).toFixed(2)}%` : "—"} delta="retained metric" tone="neutral"/>
-            </>
-          ) : (
-            <>
-              <Vital label="Vertex inclusion"     value={pct(c.vertexInclude,2)}     delta="-0.2pp" tone="ok"/>
-              <Vital label="DAC coverage"         value={pct(c.dacCoverage,2)}       delta="+0.1pp" tone="ok"/>
-              <Vital label="Reed-Solomon shards"  value={`${(c.shards/1000).toFixed(1)}k/s`} delta="+380" tone="ok"/>
-              <Vital label="BLS aggregation p95"  value={`${c.blsAggMs}ms`}          delta="-0.3ms" tone="ok"/>
-              <Vital label="Mempool depth"        value={fmt(c.mempool)}             delta="+112"   tone="warn"/>
-              <Vital label="Private throughput"   value="0.91k/s"                    delta="steady" tone="ok"/>
-            </>
-          )}
-        </section>
-      )}
 
       {/* ---------- WHAT'S MOVING ---------- */}
       {indexerAvailability.liveChain ? (
-        <section className="ms-card" style={{padding:"18px 20px"}}>
-          <div className="cap" style={{color:"var(--gold)",marginBottom:8}}>Markets</div>
-          <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-            {indexerAvailability.disabled
-              ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
-              : hasLiveMarketResponse
-                ? `Live ${liveMarketSource} reports ${liveMarketCount} market${liveMarketCount === 1 ? "" : "s"}.`
-                : "Awaiting live market-state response."}{" "}
-            Gainers, losers, and most-traded cards return when the live aggregate index exposes those rolling windows.
-          </div>
-        </section>
+        <Card
+          title="Markets"
+          sub={`${indexerAvailability.disabled
+            ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
+            : hasLiveMarketResponse
+              ? `${liveMarketSourceLabel} reports ${liveMarketCount} market${liveMarketCount === 1 ? "" : "s"}.`
+              : "Awaiting live market-state response."} Gainers, losers, and most-traded cards return when the live aggregate index exposes those rolling windows.`}
+        />
       ) : (
         <section className="ov-moving">
           <MoveCard title="Top gainers · 24h" rows={gainers} kind="gain" go={go}/>
@@ -730,121 +565,18 @@ const Landing = ({ go }: any) => {
         </section>
       )}
 
-      {/* ---------- LIVE FEED ---------- */}
-      <section id="ov-feed" className="ov-feed">
-        <div className="ov-feed__head">
-          <div>
-            <h3 className="ov-section-title">Live on-chain</h3>
-            <p className="ov-section-desc">Every round commits a batch of encrypted transactions to the DAG. Click any row for its full receipt.</p>
-          </div>
-          <div className="mono" style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:"var(--fg-400)",letterSpacing:"0.04em"}}>
-            <span className="ov-livedot"/>
-            {hasLiveStats
-              ? `block ${fmt(liveStats?.latestHeight ?? 0)} · ${liveStats?.peerCount ?? 0} peers`
-              : liveMode
-                ? "awaiting live blocks"
-              : `streaming · ${c.ratePerSec.toFixed(1)}/s`}
-          </div>
-        </div>
-
-        <div className="ov-feed__grid">
-          <div className="ov-feed__list">
-            {liveBlocks.data && liveBlocks.data.length > 0
-              ? liveBlocks.data.slice(0, 8).map((b: any, i: number) => {
-                  const num = Number(b.number ?? 0);
-                  const executionUnits = Number(b.gas_used ?? b.gasUsed ?? 0);
-                  const limit = Number(b.gas_limit ?? b.gasLimit ?? 1);
-                  const fillPct = limit > 0 ? (executionUnits / limit) * 100 : 0;
-                  // TODO(core-sdk): block headers carry no per-vertex cluster
-                  // attribution, so live rows cannot show which cluster proposed
-                  // the round. Show "cluster pending" until a richer per-vertex
-                  // indexer endpoint exposes the proposing cluster slot. Fixture
-                  // rows still use the synthetic (num % 28) slot for the preview.
-                  const slot = liveMode ? null : (num % 28) + 1;
-                  return (
-                    <div
-                      key={(b.hash as string) ?? i}
-                      className="ov-feed__row"
-                      onClick={() => go(`#/round/${num}`)}
-                    >
-                      <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·{fmt(num)}</span>
-                      <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>{slot === null ? "cluster pending" : `C-${String(slot).padStart(3,"0")}`}</span>
-                      <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{fmtCountCompact(executionUnits)} execution units</span>
-                      <span className="mono" style={{color:"var(--fg-500)",fontSize:10.5}}>{fillPct.toFixed(1)}%</span>
-                      <span className="pill ok" style={{padding:"2px 7px",fontSize:9.5}}>committed</span>
-                    </div>
-                  );
-                })
-              : liveMode ? (
-                  <div className="ov-feed__row">
-                    <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·—</span>
-                    <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>live</span>
-                    <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>awaiting latest block headers</span>
-                    <span className="pill warn" style={{padding:"2px 7px",fontSize:9.5}}>loading</span>
-                  </div>
-                )
-              : SCAN.recentVertices.slice(0,8).map((v,i)=>(
-                  <div key={i} className="ov-feed__row" onClick={()=>go(`#/cluster/${v.clusterSlot}`)}>
-                    <span className="mono" style={{color:"var(--gold)",fontSize:12.5,minWidth:90,letterSpacing:"0.02em"}}>r·{fmt(v.round)}</span>
-                    <span className="mono" style={{color:"var(--fg-300)",fontSize:11.5,minWidth:70}}>C-{String(v.clusterSlot).padStart(3,"0")}</span>
-                    <span className="mono" style={{color:"var(--fg-200)",fontSize:11.5,flex:1}}>{v.txCount} txs settled</span>
-                    <span className="mono" style={{color:"var(--fg-500)",fontSize:10.5}}>{v.blsAggMs.toFixed(1)}ms</span>
-                    <span className={`pill ${v.dac?"ok":"warn"}`} style={{padding:"2px 7px",fontSize:9.5}}>
-                      {v.dac ? "committed" : "pending"}
-                    </span>
-                  </div>
-                ))}
-          </div>
-          <aside className="ov-feed__side">
-            <div className="cap" style={{marginBottom:8}}>{liveMode ? "Live cluster descriptors" : "Top staking clusters"}</div>
-            {liveMode && liveClusters.data ? (
-              liveClusters.data.slice(0,5).map((cl: any) => (
-                <div key={cl.id} className="ov-cluster-row" onClick={()=>go(`#/cluster/${Number(cl.id) + 1}`)}>
-                  <div>
-                    <div className="mono" style={{fontSize:12.5,color:"var(--fg-100)",fontWeight:500}}>C-{String(Number(cl.id) + 1).padStart(3,"0")}</div>
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{cl.threshold}-of-{cl.size} · {cl.aggregateHealth}</div>
-                  </div>
-                  <div style={{textAlign:"right"}}>
-                    <div className="mono num" style={{fontSize:12.5,color:"var(--gold)"}}>{cl.active ? "active" : "inactive"}</div>
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>RPC</div>
-                  </div>
-                </div>
-              ))
-            ) : liveMode ? (
-              <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"8px 0"}}>
-                Awaiting live cluster descriptors.
-              </div>
-            ) : SCAN.clusters.slice(0,5).map(cl=>{
-                const tvsMono = parseFloat(cl.tvs) * 1_000_000;
-                // Guard the divisor: a near-zero-TVS fixture must not render a
-                // misleading "0.00%". 0 / non-finite APY shows "—" instead.
-                const apy = tvsMono > 0 ? (cl.reward30d * 12 / tvsMono) * 100 : 0;
-                return (
-                  <div key={cl.slot} className="ov-cluster-row" onClick={()=>go(`#/cluster/${cl.slot}`)}>
-                    <div>
-                      <div className="mono" style={{fontSize:12.5,color:"var(--fg-100)",fontWeight:500}}>C-{String(cl.slot).padStart(3,"0")}</div>
-                      <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{cl.members}/{cl.size} live · {cl.tvs}M TVS</div>
-                    </div>
-                    <div style={{textAlign:"right"}}>
-                      <div className="mono num" style={{fontSize:12.5,color:"var(--gold)"}}>{fmtClusterApy(apy)}</div>
-                      <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>APY</div>
-                    </div>
-                  </div>
-                );
-              })}
-            <a href="#/clusters" onClick={()=>go("#/clusters")} className="mono ov-seeall">See all clusters →</a>
-          </aside>
-        </div>
-      </section>
-
       {/* ---------- OPERATOR SURFACES + DENOMINATIONS ---------- */}
-      <section className="ms-grid-2">
-        <Card title="Live operator surfaces" right={<a className="ms-link" href="#/operators" onClick={()=>go("#/operators")}>Open →</a>}>
+      <section className="ms-grid-2 cl-detail-grid">
+        <Card
+          title="Live operator surfaces"
+          sub="Operator-facing live surfaces exposed by the node and indexer."
+          right={<a className="ms-link" href="#/operators" onClick={()=>go("#/operators")}>Open →</a>}
+        >
           {operatorSurfaces.map((row) => (
             <div key={row.method} className="ms-prop">
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:14}}>
                 <span style={{fontSize:13}}>{row.label}</span>
-                <span className="mono" style={{fontSize:11,color:"var(--gold)"}}>{row.method}</span>
+                <span className="mono" title={row.method} style={{fontSize:11,color:"var(--gold)"}}>{row.sourceLabel}</span>
               </div>
               <div className="mono" style={{display:"flex",alignItems:"center",gap:8,fontSize:10.5,color:"var(--fg-400)",marginTop:5}}>
                 <span className={`pill ${row.status === "available" || row.status === "wired" ? "ok" : "warn"}`} style={{fontSize:9.5,padding:"2px 7px"}}>
@@ -861,7 +593,11 @@ const Landing = ({ go }: any) => {
             supply from lyth_circulatingSupply and keeps the static two-denomination
             framing below; the per-denomination public/private numbers stay honest
             "—" until the split endpoint exists. */}
-        <Card title="Two denominations" right={<span className="cap">irreversible · by design</span>}>
+        <Card
+          title="Two denominations"
+          sub="Transparent LYTH and shielded LYTH-p share one supply model with different privacy guarantees."
+          right={<span className="cap">irreversible · by design</span>}
+        >
           <p className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,margin:"0 0 14px"}}>
             Public LYTH is fully transparent. Private LYTH‑p hides amounts at the protocol layer —
             no mixers, no opt-in. You choose per transaction.
@@ -871,18 +607,18 @@ const Landing = ({ go }: any) => {
             <div className="ms-denom ms-denom--total">
               <div className="cap" style={{color:"var(--gold)"}}>Total LYTH supply</div>
               <div className="mono" style={{fontSize:24,color:"var(--fg-100)",marginTop:6}}>
-                {liveMode ? fmtLythSupplyCompact(liveCurrentSupply) : `${totalSupply.toFixed(0)}M`}
+                {liveMode ? (liveSupply ? fmtLythSupplyReadable(liveCurrentSupply) : "—") : `${totalSupply.toFixed(0)}M`}
               </div>
               <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>
                 {liveMode
                   ? liveSupply
                     ? `genesis ${fmtLythSupplyCompact(liveInitialSupply)} · burned ${fmtLythSupplyCompact(liveBurnedSupply)}`
-                    : "100M genesis baseline · live counter pending"
+                    : "supply pending"
                   : `${SCAN.supply.publicPct}% public · ${privPct.toFixed(0)}% shielded`}
               </div>
               <div className="ms-bar"><div style={{width:"100%", background:"var(--gold)"}}/></div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
-                {liveMode ? (liveSupply?.source ?? "supply RPC unavailable") : "offline fixture total"}
+                {liveMode ? (liveSupply ? "current total" : "unavailable") : "offline fixture total"}
               </div>
             </div>
             <div className="ms-denom">
@@ -917,6 +653,34 @@ const Landing = ({ go }: any) => {
 };
 
 /* ---- Landing helpers ---- */
+const HeroTelemetryStrip = ({ mempoolDepth, attestationPct, latencyMs }: any) => {
+  const depth = typeof mempoolDepth === "number" && Number.isFinite(mempoolDepth) ? mempoolDepth : null;
+  const pressure = depth === null ? 18 : Math.max(8, Math.min(100, depth / 12));
+  const attest = typeof attestationPct === "number" && Number.isFinite(attestationPct)
+    ? Math.max(0, Math.min(100, attestationPct))
+    : null;
+  const latency = typeof latencyMs === "number" && Number.isFinite(latencyMs) ? latencyMs : null;
+  return (
+    <div className="ov-hero-telemetry">
+        <div>
+          <span className="mono">Mempool pressure</span>
+          <b className="mono num">{depth === null ? "—" : fmt(depth)}</b>
+          <i><em style={{ width: `${pressure}%` }}/></i>
+        </div>
+        <div>
+          <span className="mono">Attestation rate</span>
+          <b className="mono num">{attest === null ? "—" : `${attest.toFixed(2)}%`}</b>
+          <i><em style={{ width: `${attest ?? 0}%` }}/></i>
+        </div>
+        <div>
+          <span className="mono">Commit latency</span>
+          <b className="mono num">{latency === null ? "—" : `${latency.toFixed(0)}ms`}</b>
+          <i><em style={{ width: `${latency === null ? 0 : Math.max(6, Math.min(100, latency / 6))}%` }}/></i>
+        </div>
+    </div>
+  );
+};
+
 const HeadlineStat = ({ label, value, sub, delta, deltaTitle, tone, spark, accent, onClick }: any) => {
   const toneColor = tone==="ok" ? "var(--ok)" : tone==="err" ? "var(--err)" : tone==="gold" ? "var(--gold)" : "var(--fg-400)";
   return (
@@ -1012,8 +776,10 @@ const LiveStripTrail = ({ samples, color, height = 28 }: any) => {
 const MoveCard = ({ title, rows, kind, go }: any) => (
   <div className="ms-card ov-movecard">
     <div className="ms-card__head">
-      <h3>{title}</h3>
-      <a className="ms-link" href="#/markets" onClick={()=>go("#/markets")}>All markets →</a>
+      <div className="ms-card__title"><h3>{title}</h3></div>
+      <div className="ms-card__actions">
+        <a className="ms-link" href="#/markets" onClick={()=>go("#/markets")}>All markets →</a>
+      </div>
     </div>
     <div className="ms-card__body" style={{padding:0}}>
       {rows.map((t,i)=>{
@@ -1117,6 +883,15 @@ const ClusterPage = ({ slot, go }: any) => {
       }))
     : showLiveHero ? [] : cl.opMembers;
   const liveClusterKey = liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? null;
+  const [selectedMember, setSelectedMember] = useState<any | null>(null);
+  useEffect(() => {
+    if (!selectedMember) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedMember(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedMember]);
 
   return (
     <div className="ms-page">
@@ -1127,9 +902,9 @@ const ClusterPage = ({ slot, go }: any) => {
       </div>
 
       {/* Ring hero — left: ring + standby tray, right: plain-language health + 4 key stats + stake CTA */}
-      <section className="cl-hero">
+      <section className="cl-hero cl-hero--dynamic">
         <div className="cl-hero__ring">
-          <ClusterRing members={ringMembers} threshold={threshold ?? 0} size={280}/>
+          <ClusterRing members={ringMembers} threshold={threshold ?? 0} totalOperators={totalOperators ?? ringMembers.length} size={300}/>
           <div className="cl-bench">
             {showLiveHero ? (
               <>
@@ -1192,7 +967,7 @@ const ClusterPage = ({ slot, go }: any) => {
                 <div className="mono" style={{fontSize:12,color:"var(--fg-300)",letterSpacing:"0.04em"}}>
                   <b style={{color:"var(--fg-200)"}}>OPERATOR INTAKE</b>
                   <span style={{color:"var(--fg-500)",margin:"0 8px"}}>·</span>
-                  not reported by live RPC
+                  not reported yet
                 </div>
               </div>
             </div>
@@ -1289,88 +1064,82 @@ const ClusterPage = ({ slot, go }: any) => {
         </div>
       </section>
 
-      <section className="ms-grid-2">
+      <section className="ms-grid-2 cl-detail-grid">
         <Card title="Live protocol descriptor">
-          <div className="tx-kv">
-            <KVRow label="Cluster" value={cName(liveClusterId)}/>
-            <KVRow label="Internal cluster id" value={`${liveClusterId}`}/>
-            <KVRow label="Quorum" value={liveStatus?.quorum ?? liveCluster?.aggregateHealth ?? "not reported"}/>
-            <KVRow label="Live operators" value={liveStatus ? `${liveStatus.live}/${liveStatus.size}` : "—"}/>
-            <KVRow label="Active" value={liveStatus ? (liveStatus.live > 0 ? "yes" : "no") : liveCluster ? (liveCluster.active ? "yes" : "no") : "not reported"}/>
-            <KVRow label="Stake weight" value={fmtClusterStake(liveCluster)}/>
-            <KVRow label="First BLS key" value={fmtHashShort(liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? "—")} mono/>
-            <KVRow label="Last update" value={liveStatus ? `block #${Number(liveStatus.lastUpdateHeight).toLocaleString()}` : "—"}/>
-            <KVRow label="Delegators" value={delegators.data ? `${delegators.data.count}` : "—"}/>
-            <KVRow label="Delegation cap" value={delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "disabled" : `${delegationCap.data.capBps} bps`) : "—"}/>
-            <KVRow label="Entity" value={clusterEntity.data?.entity ?? "—"}/>
-            <KVRow label="Entity ratchet" value={entityRatchet.data ? `${entityRatchet.data.active}/${entityRatchet.data.threshold === 4294967295 ? "unset" : entityRatchet.data.threshold}` : "—"}/>
+          <div className="cl-protocol-summary">
+            <div className="cl-protocol-summary__status">
+              <span className={`cl-protocol-summary__dot ${liveStatus?.live ? "is-ok" : "is-muted"}`}/>
+              <div>
+                <span className="mono">cluster</span>
+                <b>{cName(liveClusterId)}</b>
+              </div>
+            </div>
+            <div className="cl-protocol-summary__metric">
+              <span className="mono">quorum</span>
+              <b className="mono">{liveStatus?.quorum ?? liveCluster?.aggregateHealth ?? "not reported"}</b>
+            </div>
+            <div className="cl-protocol-summary__metric">
+              <span className="mono">operators</span>
+              <b className="mono">{liveStatus ? `${liveStatus.live}/${liveStatus.size}` : "—"}</b>
+            </div>
+            <div className="cl-protocol-summary__metric">
+              <span className="mono">stake</span>
+              <b className="mono">{fmtClusterStake(liveCluster)}</b>
+            </div>
           </div>
-          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
+          <div className="cl-protocol-facts">
+            <div><span className="mono">Internal id</span><b className="mono">{liveClusterId}</b></div>
+            <div><span className="mono">Active</span><b>{liveStatus ? (liveStatus.live > 0 ? "yes" : "no") : liveCluster ? (liveCluster.active ? "yes" : "no") : "not reported"}</b></div>
+            <div><span className="mono">Last update</span><b className="mono">{liveStatus ? `block #${Number(liveStatus.lastUpdateHeight).toLocaleString()}` : "—"}</b></div>
+            <div><span className="mono">Delegators</span><b className="mono">{delegators.data ? `${delegators.data.count}` : "—"}</b></div>
+            <div><span className="mono">Delegation cap</span><b>{delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "disabled" : `${delegationCap.data.capBps} bps`) : "—"}</b></div>
+            <div><span className="mono">Entity</span><b className="mono">{clusterEntity.data?.entity ?? "—"}</b></div>
+            <div><span className="mono">Entity ratchet</span><b className="mono">{entityRatchet.data ? `${entityRatchet.data.active}/${entityRatchet.data.threshold === 4294967295 ? "unset" : entityRatchet.data.threshold}` : "—"}</b></div>
+            <div><span className="mono">First BLS key</span><b className="mono" title={liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? undefined}>{fmtHashShort(liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? "—")}</b></div>
+          </div>
+          <div className="mono cl-protocol-note">
             Cluster status, quorum, and member BLS keys come from public RPC. Economic aggregates are hidden until live TVS, reward history, and vertex-inclusion endpoints exist.
           </div>
         </Card>
         <Card title={`Members · ${memberRows.length} operator${memberRows.length === 1 ? "" : "s"}`}>
-          <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-          {showLiveHero ? (
-          <table className="ms-table">
-            <thead><tr><th>Operator</th><th>Role</th><th style={{textAlign:"right"}}>BLS pubkey</th><th style={{textAlign:"right"}}>Source</th></tr></thead>
-            <tbody>
-              {memberRows.length === 0 ? (
-                <tr>
-                  <td colSpan={4}>
-                    <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
-                      No live member roster is reported for this cluster yet.
-                    </div>
-                  </td>
-                </tr>
-              ) : memberRows.map(m=>(
-                <tr key={m.addrShort} onClick={()=>go(`#/operator/${encodeURIComponent(m.addrShort)}`)}>
-                  <td>
-                    <div style={{display:"flex",gap:10,alignItems:"center",minWidth:0}}>
-                      <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${m.handle.charCodeAt(0)*7%360})`,flexShrink:0}}/>
-                      <div style={{minWidth:0}}>
-                        <div style={{fontWeight:500,fontSize:13}} className="mono">{m.handle}</div>
-                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"min(58vw,340px)"}}>{fmtHashShort(m.addrShort)}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td>{(() => { const r = operatorRoleMeta(m.role); return (
-                    <span className={`pill ${r.tone === "neutral" ? "" : r.tone}`} style={{fontSize:10}}>{r.label}</span>
-                  ); })()}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)"}}>{m.blsPubkey ? fmtHashShort(m.blsPubkey, 12, 0) : "not reported"}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--ok)"}}>live cluster status</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          ) : (
-          <table className="ms-table">
-            <thead><tr><th>Operator</th><th>Role</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Vertex rate</th><th></th></tr></thead>
-            <tbody>
-              {memberRows.map(m=>(
-                <tr key={m.addrShort} onClick={()=>go(`#/operator/${encodeURIComponent(m.addrShort)}`)}>
-                  <td>
-                    <div style={{display:"flex",gap:10,alignItems:"center",minWidth:0}}>
-                      <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${m.handle.charCodeAt(0)*7%360})`,flexShrink:0}}/>
-                      <div style={{minWidth:0}}>
-                        <div style={{fontWeight:500,fontSize:13}}>{m.handle}</div>
-                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"min(58vw,340px)"}}>{fmtHashShort(m.addrShort)}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{m.role}</td>
-                  <td className="mono num" style={{textAlign:"right"}}>{m.rep == null ? "—" : m.rep.toFixed(2)}</td>
-                  <td className="mono num" style={{textAlign:"right"}}>{m.vertexRate == null ? "—" : pct(m.vertexRate,1)}</td>
-                  <td>
-                    <span className="dot" style={{
-                      color: m.state==="live"?"var(--ok)":m.state==="lag"?"var(--warn)":"var(--err)"
-                    }}/>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          )}
+          <div className="cl-member-grid">
+            {memberRows.length === 0 ? (
+              <div className="cl-member-empty mono">
+                No live member roster is reported for this cluster yet.
+              </div>
+            ) : memberRows.map((m, i) => {
+              const role = operatorRoleMeta(m.role);
+              const stateTone = m.state === "live" ? "ok" : m.state === "lag" ? "warn" : m.state === "standby" ? "info" : "err";
+              const source = showLiveHero ? "live cluster status" : "fixture preview";
+              return (
+                <button
+                  key={m.addrShort ?? `${m.handle}-${i}`}
+                  type="button"
+                  className={`cl-member-card is-${stateTone}`}
+                  onClick={()=>setSelectedMember({ ...m, source })}
+                >
+                  <span className="cl-member-card__glow" aria-hidden="true"/>
+                  <span
+                    className="ms-avatar cl-member-card__avatar"
+                    style={{background:`oklch(0.62 0.16 ${String(m.handle).charCodeAt(0)*7%360})`}}
+                    aria-hidden="true"
+                  />
+                  <span className="cl-member-card__body">
+                    <span className="cl-member-card__name mono">{m.handle}</span>
+                    <span className="cl-member-card__id mono">{fmtHashShort(m.addrShort, 8, 4)}</span>
+                    <span className="cl-member-card__meta">
+                      <span className={`pill ${role.tone === "neutral" ? "" : role.tone}`}>{role.label}</span>
+                    </span>
+                    <span className="cl-member-card__foot mono">
+                      {showLiveHero
+                        ? (m.blsPubkey ? `BLS ${fmtHashShort(m.blsPubkey, 8, 0)}` : "BLS not reported")
+                        : `${m.rep == null ? "rep -" : `rep ${m.rep.toFixed(2)}`}`}
+                    </span>
+                  </span>
+                  <span className="cl-member-card__status" aria-hidden="true"/>
+                </button>
+              );
+            })}
           </div>
         </Card>
 
@@ -1395,7 +1164,7 @@ const ClusterPage = ({ slot, go }: any) => {
         )}
       </section>
 
-      <section className="ms-grid-2">
+      <section className="ms-grid-2 cl-detail-grid cl-history-grid">
         {showLiveHero ? (
           <>
             <Card title="Recent vertices">
@@ -1443,6 +1212,95 @@ const ClusterPage = ({ slot, go }: any) => {
           </>
         )}
       </section>
+      {selectedMember && (() => {
+        const role = operatorRoleMeta(selectedMember.role);
+        const operatorId = selectedMember.addrShort ?? "not reported";
+        const blsKey = selectedMember.blsPubkey ?? "not reported";
+        const source = selectedMember.source ?? (showLiveHero ? "live cluster status" : "fixture preview");
+        return (
+          <div className="cl-member-modal" role="dialog" aria-modal="true" aria-label="Operator details" onClick={()=>setSelectedMember(null)}>
+            <div className="cl-member-modal__panel" onClick={(event)=>event.stopPropagation()}>
+              <div className="cl-member-modal__head">
+                <div style={{display:"flex",alignItems:"center",gap:12,minWidth:0}}>
+                  <span
+                    className="ms-avatar cl-member-modal__avatar"
+                    style={{background:`oklch(0.62 0.16 ${String(selectedMember.handle).charCodeAt(0)*7%360})`}}
+                    aria-hidden="true"
+                  />
+                  <div style={{minWidth:0}}>
+                    <div className="mono cl-member-modal__title">{selectedMember.handle}</div>
+                    <div className="mono cl-member-modal__sub">{source}</div>
+                  </div>
+                </div>
+                <button type="button" className="cl-member-modal__close" onClick={()=>setSelectedMember(null)} aria-label="Close operator details">x</button>
+              </div>
+              <div className="cl-member-modal__body">
+                <div className="cl-member-modal__summary">
+                  <span className={`pill ${role.tone === "neutral" ? "" : role.tone}`}>{role.label}</span>
+                  <span className="mono">state {selectedMember.state ?? "unknown"}</span>
+                  {selectedMember.rep != null && <span className="mono">rep {selectedMember.rep.toFixed(2)}</span>}
+                  {selectedMember.vertexRate != null && <span className="mono">vertex {pct(selectedMember.vertexRate,1)}</span>}
+                </div>
+                <div className="cl-member-modal__kv">
+                  <div>
+                    <span className="mono">Operator id</span>
+                    <code>{operatorId}</code>
+                  </div>
+                  <div>
+                    <span className="mono">BLS public key</span>
+                    <code>{blsKey}</code>
+                  </div>
+                  <div>
+                    <span className="mono">Data source</span>
+                    <code>{source}</code>
+                  </div>
+                </div>
+                <div className="cl-member-modal__actions">
+                  <button
+                    type="button"
+                    className="ov-cta"
+                    disabled={!selectedMember.addrShort}
+                    onClick={()=>{
+                      if (selectedMember.addrShort) {
+                        navigator.clipboard?.writeText(selectedMember.addrShort);
+                        window.__msToast?.("Operator id copied");
+                      }
+                    }}
+                  >
+                    Copy operator id
+                  </button>
+                  <button
+                    type="button"
+                    className="ov-cta"
+                    disabled={!selectedMember.blsPubkey}
+                    onClick={()=>{
+                      if (selectedMember.blsPubkey) {
+                        navigator.clipboard?.writeText(selectedMember.blsPubkey);
+                        window.__msToast?.("BLS key copied");
+                      }
+                    }}
+                  >
+                    Copy BLS key
+                  </button>
+                  <button
+                    type="button"
+                    className="ov-cta ov-cta--primary"
+                    disabled={!selectedMember.addrShort}
+                    onClick={()=>{
+                      if (selectedMember.addrShort) {
+                        setSelectedMember(null);
+                        go(`#/operator/${encodeURIComponent(selectedMember.addrShort)}`);
+                      }
+                    }}
+                  >
+                    Open operator page
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
@@ -1499,6 +1357,53 @@ export const capabilityLabel = (key: string) =>
   key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^\w/, (m) => m.toUpperCase());
 
 /* ============== OPERATOR PROFILE ============== */
+const operatorDetailTone = (tone: string | null | undefined): "ok" | "warn" | "info" | "err" =>
+  tone === "ok" ? "ok" : tone === "warn" ? "warn" : tone === "err" ? "err" : "info";
+
+const fmtRoundish = (value: bigint | number | string | null | undefined) => {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "bigint") return value.toLocaleString();
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toLocaleString() : String(value);
+};
+
+const copyOperatorValue = (label: string, value: string | null | undefined) => {
+  if (!value || value === "—") return;
+  void navigator.clipboard?.writeText(value);
+  window.__msToast?.(`${label} copied`);
+};
+
+const OperatorProfileStat = ({ label, value, sub, tone = "info" }: any) => (
+  <div className={`op-profile-stat is-${tone}`}>
+    <span className="mono">{label}</span>
+    <b className="mono num">{value}</b>
+    {sub ? <small>{sub}</small> : null}
+  </div>
+);
+
+const OperatorHeroKey = ({ label, value }: any) => {
+  const display = value && String(value).trim().length > 0 ? String(value) : "—";
+  const canCopy = display !== "—";
+  return (
+    <div className="op-hero-key">
+      <span className="mono">{label}</span>
+      <code>{display}</code>
+      {canCopy && (
+        <button type="button" onClick={() => copyOperatorValue(label, display)}>
+          Copy
+        </button>
+      )}
+    </div>
+  );
+};
+
+const OperatorFact = ({ label, value, tone = "neutral" }: any) => (
+  <div className={`op-fact is-${tone}`}>
+    <span className="mono">{label}</span>
+    <b className="mono">{value}</b>
+  </div>
+);
+
 const OperatorPage = ({ addr, go }: any) => {
   const liveOperatorId = /^0x[0-9a-fA-F]{64}$/.test(addr) ? addr : undefined;
   const fixtureMatch = SCAN.operators.find(o => o.addrShort===addr);
@@ -1530,159 +1435,289 @@ const OperatorPage = ({ addr, go }: any) => {
           : "clear"
     : null;
   const keyRotation = duties.data?.duties.keyRotation;
-  const keyRotationLabel = keyRotation
-    ? "nextRound" in keyRotation
-      ? `round ${Number(keyRotation.nextRound).toLocaleString()}`
-      : keyRotation.reason
+  const keyRotationLabel = keyRotation && "nextRound" in keyRotation
+    ? `round ${fmtRoundish(keyRotation.nextRound)}`
     : "—";
   if (indexerAvailability.liveChain && !useLiveProfile) {
     return (
-      <div className="ms-page">
-        <div className="ms-crumb">
+      <div className="ms-page ms-operator-profile">
+        <div className="ms-crumb op-profile-crumb">
           <a href="#/operators" onClick={()=>go("#/operators")}>Operators</a>
           <span>›</span>
           <b>unresolved</b>
         </div>
         <Card title="Operator not resolved">
-          <div className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,padding:"6px 2px"}}>
+          <div className="op-empty-state mono">
             Live operator pages require a 32-byte operator id from the live cluster roster. Local operator fixture profiles are hidden while connected to a live chain.
           </div>
         </Card>
       </div>
     );
   }
+  const identitySeed = useLiveProfile ? (liveOperatorId ?? addr) : op.handle;
+  const profileRole = operatorRoleMeta(
+    useLiveProfile ? (liveMembership?.state ?? operatorInfo.data?.lifecycleState) : (op.slashes === 0 ? "active" : "lagging"),
+  );
+  const profileTone = operatorDetailTone(profileRole.tone);
+  const liveClusterIds = Array.from(new Set([
+    ...(liveMembership ? [liveMembership.clusterId] : []),
+    ...(operatorInfo.data?.activeClusterIds ?? []),
+  ]));
+  const primaryClusterLabel = useLiveProfile
+    ? liveClusterIds.length === 0
+      ? "—"
+      : liveClusterIds.length === 1
+        ? cName(liveClusterIds[0])
+        : `${liveClusterIds.length} clusters`
+    : `${op.memberships.length} clusters`;
+  const displayName = useLiveProfile
+    ? (operatorInfo.data?.moniker ?? operatorInfo.data?.alias ?? (liveOperatorId ? fmtHashShort(liveOperatorId, 12, 6) : addr))
+    : op.handle;
+  const displayId = useLiveProfile ? (liveOperatorId ?? addr) : op.addrShort;
+  const blsKey = authority.data?.blsPubkey || liveMembership?.blsPubkey || operatorInfo.data?.blsKeyFingerprint || "";
+  const chainAddress = useLiveProfile
+    ? operatorInfo.data?.chainAddress
+      ? fmtAddr(operatorInfo.data.chainAddress, "user")
+      : "—"
+    : op.addrShort;
+  const signingTotal = signing.data?.entries.length ?? null;
+  const signingPercent = signingTotal && signedCount !== null ? Math.round((signedCount / signingTotal) * 100) : null;
+  const signingSummary = signedCount === null ? "—" : `${signedCount}/${signingTotal ?? 0}`;
+  const riskTone = risk.data
+    ? risk.data.missRateBps >= risk.data.thresholdBps
+      ? "err"
+      : risk.data.missRateBps > 0
+        ? "warn"
+        : "ok"
+    : "info";
+  const riskDeg = risk.data && risk.data.thresholdBps > 0
+    ? Math.max(0, Math.min(360, (risk.data.missRateBps / risk.data.thresholdBps) * 360))
+    : 0;
+  const riskColor = riskTone === "ok" ? "var(--ok)" : riskTone === "warn" ? "var(--warn)" : riskTone === "err" ? "var(--err)" : "var(--info)";
+  const attestationDuty = duties.data?.duties.attestation;
+  const liveCapabilityEntries = Object.entries(operatorInfo.data?.capability ?? {}).filter(([, value]) => value !== null && value !== undefined);
+  const publishedCapabilityCount = useLiveProfile
+    ? liveCapabilityEntries.length
+    : Object.values(op.caps).filter(Boolean).length;
+  const heartbeatPoints = profileTone === "ok"
+    ? "0,42 34,42 44,18 56,62 68,30 80,42 128,42 138,24 150,56 164,42 220,42"
+    : profileTone === "warn"
+      ? "0,42 36,42 46,24 58,58 72,36 86,42 126,42 136,18 148,62 162,42 220,42"
+      : "0,42 40,42 48,30 58,52 70,42 118,42 126,32 136,52 150,42 220,42";
   return (
-    <div className="ms-page">
-      <div className="ms-crumb">
+    <div className="ms-page ms-operator-profile">
+      <div className="ms-crumb op-profile-crumb">
         <a href="#/operators" onClick={()=>go("#/operators")}>Operators</a>
         <span>›</span>
         <b>{useLiveProfile ? (liveOperatorId ? fmtHashShort(liveOperatorId) : addr) : op.handle}</b>
       </div>
-      <section className="ms-op-hero">
-        <span
-          className="ms-avatar ms-avatar--lg"
-          style={{background:`oklch(0.62 0.16 ${(useLiveProfile ? (liveOperatorId ?? addr) : op.handle).charCodeAt(2)*9%360})`}}
-        />
-        <div style={{flex:1}}>
-          <div className="cap">Operator · stable across clusters</div>
-          <h1 className={useLiveProfile ? "ms-h1 mono" : "ms-h1"}>
-            {useLiveProfile ? (liveOperatorId ? fmtHashShort(liveOperatorId, 12, 6) : addr) : op.handle}
-          </h1>
-          <div className="mono" style={{color:"var(--fg-300)",marginTop:4}}>
-            {useLiveProfile
-              ? `${liveMembership ? `${cName(liveMembership.clusterId)} · state ${liveMembership.state}` : "membership unresolved"}${authorityIndex !== undefined && authorityIndex !== null ? ` · authority #${authorityIndex}` : ""}`
-              : `${op.addrShort} · ${op.region} · active since ${op.activeSince}`}
+      <section className={`ms-op-hero op-profile-hero is-${profileTone}`}>
+        <div className="op-profile-hero__main">
+          <div className="op-profile-identity">
+            <div className={`op-profile-signal is-${profileTone}`} aria-hidden="true">
+              <span className="op-profile-signal__ring op-profile-signal__ring--outer"/>
+              <span className="op-profile-signal__ring op-profile-signal__ring--inner"/>
+              <span
+                className="ms-avatar op-profile-signal__avatar"
+                style={{background:`oklch(0.62 0.16 ${operatorAvatarHue(identitySeed)})`}}
+              />
+              <span className="op-profile-signal__dot"/>
+            </div>
+            <div className="op-profile-title">
+              <div className="op-profile-kicker">
+                <span className={`op-profile-live is-${profileTone}`}/>
+                <span className="mono">{useLiveProfile ? "Live operator identity" : "Preview operator identity"}</span>
+              </div>
+              <h1 className={useLiveProfile ? "ms-h1 mono" : "ms-h1"}>{displayName}</h1>
+              <p className="mono">
+                {useLiveProfile
+                  ? `${primaryClusterLabel} · ${profileRole.label}${authorityIndex !== undefined && authorityIndex !== null ? ` · authority #${authorityIndex}` : ""}`
+                  : `${op.addrShort} · ${op.region} · active since ${op.activeSince}`}
+              </p>
+            </div>
           </div>
+          <svg className="op-profile-heartbeat" viewBox="0 0 220 84" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M0 42H220"/>
+            <polyline points={heartbeatPoints}/>
+          </svg>
         </div>
-        <div className="ms-cluster-stats">
-          {useLiveProfile ? (
-            <>
-              <Stat label="Reputation" value="—"/>
-              <Stat label="Uptime · 90d" value="—"/>
-              <Stat label="Bonded" value={fmtLythAmount(operatorInfo.data?.bondedAmount)}/>
-              <Stat label="Miss rate · 250r" value={risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}%` : "—"} tone={risk.data && risk.data.missRateBps > 0 ? "warn" : risk.data ? "ok" : undefined}/>
-            </>
-          ) : (
-            <>
-              <Stat label="Reputation" value={op.reputation.toFixed(3)}/>
-              <Stat label="Uptime · 90d" value={pct(op.uptime,2)} tone="ok"/>
-              <Stat label="Bonded" value={`${fmt(op.bonded)} LYTH`}/>
-              <Stat label="Slash" value={op.slashes===0 ? "0 · clean" : `${op.slashes}`} tone={op.slashes===0?"ok":"warn"}/>
-            </>
-          )}
+        <div className="op-profile-hero__stats">
+          <OperatorProfileStat label="State" value={profileRole.label} sub={useLiveProfile ? "cluster status" : "preview health"} tone={profileTone}/>
+          <OperatorProfileStat label="Cluster" value={primaryClusterLabel} sub={useLiveProfile ? `${roster.clusterCount ?? "—"} clusters scanned` : `${op.memberships.length} memberships`} tone="info"/>
+          <OperatorProfileStat label="Authority" value={authorityIndex !== undefined && authorityIndex !== null ? `#${authorityIndex}` : "—"} sub={authority.data?.active ? "active authority" : authority.data ? "inactive authority" : "not resolved"} tone={authority.data?.active ? "ok" : authority.data ? "warn" : "info"}/>
+          <OperatorProfileStat
+            label="Miss rate"
+            value={risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}%` : useLiveProfile ? "—" : op.slashes === 0 ? "0.00%" : "watch"}
+            sub={risk.data ? `${risk.data.windowRounds} round window` : useLiveProfile ? "risk endpoint pending" : `${op.slashes} slash events`}
+            tone={useLiveProfile ? riskTone : op.slashes === 0 ? "ok" : "warn"}
+          />
+        </div>
+        <div className="op-profile-hero__panels">
+          <div className="op-profile-panel op-profile-panel--identity">
+            <div className="op-profile-panel__head">
+              <span className="mono">Identity</span>
+              <b>{useLiveProfile ? "live keys" : "preview record"}</b>
+            </div>
+            <div className="op-identity-stack op-identity-stack--hero">
+              <div className="op-hero-key-list">
+                <OperatorHeroKey label="Operator id" value={displayId}/>
+                <OperatorHeroKey label="Chain address" value={chainAddress}/>
+                <OperatorHeroKey label="BLS key" value={blsKey}/>
+              </div>
+              <div className="op-hero-facts">
+                <span><small className="mono">Lifecycle</small><b className="mono">{operatorInfo.data?.lifecycleState ?? (useLiveProfile ? "—" : "active")}</b></span>
+                <span><small className="mono">Bonded</small><b className="mono">{useLiveProfile ? fmtLythAmount(operatorInfo.data?.bondedAmount) : `${fmt(op.bonded)} LYTH`}</b></span>
+                <span><small className="mono">Commission</small><b className="mono">{operatorInfo.data?.commissionBps !== null && operatorInfo.data?.commissionBps !== undefined ? `${(operatorInfo.data.commissionBps / 100).toFixed(2)}%` : "—"}</b></span>
+                <span><small className="mono">Delegators</small><b className="mono">{operatorInfo.data?.delegationCount ?? "—"}</b></span>
+              </div>
+            </div>
+          </div>
+          <div className="op-profile-panel">
+            <div className="op-profile-panel__head">
+              <span className="mono">Reputation</span>
+              <b>{useLiveProfile ? "indexer" : op.reputation.toFixed(3)}</b>
+            </div>
+            {useLiveProfile ? (
+              <div className="op-hero-note mono">
+                Reputation history is waiting on an indexed peer. The score follows inclusion rate, RTT, and completed duties.
+              </div>
+            ) : (
+              <div className="op-hero-spark">
+                <Sparkline data={op.repHist} width={300} height={86} color="var(--ok)"/>
+              </div>
+            )}
+          </div>
+          <div className="op-profile-panel">
+            <div className="op-profile-panel__head">
+              <span className="mono">Services</span>
+              <b>{publishedCapabilityCount || "—"}</b>
+            </div>
+            {useLiveProfile ? (
+              liveCapabilityEntries.length ? (
+                <div className="op-hero-cap-list">
+                  {liveCapabilityEntries.slice(0, 6).map(([key, value]) => (
+                    <span key={key} className="mono" title={String(value)}>{capabilityLabel(key)}</span>
+                  ))}
+                </div>
+              ) : (
+                <div className="op-hero-note mono">
+                  No service capability mask has been published by this operator yet.
+                </div>
+              )
+            ) : (
+              <div className="op-hero-cap-list">
+                {Object.entries(op.caps).filter(([, v]) => v).map(([key]) => (
+                  <span key={key} className="mono">{capabilityLabel(key)}</span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
-      <section className="ms-grid-2">
+      <section className="op-profile-row">
         <Card title="Cluster memberships">
-          {useLiveProfile && liveMembership ? (
-            <table className="ms-table">
-              <thead><tr><th>Cluster</th><th>State</th><th style={{textAlign:"right"}}>BLS pubkey</th></tr></thead>
-              <tbody>
-                <tr onClick={()=>go(`#/cluster/${liveMembership.clusterId + 1}`)}>
-                  <td className="mono" style={{fontWeight:500}}>{cName(liveMembership.clusterId)}</td>
-                  <td>{(() => { const r = operatorRoleMeta(liveMembership.state); return (
-                    <span className={`pill ${r.tone === "neutral" ? "" : r.tone}`} style={{fontSize:10}}>{r.label}</span>
-                  ); })()}</td>
-                  <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-300)"}}>
-                    {liveMembership.blsPubkey ? fmtHashShort(liveMembership.blsPubkey, 14, 0) : "—"}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          {useLiveProfile && liveClusterIds.length > 0 ? (
+            <div className="op-membership-grid">
+              {liveClusterIds.map((clusterId) => {
+                const isRosterCluster = liveMembership?.clusterId === clusterId;
+                const role = operatorRoleMeta(isRosterCluster ? liveMembership?.state : operatorInfo.data?.lifecycleState);
+                const tone = operatorDetailTone(role.tone);
+                return (
+                  <button key={clusterId} type="button" className={`op-membership-card is-${tone}`} onClick={()=>go(`#/cluster/${clusterId + 1}`)}>
+                    <span className="op-membership-card__pulse" aria-hidden="true"/>
+                    <span className="mono op-membership-card__label">{cName(clusterId)}</span>
+                    <span className={`pill ${role.tone === "neutral" ? "" : role.tone}`}>{role.label}</span>
+                    <span className="mono op-membership-card__meta">
+                      {isRosterCluster
+                        ? liveMembership?.blsPubkey
+                          ? `BLS ${fmtHashShort(liveMembership.blsPubkey, 12, 0)}`
+                          : "BLS not reported"
+                        : "reported by operator info"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           ) : useLiveProfile ? (
-            <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"10px 4px"}}>
+            <div className="op-empty-state mono">
               No live cluster membership resolved for this operator id. Reward / joined-round / role aggregates require an indexed peer
               {indexerAvailability.disabled ? ` (${indexerAvailability.reason ?? "indexer disabled"})` : ""}.
             </div>
           ) : (
-          <table className="ms-table">
-            <thead><tr><th>Cluster</th><th>Role</th><th style={{textAlign:"right"}}>Joined</th><th style={{textAlign:"right"}}>Reward 30d</th></tr></thead>
-            <tbody>
+            <div className="op-membership-grid">
               {op.memberships.map(m=>(
-                <tr key={m.slot} onClick={()=>go(`#/cluster/${m.slot}`)}>
-                  <td className="mono" style={{fontWeight:500}}>C-{String(m.slot).padStart(3,"0")}</td>
-                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{m.role}</td>
-                  <td className="mono num" style={{textAlign:"right"}}>{m.joined}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--gold)"}}>+{fmt(m.reward30d)}</td>
-                </tr>
+                <button key={m.slot} type="button" className="op-membership-card is-ok" onClick={()=>go(`#/cluster/${m.slot}`)}>
+                  <span className="op-membership-card__pulse" aria-hidden="true"/>
+                  <span className="mono op-membership-card__label">C-{String(m.slot).padStart(3,"0")}</span>
+                  <span className="pill ok">{m.role}</span>
+                  <span className="mono op-membership-card__meta">joined {m.joined} · +{fmt(m.reward30d)} 30d</span>
+                </button>
               ))}
-            </tbody>
-          </table>
-          )}
-        </Card>
-        <Card title="Live operator telemetry">
-          <div className="tx-kv">
-            <KVRow label="Operator id" value={liveOperatorId ? fmtHashShort(liveOperatorId) : op.addrShort} mono/>
-            <KVRow label="Chain address" value={operatorInfo.data?.chainAddress ? fmtAddr(operatorInfo.data.chainAddress, "user") : "—"} mono/>
-            <KVRow label="Authority index" value={authorityIndex ?? "—"}/>
-            <KVRow label="Lifecycle" value={operatorInfo.data?.lifecycleState ?? "—"}/>
-            <KVRow label="Bonded amount" value={fmtLythAmount(operatorInfo.data?.bondedAmount)} mono/>
-            <KVRow label="BLS key" value={authority.data?.blsPubkey ? fmtHashShort(authority.data.blsPubkey) : operatorInfo.data?.blsKeyFingerprint ?? "—"} mono/>
-            <KVRow label="Recent signed/missed" value={signedCount === null ? "—" : `${signedCount}/${missedCount ?? 0}`}/>
-            <KVRow label="Miss rate" value={risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}%` : "—"}/>
-            <KVRow label="Jail status" value={jailStatus ?? "—"}/>
-            <KVRow label="Next key rotation" value={keyRotationLabel}/>
-          </div>
-          <div className="mono" style={{fontSize:10,color:"var(--fg-500)",lineHeight:1.5,marginTop:10}}>
-            Live telemetry appears when this page is opened from a live cluster member id. Offline preview profiles are hidden on live networks.
-          </div>
-        </Card>
-        <Card title="Reputation timeline · 12 months">
-          {useLiveProfile ? (
-            <div className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,padding:"6px 2px"}}>
-              Reputation history requires an indexed peer{indexerAvailability.disabled ? ` (${indexerAvailability.reason ?? "indexer disabled"})` : ""}.
-              The reputation surface is global and slowly-decaying; it tracks vertex inclusion rate, peer RTT, and committed duty completion.
             </div>
-          ) : (
-            <>
-              <Sparkline data={op.repHist} width={520} height={140} color="var(--ok)"/>
-              <div className="mono" style={{fontSize:11,color:"var(--fg-400)",marginTop:10,lineHeight:1.6}}>
-                Reputation is a global, slowly-decaying metric — not cluster-bound.
-                It moves with vertex inclusion rate, peer RTT, and committed duty completion.
-              </div>
-            </>
           )}
         </Card>
       </section>
 
-      <Card title="Service capabilities advertised">
-        {useLiveProfile ? (
-          <div className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,padding:"6px 2px"}}>
-            Service-capability advertisements live in the node-registry precompile and surface here once an operator publishes its capability mask.
-            Live operators on this chain have not registered profiles yet.
+      <section className="op-profile-row">
+        <Card title="Upcoming duties">
+          <div className="op-duty-grid">
+            <OperatorFact
+              label="Attestation"
+              value={attestationDuty ? `${fmtRoundish(attestationDuty.startRound)}-${fmtRoundish(attestationDuty.endRound)}` : "—"}
+              tone={attestationDuty ? "ok" : "neutral"}
+            />
+            <OperatorFact label="Duty kind" value={attestationDuty?.kind ? attestationDuty.kind.replace(/_/g, " ") : "—"} tone="neutral"/>
+            <OperatorFact label="Current round" value={duties.data ? fmtRoundish(duties.data.currentRound) : "—"} tone="neutral"/>
+            <OperatorFact label="Horizon" value={duties.data ? `${duties.data.horizonRounds} rounds` : "—"} tone="neutral"/>
+            <OperatorFact label="Key rotation" value={keyRotationLabel} tone={keyRotation && "nextRound" in keyRotation ? "ok" : "neutral"}/>
+            <OperatorFact label="Risk sample" value={risk.data ? fmtRoundish(risk.data.dataHeight) : "—"} tone="neutral"/>
           </div>
-        ) : (
-          <div className="ms-caps">
-            {Object.entries(op.caps).map(([k,v])=>(
-              <div key={k} className={`ms-cap ${v?"is-on":""}`}>
-                <span className="ms-cap__check">{v?"✓":"—"}</span>
-                <span>{capabilityLabel(k)}</span>
+          {risk.data?.reasons?.length ? (
+            <div className="op-risk-reasons mono">
+              {risk.data.reasons.map((reason) => <span key={reason}>{reason}</span>)}
+            </div>
+          ) : null}
+        </Card>
+      </section>
+
+      <section className="op-profile-row">
+        <Card title="Risk and signing">
+          <div className="op-risk-wide">
+            <div className="op-risk-layout">
+              <div className="op-risk-meter" style={{background:`conic-gradient(${riskColor} ${riskDeg}deg, rgba(255,255,255,0.065) ${riskDeg}deg 360deg)`}}>
+                <div>
+                  <b className="mono">{risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}%` : "—"}</b>
+                  <span className="mono">miss rate</span>
+                </div>
               </div>
-            ))}
+              <div className="op-risk-stats">
+                <OperatorFact label="Signed" value={signingPercent !== null ? `${signingPercent}%` : signingSummary} tone={signedCount !== null && signedCount > 0 ? "ok" : "neutral"}/>
+                <OperatorFact label="Missed" value={missedCount ?? "—"} tone={missedCount && missedCount > 0 ? "warn" : "neutral"}/>
+                <OperatorFact label="Headroom" value={risk.data ? `${(risk.data.remainingHeadroomBps / 100).toFixed(2)}%` : "—"} tone={riskTone}/>
+                <OperatorFact label="Jail status" value={jailStatus ?? "—"} tone={riskTone}/>
+              </div>
+            </div>
+            {signing.data?.entries?.length ? (
+              <div className="op-signing-list">
+                {signing.data.entries.slice(0, 12).map((row) => {
+                  const tone = row.status === "signed" ? "ok" : row.status === "missed" ? "err" : "warn";
+                  return (
+                    <div key={`${row.round}-${row.status}`} className={`op-signing-row is-${tone}`}>
+                      <span className="mono">round {fmtRoundish(row.round)}</span>
+                      <span className={`pill ${tone}`}>{row.status}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="op-empty-state mono">
+                Recent signing activity appears after the operator authority index resolves.
+              </div>
+            )}
           </div>
-        )}
-      </Card>
+        </Card>
+      </section>
     </div>
   );
 };
@@ -1745,7 +1780,6 @@ const ClustersPage = ({go}: any) => {
   const activeClustersLive = useActiveClusters();
   const healthyClustersLive = useHealthyClusters();
   const roster = useLiveOperatorRoster();
-  const delegationCap = useDelegationCap();
   const indexerAvailability = useIndexerAvailability();
   const [tab, setTab]       = useState("active"); // active|inactive
   const [filter, setFilter] = useState("all"); // all|nominal|maintenance|open (active tab) · all|jailed|queued (inactive tab)
@@ -1776,6 +1810,11 @@ const ClustersPage = ({go}: any) => {
   const liveActiveDescriptors = haveLiveDirectory ? (liveDescriptors ?? []).filter((c) => c.active) : [];
   const liveInactiveDescriptors = haveLiveDirectory ? (liveDescriptors ?? []).filter((c) => !c.active) : [];
   const liveDegradedCount = liveActiveDescriptors.filter((c) => c.aggregateHealth !== "ok").length;
+  const top100ActiveCount = haveLiveDirectory ? (liveActiveCount ?? (liveDescriptors ? liveActiveDescriptors.length : null)) : active.length;
+  const top100DegradedCount = haveLiveDirectory ? (liveDescriptors ? liveDegradedCount : null) : maint;
+  const top100HealthyCount = haveLiveDirectory
+    ? (liveHealthyCount ?? (top100ActiveCount !== null && top100DegradedCount !== null ? Math.max(0, top100ActiveCount - top100DegradedCount) : null))
+    : nominal;
   const liveActiveFiltered = liveActiveDescriptors.filter((c) =>
     filter === "all" ? true : filter === "nominal" ? c.aggregateHealth === "ok" : filter === "maintenance" ? c.aggregateHealth !== "ok" : true,
   );
@@ -1813,9 +1852,9 @@ const ClustersPage = ({go}: any) => {
     });
 
   return (
-    <div className="ms-page ms-overview">
+    <div className="ms-page ms-overview ms-clusters-page">
       {/* ---------- INTRO HERO ---------- */}
-      <section className="ov-hero">
+      <section className="ov-hero cl-overview-hero">
         <div className="ov-hero__left">
           <div className="ov-hero__tag">
             <span className="ov-livedot"/>
@@ -1831,7 +1870,7 @@ const ClustersPage = ({go}: any) => {
           </h1>
           <p className="ov-hero__desc">
             {haveLiveDirectory && firstLiveCluster
-              ? `The live chain reports ${liveDescriptorCount} cluster descriptor${liveDescriptorCount === 1 ? "" : "s"} with ${liveQuorumLabel ?? "BFT quorum"}. Roster and quorum come from RPC; TVS, APY, and reward history appear once the aggregate index lands.`
+              ? `The live chain reports ${liveDescriptorCount} cluster descriptor${liveDescriptorCount === 1 ? "" : "s"} with ${liveQuorumLabel ?? "BFT quorum"}. Roster and quorum are live; TVS, APY, and reward history appear once the aggregate index lands.`
               : haveLiveDirectory
                 ? "Awaiting the live cluster directory. Monoscan will not show seeded TVS, APY, reward, or standby-bench rows while connected to the live chain."
               : "Every cluster is a 7-operator DVT set. The protocol elects the top 100 by TVS into the active cluster set — others wait in the wings until their stake grows. Stake with any active cluster; your delegation will roll over automatically if rankings shift."}
@@ -1851,13 +1890,13 @@ const ClustersPage = ({go}: any) => {
         </div>
         <div className="ov-hero__stats">
           <HeadlineStat label="Active clusters" value={haveLiveDirectory ? (liveActiveCount !== null ? `${liveActiveCount}` : "—") : `${active.length}/100`}
-            sub={haveLiveDirectory ? (liveDescriptorCount !== null ? `${liveDescriptorCount} descriptors from RPC` : "awaiting live directory") : `${inactive.length} inactive · ${jailed.length} jailed`}
+            sub={haveLiveDirectory ? (liveDescriptorCount !== null ? `${liveDescriptorCount} live descriptors` : "awaiting live directory") : `${inactive.length} inactive · ${jailed.length} jailed`}
             delta={haveLiveDirectory ? (liveHealthyCount !== null ? `${liveHealthyCount} healthy` : "") : jailed.length===0?"all healthy":`${jailed.length} cooling down`}
             tone={haveLiveDirectory ? "neutral" : jailed.length===0?"ok":"err"}/>
           <HeadlineStat
             label="Total value staked"
             value={totalTvs !== null ? `${totalTvs.toFixed(0)}M LYTH` : "—"}
-            sub={totalTvs !== null ? "across active clusters" : "not exposed by live RPC yet"}
+            sub={totalTvs !== null ? "across active clusters" : "not exposed by live data yet"}
             delta={totalTvs !== null ? "+0.4M · 24h" : ""}
             tone="gold"
             accent
@@ -1870,152 +1909,21 @@ const ClustersPage = ({go}: any) => {
             tone="ok"
           />
           <HeadlineStat
-            label="Min TVS to enter top 100"
-            value={minToEnter !== null ? `${minToEnter.toFixed(2)}M` : "—"}
-            sub={minToEnter !== null ? "ranking updates every epoch" : "no top-100 entry threshold yet"}
-            delta={minToEnter !== null ? `${openCount} accepting ops` : ""}
-            tone="neutral"
+            label="Top 100 active / degraded"
+            value={top100ActiveCount !== null && top100DegradedCount !== null ? `${top100ActiveCount}/${top100DegradedCount}` : "—/—"}
+            sub={top100HealthyCount !== null ? `${top100HealthyCount} healthy in the active set` : "awaiting live health descriptors"}
+            delta={top100DegradedCount !== null && top100DegradedCount > 0 ? `${top100DegradedCount} degraded` : top100DegradedCount === 0 ? "none degraded" : ""}
+            tone={top100DegradedCount !== null && top100DegradedCount > 0 ? "warn" : "ok"}
           />
-          <HeadlineStat label="Delegation cap" value={delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "off" : `${delegationCap.data.capBps} bps`) : "—"}
-            sub={delegationCap.data ? `sampled at block ${Number(delegationCap.data.blockNumber).toLocaleString()}` : "live RPC"} delta="protocol control" tone="neutral"/>
         </div>
       </section>
-
-      {/* ---------- FEATURED CLUSTERS ---------- */}
-      {haveLiveDirectory ? (
-      <section>
-        <div className="ov-feed__head" style={{marginBottom:14}}>
-          <div>
-            <h3 className="ov-section-title">Featured · live clusters</h3>
-            <p className="ov-section-desc">Live RPC drives roster, quorum, and health. Yield fields stay pending until reward history is indexed.</p>
-          </div>
-        </div>
-        {liveActiveDescriptors.length === 0 ? (
-          <div className="ms-card" style={{padding:"18px 20px"}}>
-            <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-              {liveClusters.isLoading
-                ? "Checking the live cluster directory."
-                : "No active clusters are currently reported by the live directory."}
-            </div>
-          </div>
-        ) : (
-        <div className="cl-featured">
-          {liveActiveDescriptors.slice(0, 6).map((cl, i)=>{
-            const summary = liveClusterSeatSummary(cl, roster.operators);
-            const ringMembers = liveClusterRingMembers(cl, roster.operators);
-            const healthOk = cl.aggregateHealth === "ok";
-            return (
-              <div key={cl.id} className="cl-card cl-card--live" onClick={()=>go(`#/cluster/${liveClusterSlot(cl)}`)}>
-                <div className="cl-card__head">
-                  <div style={{minWidth:0,flex:1}}>
-                    <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-                      <div style={{fontSize:15,fontWeight:500,color:"var(--fg-100)",letterSpacing:"-0.005em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{liveClusterLabel(cl)}</div>
-                      <span className="cl-live-tag">RPC</span>
-                    </div>
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:2,letterSpacing:"0.03em"}}>
-                      <span className="cl-rank">#{i + 1}</span>
-                      <span style={{margin:"0 6px",color:"var(--fg-700)"}}>·</span>
-                      cluster id {cl.id}
-                      <span style={{margin:"0 6px",color:"var(--fg-700)"}}>·</span>
-                      {summary.threshold}-of-{summary.size} BFT
-                    </div>
-                  </div>
-                  <div style={{textAlign:"right",flexShrink:0}}>
-                    <div className="mono num" style={{fontSize:16,color:healthOk ? "var(--ok)" : "var(--warn)",letterSpacing:"-0.01em"}}>
-                      {cl.aggregateHealth ?? "unknown"}
-                    </div>
-                    <div className="mono" style={{fontSize:9.5,color:"var(--fg-500)",letterSpacing:"0.08em"}}>HEALTH</div>
-                  </div>
-                </div>
-                <MiniRing
-                  members={ringMembers}
-                  size={112}
-                  threshold={summary.threshold}
-                  centerValue={summary.known ? `${summary.active}/${summary.size}` : `${summary.threshold}/${summary.size}`}
-                  centerLabel={summary.known ? "ACTIVE" : "BFT"}
-                />
-                <div className="cl-card__bench mono">
-                  <span style={{color:"var(--fg-500)",fontSize:10,letterSpacing:"0.08em"}}>ROSTER</span>
-                  <span style={{color:"var(--fg-400)",fontSize:10.5}}>
-                    {summary.known ? `${summary.reported} operator${summary.reported === 1 ? "" : "s"} reported` : "status resolving"}
-                  </span>
-                  <span className="cl-closed-tag">YIELD PENDING</span>
-                </div>
-                <div className="cl-card__foot">
-                  <div><div className="cap">Quorum</div><div className="mono num">{summary.threshold}/{summary.size}</div></div>
-                  <div><div className="cap">TVS</div><div className="mono num" style={{color:"var(--fg-500)"}}>{fmtClusterStake(cl)}</div></div>
-                  <div><div className="cap">Reward 30d</div><div className="mono num" style={{color:"var(--fg-500)"}}>not indexed</div></div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        )}
-      </section>
-      ) : (
-      <section>
-        <div className="ov-feed__head" style={{marginBottom:14}}>
-          <div>
-            <h3 className="ov-section-title">Featured · top yield among healthy clusters</h3>
-            <p className="ov-section-desc">Click any cluster card to see its operator ring, reward streams, and recent vertices.</p>
-          </div>
-        </div>
-        <div className="cl-featured">
-          {featured.map(cl=>{
-            const apy = clusterApy(cl);
-            return (
-              <div key={cl.slot} className="cl-card" onClick={()=>go(`#/cluster/${cl.slot}`)}>
-                <div className="cl-card__head">
-                  <div style={{minWidth:0,flex:1}}>
-                    <div style={{display:"flex",alignItems:"baseline",gap:8}}>
-                      <div style={{fontSize:15,fontWeight:500,color:"var(--fg-100)",letterSpacing:"-0.005em",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{cl.name}</div>
-                    </div>
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:2,letterSpacing:"0.03em"}}>
-                      <span className="cl-rank">#{cl.rank}</span>
-                      <span style={{margin:"0 6px",color:"var(--fg-700)"}}>·</span>
-                      C-{String(cl.slot).padStart(3,"0")}
-                      <span style={{margin:"0 6px",color:"var(--fg-700)"}}>·</span>
-                      {cl.members}/{cl.size} live
-                    </div>
-                  </div>
-                  <div style={{textAlign:"right",flexShrink:0}}>
-                    <div className="mono num" style={{fontSize:20,color:"var(--gold)",letterSpacing:"-0.01em"}}>{fmtClusterApy(apy)}</div>
-                    <div className="mono" style={{fontSize:9.5,color:"var(--fg-500)",letterSpacing:"0.08em"}}>APY</div>
-                  </div>
-                </div>
-                <MiniRing members={cl.opMembers} size={112}/>
-                <div className="cl-card__bench mono">
-                  <span style={{color:"var(--fg-500)",fontSize:10,letterSpacing:"0.08em"}}>STANDBY</span>
-                  {Array.from({length:3}).map((_,b)=>(
-                    <span key={b} className={`cl-bench-pip ${b<cl.backupCount?"is-filled":"is-empty"}`}/>
-                  ))}
-                  <span style={{color:"var(--fg-400)",fontSize:10.5}}>{cl.backupCount}/3</span>
-                  {cl.recruiting
-                    ? <span className="cl-open-tag">● OPEN · {cl.recruitSeats} seat{cl.recruitSeats>1?"s":""}</span>
-                    : <span className="cl-closed-tag">CLOSED</span>}
-                </div>
-                <div className="cl-card__foot">
-                  <div><div className="cap">TVS</div><div className="mono num">{cl.tvs}M</div></div>
-                  <div><div className="cap">Reward 30d</div><div className="mono num" style={{color:"var(--gold)"}}>+{fmt(cl.reward30d)}</div></div>
-                  <div><div className="cap">Vertex incl.</div><div className="mono num">{pct(cl.vertexInclude,1)}</div></div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-      )}
 
       {/* ---------- LIVE CLUSTER NOTICE ---------- */}
       {haveLiveDirectory && liveDescriptorCount !== null && (
-        <section className="ms-card" style={{padding:"14px 18px"}}>
-          <div className="cap" style={{color:"var(--gold)",marginBottom:6}}>Live cluster directory</div>
-          <div className="mono" style={{color:"var(--fg-300)",fontSize:12.5,lineHeight:1.55}}>
-            Live RPC reports {liveDescriptorCount} cluster{liveDescriptorCount === 1 ? "" : "s"}
-            {liveQuorumLabel ? ` · ${liveQuorumLabel}` : ""}.
-            This view now keeps the card and table layout while marking TVS/APY/reward history as pending until the aggregate endpoint exists.
-          </div>
-        </section>
+        <Card
+          title="Live cluster directory"
+          sub={`Live data reports ${liveDescriptorCount} cluster${liveDescriptorCount === 1 ? "" : "s"}${liveQuorumLabel ? ` · ${liveQuorumLabel}` : ""}. This view now keeps the card and table layout while marking TVS/APY/reward history as pending until the aggregate endpoint exists.`}
+        />
       )}
 
       {/* ---------- ACTIVE / INACTIVE TABBED LIST ---------- */}
@@ -2258,7 +2166,7 @@ const MiniRing = ({ members, size=110, threshold=5, centerValue, centerLabel = "
   const healthy = live>=threshold;
   const stroke = healthy ? "var(--state-nominal, #73d13d)" : "var(--state-jail, #ff6b6b)";
   return (
-    <div style={{position:"relative",width:size,height:size,margin:"10px auto 0"}}>
+    <div className="cl-mini-ring" style={{position:"relative",width:size,height:size,margin:"10px auto 0"}}>
       <svg width={size} height={size}>
         <circle cx={cx} cy={cy} r={r+10} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="2"/>
         <circle cx={cx} cy={cy} r={r+10} fill="none" stroke={stroke} strokeWidth="2"
@@ -2270,17 +2178,40 @@ const MiniRing = ({ members, size=110, threshold=5, centerValue, centerLabel = "
           const a = (i/total)*Math.PI*2 - Math.PI/2;
           const x = cx + Math.cos(a)*r;
           const y = cy + Math.sin(a)*r;
-          const c = m.state==="live"?"var(--state-nominal, #73d13d)":m.state==="lag"?"var(--state-maintenance, #f2b441)":"var(--state-jail, #ff6b6b)";
+          const c = m.state==="live"?"var(--state-nominal, #73d13d)":m.state==="lag"?"var(--state-maintenance, #f2b441)":m.state==="standby"?"var(--info, #8ab4d6)":"var(--state-jail, #ff6b6b)";
           return <circle key={i} cx={x} cy={y} r={6} fill="var(--ink-2, #161428)" stroke={c} strokeWidth="1.5" style={{filter:`drop-shadow(0 0 3px ${c}66)`}}/>;
         })}
       </svg>
       <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-        <div className="mono num" style={{fontSize:14,color:"var(--fg-100)",letterSpacing:"-0.01em"}}>{centerValue ?? `${live}/${total}`}</div>
-        <div className="mono" style={{fontSize:8.5,color:"var(--fg-500)",letterSpacing:"0.12em"}}>{centerLabel}</div>
+        <div className="mono num" style={{fontSize:14,color:"var(--fg-100)",letterSpacing:0}}>{centerValue ?? `${live}/${total}`}</div>
+        <div className="mono" style={{fontSize:8.5,color:"var(--fg-500)",letterSpacing:0}}>{centerLabel}</div>
       </div>
     </div>
   );
 };
+
+type OperatorCardMetric = { label: string; value: string };
+type OperatorCardRow = {
+  mode: "live" | "fixture";
+  key: string;
+  search: string;
+  clusterSearch: string;
+  stateKind: string;
+  href: string;
+  tone: "ok" | "warn" | "info" | "err";
+  avatarHue: number;
+  name: string;
+  id: string;
+  pillLabel: string;
+  pillTone: string;
+  clusterLabel: string;
+  kvLabel?: string;
+  kvValue?: string;
+  metrics?: OperatorCardMetric[];
+};
+
+const operatorAvatarHue = (seed: string) =>
+  Array.from(seed).reduce((sum, ch, idx) => sum + ch.charCodeAt(0) * (idx + 1), 0) % 360;
 
 const OperatorsPage = ({go}: any) => {
   const clusters = useClusterSet();
@@ -2295,92 +2226,205 @@ const OperatorsPage = ({go}: any) => {
   // fixture roster only when the cluster directory is unreachable — show
   // a typed empty/operator-id row whenever the live data resolves.
   const useLiveRoster = indexerAvailability.liveChain || (roster.loaded && roster.operators.length > 0);
+  const [operatorQuery, setOperatorQuery] = useState("");
+  const [operatorStateFilter, setOperatorStateFilter] = useState("all");
+  const [operatorClusterFilter, setOperatorClusterFilter] = useState("");
+  const [operatorVisible, setOperatorVisible] = useState(60);
+  const liveActiveOps = roster.operators.filter((op) => _operatorIsActive(op.state)).length;
+  const liveStandbyOps = roster.operators.filter((op) => _operatorIsStandby(op.state)).length;
+  const liveLaggingOps = roster.operators.filter((op) => op.state === "lagging" || op.state === "degraded").length;
+  const cleanFixtureOps = SCAN.operators.filter((op) => op.slashes === 0).length;
+  const avgFixtureRep = SCAN.operators.reduce((sum, op) => sum + op.reputation, 0) / SCAN.operators.length;
+  useEffect(() => {
+    setOperatorVisible(60);
+  }, [operatorQuery, operatorStateFilter, operatorClusterFilter, useLiveRoster]);
+  const liveOperatorRows = useMemo<OperatorCardRow[]>(() => roster.operators.map((op) => {
+    const cluster = `C-${String(op.clusterId + 1).padStart(3, "0")}`;
+    const isLagging = op.state === "lagging" || op.state === "degraded";
+    const stateKind = _operatorIsActive(op.state) ? "active" : _operatorIsStandby(op.state) ? "standby" : isLagging ? "lagging" : "issues";
+    const role = operatorRoleMeta(op.state);
+    const tone = _operatorIsActive(op.state) ? "ok" : isLagging ? "warn" : _operatorIsStandby(op.state) ? "info" : "err";
+    return {
+      mode: "live",
+      key: op.operatorId,
+      search: `${op.operatorId} ${op.blsPubkey ?? ""} ${op.state ?? ""} ${cluster} cluster-${op.clusterId + 1}`.toLowerCase(),
+      clusterSearch: `${cluster} cluster-${op.clusterId + 1} ${op.clusterId + 1}`.toLowerCase(),
+      stateKind,
+      href: `#/operator/${encodeURIComponent(op.operatorId)}`,
+      tone,
+      avatarHue: operatorAvatarHue(op.operatorId),
+      name: fmtHashShort(op.operatorId, 10, 4),
+      id: fmtHashShort(op.operatorId, 14, 8),
+      pillLabel: role.label,
+      pillTone: role.tone,
+      clusterLabel: cluster,
+      kvLabel: "BLS",
+      kvValue: op.blsPubkey ? fmtHashShort(op.blsPubkey, 10, 0) : "not reported",
+    };
+  }), [roster.operators]);
+  const fixtureOperatorRows = useMemo<OperatorCardRow[]>(() => SCAN.operators.map((op) => {
+    const clustersText = op.memberships.map((m) => `C-${String(m.slot).padStart(3, "0")} cluster-${m.slot}`).join(" ");
+    return {
+      mode: "fixture",
+      key: op.addrShort,
+      search: `${op.handle} ${op.addrShort} ${op.region} ${clustersText}`.toLowerCase(),
+      clusterSearch: `${op.region} ${clustersText}`.toLowerCase(),
+      stateKind: op.slashes === 0 ? "clean" : "issues",
+      href: `#/operator/${op.addrShort}`,
+      tone: op.slashes === 0 ? "ok" : "warn",
+      avatarHue: operatorAvatarHue(op.handle),
+      name: op.handle,
+      id: op.addrShort,
+      pillLabel: op.region,
+      pillTone: "neutral",
+      clusterLabel: `${op.memberships.length} clusters`,
+      metrics: [
+        { label: "Rep", value: op.reputation.toFixed(3) },
+        { label: "Uptime", value: pct(op.uptime, 1) },
+        { label: "Bonded", value: fmt(op.bonded) },
+      ],
+    };
+  }), []);
+  const allOperatorRows = useLiveRoster ? liveOperatorRows : fixtureOperatorRows;
+  const operatorStateOptions = useLiveRoster
+    ? [["all", "All"], ["active", "Active"], ["standby", "Standby"], ["lagging", "Lagging"], ["issues", "Issues"]]
+    : [["all", "All"], ["clean", "Clean"], ["issues", "Issues"]];
+  const normalizedOperatorQuery = operatorQuery.trim().toLowerCase();
+  const normalizedOperatorCluster = operatorClusterFilter.trim().toLowerCase();
+  const filteredOperatorRows = allOperatorRows.filter((row) => {
+    if (normalizedOperatorQuery && !row.search.includes(normalizedOperatorQuery)) return false;
+    if (normalizedOperatorCluster && !row.clusterSearch.includes(normalizedOperatorCluster)) return false;
+    if (operatorStateFilter !== "all" && row.stateKind !== operatorStateFilter) return false;
+    return true;
+  });
+  const visibleOperatorRows = filteredOperatorRows.slice(0, operatorVisible);
+  const hiddenOperatorRows = Math.max(0, filteredOperatorRows.length - visibleOperatorRows.length);
   return (
-    <div className="ms-page">
-      <h1 className="ms-h1">
-        Operators · {useLiveRoster ? roster.operators.length : SCAN.operators.length}
-        {useLiveRoster ? <span className="mono" style={{fontSize:12,color:"var(--fg-500)",marginLeft:10}}>live</span> : null}
-      </h1>
-      <div className="mono" style={{color:"var(--fg-400)",marginBottom:18,fontSize:13}}>
-        Operators carry stable identity across clusters · reputation follows the address, not the seat.
-      </div>
-      {liveCount !== null && (
-        <div className="mono" style={{color:"var(--fg-500)",marginBottom:14,fontSize:11,letterSpacing:"0.06em"}}>
-          live cluster descriptors · {liveCount} descriptor{liveCount===1?"":"s"}
-          {healthyCount !== null ? ` · ${healthyCount} healthy` : ""}
-          {roster.failedClusters.length > 0 ? ` · ${roster.failedClusters.length} unreachable` : ""}
+    <div className="ms-page ms-operators-page">
+      <section className="op-overview-hero">
+        <div className="op-overview-hero__copy">
+          <div className="op-overview-hero__tag">
+            <span className="ov-livedot"/>
+            <span className="mono">
+              {useLiveRoster
+                ? `${roster.operators.length} live roster rows${liveCount !== null ? ` · ${liveCount} cluster descriptor${liveCount===1?"":"s"}` : ""}`
+                : `${SCAN.operators.length} preview operators · identity follows address`}
+            </span>
+          </div>
+          <h1 className="op-overview-hero__title">Operator roster</h1>
+          <p className="op-overview-hero__desc">
+            Operators carry stable identity across clusters. Live rows come from cluster status; richer reputation, uptime, bonded amount, and slash history appear once operator aggregates are indexed.
+          </p>
         </div>
-      )}
-      <Card title="">
-        <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-        {useLiveRoster ? (
-        <table className="ms-table">
-          <thead><tr><th>Operator</th><th>State</th><th style={{textAlign:"right"}}>Cluster</th><th style={{textAlign:"right"}}>BLS pubkey</th><th style={{textAlign:"right"}}>Source</th></tr></thead>
-          <tbody>
-            {roster.operators.length === 0 ? (
-              <tr>
-                <td colSpan={5}>
-                  <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
-                    {roster.loaded
-                      ? "No live operator roster rows are reported by the connected cluster-status endpoints."
-                      : "Checking live operator roster."}
-                  </div>
-                </td>
-              </tr>
-            ) : roster.operators.map((op)=>{
-              const opShort = fmtHashShort(op.operatorId, 10, 4);
-              const cluster = `C-${String(op.clusterId + 1).padStart(3, "0")}`;
-              return (
-                <tr key={op.operatorId} onClick={()=>go(`#/operator/${encodeURIComponent(op.operatorId)}`)}>
-                  <td>
-                    <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                      <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${op.operatorId.charCodeAt(2)*9%360})`}}/>
-                      <div>
-                        <div style={{fontWeight:500,fontSize:13}} className="mono">{opShort}</div>
-                        <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}} title={op.operatorId}>{fmtHashShort(op.operatorId, 14, 8)}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td>{(() => { const r = operatorRoleMeta(op.state); return (
-                    <span className={`pill ${r.tone === "neutral" ? "" : r.tone}`} style={{fontSize:10}}>{r.label}</span>
-                  ); })()}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)"}}>{cluster}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)"}}>{op.blsPubkey ? fmtHashShort(op.blsPubkey, 12, 0) : "not reported"}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--ok)"}}>live cluster status</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        ) : (
-        <table className="ms-table">
-          <thead><tr><th>Operator</th><th>State</th><th style={{textAlign:"right"}}>Reputation</th><th style={{textAlign:"right"}}>Uptime 90d</th><th style={{textAlign:"right"}}>Bonded</th><th style={{textAlign:"right"}}>Clusters</th><th style={{textAlign:"right"}}>Slash</th></tr></thead>
-          <tbody>
-            {SCAN.operators.map(op=>(
-              <tr key={op.addrShort} onClick={()=>go(`#/operator/${op.addrShort}`)}>
-                <td>
-                  <div style={{display:"flex",gap:10,alignItems:"center"}}>
-                    <span className="ms-avatar" style={{background:`oklch(0.62 0.16 ${op.handle.charCodeAt(0)*9%360})`}}/>
-                    <div>
-                      <div style={{fontWeight:500,fontSize:13}}>{op.handle}</div>
-                      <div className="mono" style={{fontSize:10,color:"var(--fg-400)"}}>{op.addrShort}</div>
-                    </div>
-                  </div>
-                </td>
-                <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>{op.region}</td>
-                <td className="mono num" style={{textAlign:"right"}}>{op.reputation.toFixed(3)}</td>
-                <td className="mono num" style={{textAlign:"right"}}>{pct(op.uptime,2)}</td>
-                <td className="mono num" style={{textAlign:"right"}}>{fmt(op.bonded)}</td>
-                <td className="mono num" style={{textAlign:"right"}}>{op.memberships.length}</td>
-                <td className="mono num" style={{textAlign:"right",color:op.slashes===0?"var(--ok)":"var(--err)"}}>{op.slashes===0?"0":op.slashes}</td>
-              </tr>
+        <div className="op-overview-hero__stats">
+          <div className="op-stat-card">
+            <span className="mono">Operators</span>
+            <b className="mono num">{useLiveRoster ? roster.operators.length : SCAN.operators.length}</b>
+            <small>{useLiveRoster ? "reported by cluster status" : "offline preview set"}</small>
+          </div>
+          <div className="op-stat-card">
+            <span className="mono">Active</span>
+            <b className="mono num">{useLiveRoster ? liveActiveOps : SCAN.operators.length}</b>
+            <small>{useLiveRoster ? `${liveStandbyOps} standby · ${liveLaggingOps} lagging` : `${cleanFixtureOps} clean slash records`}</small>
+          </div>
+          <div className="op-stat-card">
+            <span className="mono">Clusters</span>
+            <b className="mono num">{liveCount !== null ? liveCount : "—"}</b>
+            <small>{healthyCount !== null ? `${healthyCount} healthy` : useLiveRoster ? "live descriptors" : "preview topology"}</small>
+          </div>
+          <div className="op-stat-card op-stat-card--accent">
+            <span className="mono">Reputation</span>
+            <b className="mono num">{useLiveRoster ? "—" : avgFixtureRep.toFixed(3)}</b>
+            <small>{useLiveRoster ? "aggregate pending" : "preview average"}</small>
+          </div>
+        </div>
+      </section>
+
+      <Card title={useLiveRoster ? "Live operator roster" : "Operator preview roster"}>
+        <div className="op-toolbar">
+          <label className="op-search">
+            <span className="mono">Search</span>
+            <input
+              value={operatorQuery}
+              onChange={(event)=>setOperatorQuery(event.target.value)}
+              placeholder={useLiveRoster ? "operator id, BLS key, state" : "handle, address, region"}
+            />
+          </label>
+          <label className="op-search op-search--small">
+            <span className="mono">{useLiveRoster ? "Cluster" : "Region / cluster"}</span>
+            <input
+              value={operatorClusterFilter}
+              onChange={(event)=>setOperatorClusterFilter(event.target.value)}
+              placeholder={useLiveRoster ? "C-001" : "eu-west or C-001"}
+            />
+          </label>
+          <div className="op-filter-group" role="group" aria-label="Operator status filter">
+            {operatorStateOptions.map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={`op-filter ${operatorStateFilter === value ? "is-active" : ""}`}
+                onClick={()=>setOperatorStateFilter(value)}
+              >
+                {label}
+              </button>
             ))}
-          </tbody>
-        </table>
-        )}
+          </div>
+          <div className="op-toolbar__count mono">
+            {filteredOperatorRows.length}/{allOperatorRows.length}
+          </div>
         </div>
+        {useLiveRoster && allOperatorRows.length === 0 ? (
+          <div className="op-empty mono">
+            {roster.loaded
+              ? "No live operator roster rows are reported by the connected cluster-status endpoints."
+              : "Checking live operator roster."}
+          </div>
+        ) : filteredOperatorRows.length === 0 ? (
+          <div className="op-empty mono">
+            No operators match the current filters.
+          </div>
+        ) : (
+          <div className="op-card-grid">
+            {visibleOperatorRows.map((row) => (
+              <button key={row.key} type="button" className={`op-card is-${row.tone}`} onClick={()=>go(row.href)}>
+                <span className="op-card__glow" aria-hidden="true"/>
+                <span className="op-card__head">
+                  <span className="ms-avatar op-card__avatar" style={{background:`oklch(0.62 0.16 ${row.avatarHue})`}}/>
+                  <span className="op-card__state" aria-hidden="true"/>
+                </span>
+                <span className={`op-card__name ${row.mode === "live" ? "mono" : ""}`}>{row.name}</span>
+                <span className="op-card__id mono">{row.id}</span>
+                <span className="op-card__meta">
+                  <span className={`pill ${row.pillTone === "neutral" ? "" : row.pillTone}`}>{row.pillLabel}</span>
+                  <span className="op-card__cluster mono">{row.clusterLabel}</span>
+                </span>
+                {row.metrics ? (
+                  <span className="op-card__metrics">
+                    {row.metrics.map((metric) => (
+                      <span key={metric.label}><small>{metric.label}</small><b className="mono">{metric.value}</b></span>
+                    ))}
+                  </span>
+                ) : (
+                  <span className="op-card__kv mono">
+                    <span>{row.kvLabel}</span>
+                    <b>{row.kvValue}</b>
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+        {hiddenOperatorRows > 0 && (
+          <div className="op-show-more">
+            <button type="button" className="ov-cta" onClick={()=>setOperatorVisible((n) => n + 60)}>
+              Show 60 more
+            </button>
+            <span className="mono">{hiddenOperatorRows} hidden by render limit</span>
+          </div>
+        )}
         {useLiveRoster && (
-          <div className="mono" style={{color:"var(--fg-500)",fontSize:11,padding:"10px 14px",lineHeight:1.55,borderTop:"1px solid var(--fg-700)"}}>
+          <div className="mono op-roster-note">
             Only live cluster-status fields are shown here. Reputation, uptime, bonded amount, and slash history are hidden until a real operator aggregate endpoint is indexed
             {indexerAvailability.disabled ? ` (${indexerAvailability.reason ?? "indexer disabled"})` : ""}.
           </div>
@@ -2399,56 +2443,6 @@ const App = () => {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
   const go = (h) => { window.location.hash = h; setRoute(h); };
-
-  // Live chain head (2s long-poll) + chain-strip aggregate (round + block +
-  // peers + version + mempool + indexer). Both fall back to a local
-  // timer-based fixture when no RPC endpoint is reachable so the strip never
-  // freezes in the offline preview.
-  // TODO: missing lyth_subscribe WebSocket endpoint to replace the 2s
-  // long-poll. The seam lives in `data/hooks.ts::readLatestHeadFromWebSocket`
-  // and is feature-flagged behind `VITE_MONOSCAN_USE_WS` (see
-  // `sdk/client.ts::isWebSocketEnabled`).
-  const head = useChainHead();
-  const strip = useChainStrip();
-  const liveMode = isRpcConfigured();
-  const [mockRound, setMockRound] = useState(SCAN.consensus.round);
-  const hasLiveHead =
-    liveMode ||
-    (strip.data?.round !== null && strip.data?.round !== undefined) ||
-    (head.data?.round !== null && head.data?.round !== undefined);
-  useEffect(()=>{
-    if (hasLiveHead) return;
-    const id = setInterval(()=>setMockRound(r=>r+1), 380);
-    return ()=>clearInterval(id);
-  },[hasLiveHead]);
-  const round = strip.data?.round ?? head.data?.round ?? (liveMode ? null : mockRound);
-
-  // Live counterparts to the three previously-mocked strip fields. Each
-  // has a documented chain source today; the strip displays the live
-  // value when present and gracefully falls back to the SCAN demo
-  // numbers (kept for the unconnected-node case so the strip never
-  // shows blanks).
-  //
-  // - `proposer_latency` ms gauge → strip's "commit p95" slot.
-  // - `attestation_rate`  bps gauge → strip's "attest" slot (relabelled
-  //   from "rate" — the metric is a per-round attestation percentage,
-  //   not a transactions-per-second throughput, so the original "X/s"
-  //   framing was misleading).
-  // - `useHealthyClusters()` + `useChainStats().clusters.total` →
-  //   strip's "clusters" slot (live / total).
-  const stripMetrics = useMetricsRange(["proposer_latency", "attestation_rate"]);
-  const healthyClusters = useHealthyClusters();
-  const chainStats = useChainStats();
-  const stripLatestMetric = (selector: string) => {
-    const series = stripMetrics.data?.series?.find((s: any) => s.selector === selector);
-    if (!series?.samples?.length) return null;
-    const last = series.samples[series.samples.length - 1];
-    return { value: last.value as number, unit: (series.unit as string | null) ?? null };
-  };
-  const proposerLatency = stripLatestMetric("proposer_latency");
-  const attestationRate = stripLatestMetric("attestation_rate");
-  const liveClusterTotal = chainStats.data?.clusters?.total ?? null;
-  const liveClusterUp = healthyClusters.data?.length ?? null;
 
   // Lightweight toast channel (for clipboard copies, preview-only actions, etc.)
   const [toast, setToast] = useState<string | null>(null);
@@ -2496,18 +2490,6 @@ const App = () => {
 
   return (
     <div className="ms-app">
-      <ChainStrip
-        round={round}
-        latencyMs={SCAN.consensus.commitLatencyP95Ms}
-        ratePerSec={SCAN.consensus.ratePerSec}
-        signers={SCAN.consensus.signers}
-        strip={strip.data ?? null}
-        proposerLatency={proposerLatency}
-        attestationRate={attestationRate}
-        liveClusterUp={liveClusterUp}
-        liveClusterTotal={liveClusterTotal}
-        liveMode={liveMode}
-      />
       <Header go={go} route={route}/>
       <main className="ms-main">{page}</main>
       <footer className="ms-footer">

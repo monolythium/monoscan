@@ -198,8 +198,16 @@ const _rawToLythNumber = (value: string | bigint | number | null | undefined) =>
     return Number.isFinite(n) ? n : 0;
   }
 };
-const _fmtLythCompactRaw = (value: string | bigint | number | null | undefined) =>
-  _abbr(_rawToLythNumber(value));
+const _fmtLythCompactRaw = (value: string | bigint | number | null | undefined) => {
+  const lyth = _rawToLythNumber(value);
+  if (lyth >= 1_000_000) {
+    const millions = lyth / 1_000_000;
+    const nearWholeMillion = Math.abs(millions - Math.round(millions)) < 0.0000005;
+    return `${millions.toLocaleString(undefined, { maximumFractionDigits: nearWholeMillion ? 2 : 5 })}M`;
+  }
+  if (lyth >= 1_000) return `${(lyth / 1_000).toLocaleString(undefined, { maximumFractionDigits: 1 })}K`;
+  return lyth.toLocaleString(undefined, { maximumFractionDigits: 5 });
+};
 const _subtractLythoshi = (
   left: string | bigint | number | null | undefined,
   right: string | bigint | number | null | undefined,
@@ -278,7 +286,7 @@ const _holderLabel = (holder: any, profile: any = null) => {
     ? _readStringField(holder.label, ["displayName", "name", "label"])
     : _readStringField(holder, ["label", "displayName", "name", "tag"]);
   const profileLabel = _readStringField(profile?.label, ["displayName", "name", "label"]);
-  return holderLabel ?? profileLabel ?? `#${holder?.displayRank ?? holder?.rank ?? "?"} ${fmtAddrShort(holder?.address ?? "")}`;
+  return holderLabel ?? profileLabel ?? fmtAddrShort(holder?.address ?? "");
 };
 const _holderSupplyPct = (
   holder: any,
@@ -573,7 +581,7 @@ export const AgentReputationCard = ({
   return (
     <Card
       title="Agent reputation"
-      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>lyth_agentReputation</span>}
+      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>agent reputation</span>}
     >
       <div className="tx-kv">
         <KV label="Category scope" value={categoryLabel} mono/>
@@ -605,7 +613,7 @@ export const AgentReputationCard = ({
         <div style={{display:"grid",gap:8,margin:"12px 16px 0"}}>
           <span className="pill err" style={{width:"fit-content"}}>Reputation unavailable</span>
           <p className="mono" style={{color:"var(--fg-500)",fontSize:11,margin:0}}>
-            No lyth_agentReputation aggregate returned for this provider category.
+            No reputation aggregate returned for this provider category.
           </p>
         </div>
       )}
@@ -637,7 +645,7 @@ const NativeAgentStateCard = ({
   return (
     <Card
       title="Native agent state"
-      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>lyth_nativeAgentState</span>}
+      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>native agent state</span>}
     >
       {allRows.length > 0 ? (
         <table className="ms-table ms-table--tight">
@@ -993,21 +1001,55 @@ const LIVE_METRIC_SELECTORS = [
 
 // Map RPC supply-source method identifiers to human provenance labels so the
 // raw endpoint token never leaks into a value annotation shown to readers.
+export const rpcDisplayLabel = (source: string | null | undefined, suffix = "RPC"): string | null => {
+  if (!source) return null;
+  const known: Record<string, string> = {
+    lyth_agentReputation: "agent reputation",
+    lyth_nativeAgentState: "native agent state",
+    lyth_peerSummary: "peer summary",
+    lyth_metricsRange: "retained metrics",
+    lyth_txFeed: "transaction feed",
+    lyth_mrcAccount: "MRC account",
+    lyth_getBlsRoundCertificate: "BLS round certificate",
+    lyth_dagParents: "DAG parents",
+    lyth_verticesAtRound: "vertices by round",
+    lyth_search: "search",
+    lyth_upgradeStatus: "upgrade status",
+    lyth_capabilities: "capability registry",
+    lyth_operatorCapabilities: "operator capabilities",
+    lyth_getLatestCheckpoint: "latest checkpoint",
+    lyth_getClusterResignations: "cluster resignations",
+    lyth_gapRecords: "gap records",
+    lyth_indexerStatus: "indexer status",
+    lyth_getEncryptionKey: "encryption key",
+    lyth_executionUnitPrice: "execution-unit quote",
+    "/api/v1 transactions": "transaction API",
+  };
+  const base = known[source] ?? source
+    .replace(/^lyth_/, "")
+    .replace(/^\/api\/v1\/?/, "")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_/-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!base) return null;
+  return suffix ? `${base} ${suffix}` : base;
+};
+
 export const supplySourceLabel = (source: string | null | undefined): string | null => {
   if (!source) return null;
   switch (source) {
     case "lyth_circulatingSupply":
-      return "circulating-supply RPC";
+      return "supply data";
     case "lyth_totalBurned":
-      return "total-burned RPC";
+      return "burn data";
     case "lyth_nativeSupply":
-      return "native-supply RPC";
+      return "supply data";
     default:
       // Friendly de-camel of any other lyth_* identifier; keep it readable
       // rather than printing the raw method token.
-      return source.startsWith("lyth_")
-        ? `${source.slice(5).replace(/([A-Z])/g, " $1").trim().toLowerCase()} RPC`
-        : source;
+      return rpcDisplayLabel(source);
   }
 };
 
@@ -1093,9 +1135,9 @@ const StatsPage = ({ go, focusBurn = false }: any) => {
           <div className="mono stats-hero__tag">
             <span className="ov-livedot"/> NETWORK ·{" "}
             {liveGenesisShort
-              ? `GENESIS ${liveGenesisShort} · ${liveLatestBlock !== null ? _fmtI(liveLatestBlock) : "?"} rounds`
+              ? `CHAIN ${liveChainId ?? "—"} · GENESIS ${liveGenesisShort}`
               : indexerAvailability.liveChain
-                ? `GENESIS — · ${liveLatestBlock !== null ? _fmtI(liveLatestBlock) : "awaiting chain stats"}`
+                ? `CHAIN ${liveChainId ?? "—"} · GENESIS PENDING`
                 : `GENESIS ${S.network.genesisDate} · ${S.network.chainAge}`}
           </div>
           <h1 className="ov-hero__title">
@@ -1121,7 +1163,25 @@ const StatsPage = ({ go, focusBurn = false }: any) => {
       </section>
 
       {/* Primary counters grid */}
-      <section className="stats-counters">
+      <section className="stats-organizer">
+        <div>
+          <h3 className="ov-section-title">Live data catalog</h3>
+          <p className="ov-section-desc">Same counters, sorted into the decisions people actually make: activity, DAG state, protocol surfaces, and supply.</p>
+        </div>
+        <div className="stats-organizer__chips">
+          <button type="button" className="mono" onClick={()=>document.getElementById("stats-activity")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Activity</button>
+          <button type="button" className="mono" onClick={()=>document.getElementById("stats-dag")?.scrollIntoView({ behavior: "smooth", block: "start" })}>DAG state</button>
+          <button type="button" className="mono" onClick={()=>document.getElementById("stats-protocol")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Protocol</button>
+          <button type="button" className="mono" onClick={()=>document.getElementById("stats-supply")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Supply</button>
+        </div>
+      </section>
+      <section className="stats-catalog">
+        <div id="stats-activity" className="stats-category">
+          <div className="stats-category__head">
+            <span className="mono">01</span>
+            <h3>Activity and adoption</h3>
+          </div>
+          <div className="stats-counters stats-counters--compact">
         <StatCounter
           label="Transactions · all-time"
           value={indexerAvailability.liveChain ? "—" : _abbr(t.txTotal)}
@@ -1146,6 +1206,14 @@ const StatsPage = ({ go, focusBurn = false }: any) => {
           onClick={()=>go("#/wallets")}
           clickable
         />
+          </div>
+        </div>
+        <div id="stats-dag" className="stats-category">
+          <div className="stats-category__head">
+            <span className="mono">02</span>
+            <h3>DAG and peer state</h3>
+          </div>
+          <div className="stats-counters stats-counters--compact">
         <StatCounter
           label="Clusters"
           value={liveClusterTotal !== null ? `${liveClusterTotal}` : indexerAvailability.liveChain ? "—" : `${t.clustersActive}/${t.clustersTotal}`}
@@ -1163,11 +1231,19 @@ const StatsPage = ({ go, focusBurn = false }: any) => {
           clickable
         />
         <StatCounter
-          label="Latest block"
-          value={liveLatestBlock !== null ? _fmtI(liveLatestBlock) : "—"}
-          sub={liveChainId !== null ? `chain ${liveChainId} · lyth_chainStats` : "lyth_chainStats"}
+          label="Peers"
+          value={peerTotal !== null && peerTotal !== undefined ? _fmtI(peerTotal) : livePeerTotal !== null ? _fmtI(livePeerTotal) : "—"}
+          sub={peerHealth ? `${peerHealth.synced} synced · ${peerHealth.lagging} lagging` : liveSyncState ? `sync ${liveSyncState}${liveSyncLag !== null ? ` · lag ${liveSyncLag}` : ""}` : "peer summary pending"}
           tone="neutral"
         />
+          </div>
+        </div>
+        <div id="stats-protocol" className="stats-category">
+          <div className="stats-category__head">
+            <span className="mono">03</span>
+            <h3>Execution and protocol surfaces</h3>
+          </div>
+          <div className="stats-counters stats-counters--compact">
         <StatCounter
           label="Smart contracts deployed"
           value={indexerAvailability.liveChain ? "—" : _fmt(t.contracts)}
@@ -1181,35 +1257,37 @@ const StatsPage = ({ go, focusBurn = false }: any) => {
         <StatCounter label="Execution price" value={executionUnitPrice ?? "—"} sub={feeStats.data?.baseFeePerGas.length ? `${feePriceSub} · ${feeStats.data.baseFeePerGas.length} samples` : feePriceSub} tone="neutral"/>
         <StatCounter label="Protocol surfaces" value={activePrecompiles !== null ? `${activePrecompiles}` : "—"} sub={precompiles.data ? `${precompiles.data.length} precompiles reported` : "live precompile registry"} tone="neutral"/>
         <StatCounter
-          label="Peer health"
-          value={peerHealth ? `${peerHealth.synced}/${peerTotal ?? peerData?.peerCount ?? 0}` : peerTotal !== null ? _fmtI(peerTotal) : "—"}
-          sub={peerData ? `${peerData.inboundCount ?? 0} inbound · ${peerData.outboundCount ?? 0} outbound · block ${_fmtI(peerData.asOfBlock)}` : "lyth_peerSummary"}
-          tone="neutral"
-        />
-        <StatCounter
           label="Retained metrics"
           value={metricSeries.length ? `${availableMetricCount}/${metricSeries.length}` : "—"}
-          sub={metrics.data ? `${sampledMetricCount} sampled · ${metrics.data.tracking}` : "lyth_metricsRange"}
+          sub={metrics.data ? `${sampledMetricCount} sampled · ${metrics.data.tracking}` : "retained metrics pending"}
           tone="neutral"
         />
         <StatCounter
           label="Finality lag"
           value={formatMetricValue(finalityLag)}
-          sub={finalityLag ? `sampled at block ${_fmtI(finalityLag.blockNumber)}` : "finality_lag metric"}
+          sub={finalityLag ? "latest retained metric sample" : "finality lag metric"}
           tone="neutral"
         />
         <StatCounter
           label="Attestation rate"
           value={formatMetricValue(attestationRate)}
-          sub={attestationRate ? `sampled at block ${_fmtI(attestationRate.blockNumber)}` : "attestation_rate metric"}
+          sub={attestationRate ? "latest retained metric sample" : "attestation rate metric"}
           tone="neutral"
         />
         <StatCounter
           label="Mempool"
           value={liveMempoolReady !== null ? _fmtI(liveMempoolReady) : "—"}
-          sub={liveMempoolPending !== null ? `${_fmtI(liveMempoolPending)} pending · ${chainStats.data ? "chain stats" : "mempool RPC"}` : "ready queue"}
+          sub={liveMempoolPending !== null ? `${_fmtI(liveMempoolPending)} pending · ${chainStats.data ? "chain stats" : "mempool"}` : "ready queue"}
           tone="neutral"
         />
+          </div>
+        </div>
+        <div id="stats-supply" className="stats-category">
+          <div className="stats-category__head">
+            <span className="mono">04</span>
+            <h3>Supply and privacy split</h3>
+          </div>
+          <div className="stats-counters stats-counters--compact">
         <StatCounter
           label="Private vs public txs"
           value={indexerAvailability.liveChain ? "—" : `${((t.privateTxs/t.txTotal)*100).toFixed(1)}%`}
@@ -1221,19 +1299,19 @@ const StatsPage = ({ go, focusBurn = false }: any) => {
           tone="neutral"
         />
         <StatCounter
-          label="Chain age"
-          value={liveLatestBlock !== null ? `${_fmtI(liveLatestBlock)} rounds` : indexerAvailability.liveChain ? "—" : S.network.chainAge}
-          sub={liveGenesisShort ? `genesis ${liveGenesisShort}` : indexerAvailability.liveChain ? "genesis hash not reported yet" : `genesis ${S.network.genesisDate}`}
+          label="Genesis"
+          value={liveGenesisShort ?? (indexerAvailability.liveChain ? "—" : S.network.genesisDate)}
+          sub={liveChainId !== null ? `chain ${liveChainId}` : indexerAvailability.liveChain ? "genesis hash not reported yet" : S.network.chainAge}
           tone="neutral"
         />
         <StatCounter
-          label="LYTH supply"
-          value={_fmtLythCompactRaw(liveSupply?.circulatingSupplyLythoshi ?? NATIVE_INITIAL_SUPPLY_LYTHOSHI)}
-          sub={liveSupply
-            ? `burned ${_fmtLythCompactRaw(liveSupply.totalBurnedLythoshi)} · ${supplySourceLabel(liveSupply.source) ?? "on-chain counter"}`
-            : nativeSupply.isLoading ? "checking supply RPC" : "100M genesis baseline"}
+          label="Supply total"
+          value={liveSupply ? "live" : nativeSupply.isLoading ? "checking" : "—"}
+          sub={liveSupply ? "live total · details below" : "supply totals shown in Supply & burn"}
           tone={liveSupply ? "gold" : "neutral"}
         />
+          </div>
+        </div>
       </section>
 
       {/* Economy row */}
@@ -1242,14 +1320,12 @@ const StatsPage = ({ go, focusBurn = false }: any) => {
         <p className="ov-section-desc">MONO minted as staking rewards, burned via base fees, slashed for operator misbehavior, and still waiting to be claimed.</p>
         {/* TODO: missing endpoint to return inflation rate, rewards, and slashing aggregates */}
         {indexerAvailability.liveChain ? (
-          <div className="ms-card" style={{padding:"18px 20px"}}>
-            <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-              {indexerAvailability.disabled
-                ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
-                : "No economy aggregate (net inflation, accrued rewards, all-time slashing) endpoint is exposed by the chain yet."}{" "}
-              Cards will populate once the endpoint lands.
-            </div>
-          </div>
+          <Card
+            title="Economy status"
+            sub={`${indexerAvailability.disabled
+              ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
+              : "No economy aggregate (net inflation, accrued rewards, all-time slashing) endpoint is exposed by the chain yet."} Cards will populate once the endpoint lands.`}
+          />
         ) : (
         <div className="stats-econ-grid">
           <StatBig
@@ -1286,8 +1362,7 @@ const StatsPage = ({ go, focusBurn = false }: any) => {
       {/* Secondary tables */}
       <section className="stats-split">
         <div>
-          <h3 className="ov-section-title">Activity · last 30 days</h3>
-          <Card title="">
+          <Card title="Activity · last 30 days">
             {/* TODO: missing endpoint to return 30-day rollup of tx count, contract deployments, new wallets */}
             {indexerAvailability.liveChain ? (
               <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"14px 8px"}}>
@@ -1336,17 +1411,12 @@ const StatsPage = ({ go, focusBurn = false }: any) => {
           </Card>
         </div>
         <div>
-          <h3 className="ov-section-title">Health · right now</h3>
-          <Card title="">
+          <Card title="Health · right now">
             <div className="stats-health">
               <HealthRow
-                label="Rounds produced / day"
-                value={liveLatestBlock !== null
-                  ? `${_fmtI(liveLatestBlock)} total rounds`
-                  : indexerAvailability.liveChain
-                    ? "—"
-                  : _fmtI(S.network.avgRoundsPerDay)}
-                tone="ok"
+                label="Sync state"
+                value={liveSyncState ? `${liveSyncState}${liveSyncLag !== null ? ` · lag ${liveSyncLag}` : ""}` : indexerAvailability.liveChain ? "—" : "preview"}
+                tone={liveSyncLag !== null && liveSyncLag > 0 ? "warn" : "ok"}
               />
               {/* TODO: missing endpoint to return cluster inactiveReason (jailed) and recruiting flag */}
               <HealthRow
@@ -1368,13 +1438,6 @@ const StatsPage = ({ go, focusBurn = false }: any) => {
                 value={proposerLatency
                   ? formatMetricValue(proposerLatency)
                   : indexerAvailability.liveChain ? "—" : "342ms"}
-                tone="ok"
-              />
-              <HealthRow
-                label="Attestation rate"
-                value={attestationRate
-                  ? formatMetricValue(attestationRate)
-                  : indexerAvailability.liveChain ? "—" : "97.8%"}
                 tone="ok"
               />
               {/* TODO: missing endpoints for last-slashing block, DAC coverage %, bridge queue depth, bridge fee status */}
@@ -1460,18 +1523,16 @@ const HealthRow = ({ label, value, tone }: any) => (
 const BurnSection = ({ go, sectionRef, focused = false }: any) => {
   const burn = useBurnSummary();
   const nativeSupply = useNativeSupply();
-  const chainStats = useChainStats();
   const digest = burn.data ?? null;
   const supply = nativeSupply.data ?? null;
   const hasLive = digest !== null && digest !== undefined;
 
-  const initialSupplyLythoshi = supply?.initialSupplyLythoshi ?? NATIVE_INITIAL_SUPPLY_LYTHOSHI;
+  const initialSupplyLythoshi = supply?.initialSupplyLythoshi ?? (hasLive ? NATIVE_INITIAL_SUPPLY_LYTHOSHI : null);
   const currentSupplyLythoshi = supply?.circulatingSupplyLythoshi ??
-    (hasLive ? _subtractLythoshi(initialSupplyLythoshi, digest.totalBurnedLythoshi) : initialSupplyLythoshi);
+    (hasLive && initialSupplyLythoshi ? _subtractLythoshi(initialSupplyLythoshi, digest.totalBurnedLythoshi) : null);
   const displayedBurnedLythoshi = supply?.totalBurnedLythoshi ?? digest?.totalBurnedLythoshi ?? null;
   const totalBurnedLyth = displayedBurnedLythoshi ? _fmtLythRaw(displayedBurnedLythoshi) : null;
   const totalFeesLyth = hasLive ? _fmtLythRaw(digest.totalFeesLythoshi) : null;
-  const latestBlock = chainStats.data?.latestHeight ?? digest?.latestBlock ?? null;
   const refreshing = burn.isFetching || nativeSupply.isFetching;
 
   // Per-day series (oldest → newest) for the chart + the daily table. Buckets
@@ -1493,7 +1554,7 @@ const BurnSection = ({ go, sectionRef, focused = false }: any) => {
       : `${_fmtI(digest.txCount)} indexed txs`
     : "—";
   const sourceText = hasLive
-    ? `${digest.source === "lyth_txFeed" ? "lyth_txFeed" : "/api/v1 transactions"} · ${digest.pagesScanned} pages${digest.truncated ? " · partial scan" : ""}`
+    ? `${digest.source === "lyth_txFeed" ? "transaction feed" : "transaction API"} · ${digest.pagesScanned} pages${digest.truncated ? " · partial scan" : ""}`
     : burn.isLoading
       ? "scanning transaction feed…"
       : "no live feed reachable";
@@ -1505,97 +1566,49 @@ const BurnSection = ({ go, sectionRef, focused = false }: any) => {
       className="ms-burn-section"
       style={focused ? { scrollMarginTop: 24, boxShadow: "0 0 0 1px var(--gold)", borderRadius: 14, padding: "4px 6px" } : { scrollMarginTop: 24 }}
     >
-      {/* Section header (folded in from the standalone Burn page) */}
-      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:18,flexWrap:"wrap"}}>
-        <div>
-          <div className="cap" style={{color:"var(--gold)"}}>
-            <Icon name="burn" size={13}/> Burn
+      <Card
+        title="Supply & burn"
+        sub="Native supply totals and retained fee-burn estimates."
+        right={
+          <button className="ov-cta ov-cta--ghost" onClick={()=>{ void nativeSupply.refetch(); void burn.refetch(); }}>
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
+        }
+      >
+        <div className="burn-overview">
+          <div className="burn-overview__primary">
+            <div className="burn-metric burn-metric--gold">
+              <span className="mono">Current supply</span>
+              <b className="mono num">{currentSupplyLythoshi ? (_fmtLythRaw(currentSupplyLythoshi) ?? "—") : "—"}</b>
+              <small className="mono">
+                {supply
+                  ? `genesis ${_fmtLythCompactRaw(initialSupplyLythoshi)} · burned ${_fmtLythCompactRaw(supply.totalBurnedLythoshi)}`
+                  : hasLive ? "estimated from retained fees" : nativeSupply.isLoading ? "checking supply" : "supply unavailable"}
+              </small>
+            </div>
+            <div className="burn-metric burn-metric--gold">
+              <span className="mono">{supply ? "Total burned" : "Burned estimate"}</span>
+              <b className="mono num">{displayedBurnedLythoshi ? (totalBurnedLyth ?? "—") : "—"}</b>
+              <small className="mono">
+                {supply
+                  ? "authoritative total"
+                  : hasLive ? `50% of ${totalFeesLyth ?? "—"} scanned fees` : burn.isLoading ? "scanning feed" : "connect a node"}
+              </small>
+            </div>
+            <div className="burn-metric">
+              <span className="mono">Indexed fees</span>
+              <b className="mono num">{hasLive ? (totalFeesLyth ?? "—") : "—"}</b>
+              <small className="mono">burn 50% · operators 30% · treasury 20%</small>
+            </div>
           </div>
-          <h3 className="ov-section-title" style={{margin:"4px 0 0"}}>Supply &amp; burn · LYTH removed from supply</h3>
-          <p className="mono" style={{color:"var(--fg-400)",margin:"8px 0 0",fontSize:13,maxWidth:760,lineHeight:1.55}}>
-            Half of every transaction fee on chain-69420 is burned — debited from the sender and credited to no account.
-            Current supply comes from the native supply counter when the node exposes it. The daily breakdown is
-            <b style={{color:"var(--fg-200)"}}> derived</b> from the per-transaction fees the indexer retains
-            (burn = 50% of total fees), so treat that breakdown as an indexed estimate.
-          </p>
+          <div className="burn-overview__meta">
+            <div><span className="mono">Txs scanned</span><b className="mono num">{hasLive ? _fmtI(digest.txCount) : "—"}</b><small className="mono">{sourceText}</small></div>
+            <div><span className="mono">Coverage</span><b className="mono num">{hasLive ? `${digest.pagesScanned} pages` : "—"}</b><small className="mono">{hasLive ? scanCoverage : "transaction feed walk"}</small></div>
+            <div><span className="mono">Source</span><b className="mono num">{supply ? "native" : hasLive ? "indexed" : "—"}</b><small className="mono">{supply ? "current total" : hasLive ? sourceText : "waiting for supply feed"}</small></div>
+            <div><span className="mono">Peak day</span><b className="mono num">{peakDay.day ? _fmt(peakDay.burn) : "—"}</b><small className="mono">{peakDay.day ? `${peakDay.day} UTC · LYTH` : "per-day buckets"}</small></div>
+          </div>
         </div>
-        <button className="ov-cta ov-cta--ghost" onClick={()=>{ void nativeSupply.refetch(); void burn.refetch(); }}>
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
-
-      {/* Headline burn counters */}
-      <section className="stats-econ-grid" style={{marginTop:20}}>
-        <StatBig
-          label="Current LYTH supply"
-          value={currentSupplyLythoshi ? (_fmtLythRaw(currentSupplyLythoshi)?.replace(/ LYTH$/, "") ?? "—") : "—"}
-          unit="LYTH"
-          tone="gold"
-          annotation={supply
-            ? `genesis ${_fmtLythCompactRaw(initialSupplyLythoshi)} · burned ${_fmtLythCompactRaw(supply.totalBurnedLythoshi)}`
-            : nativeSupply.isLoading ? "checking lyth_circulatingSupply" : "100M genesis baseline"}
-          chart={null}
-          footer={supply ? `Live counter · ${supplySourceLabel(supply.source) ?? "on-chain"}` : "Falls back to the 100M genesis supply baseline."}
-        />
-        <StatBig
-          label={supply ? "Total LYTH burned" : "Total LYTH burned · indexed estimate"}
-          value={displayedBurnedLythoshi ? (totalBurnedLyth?.replace(/ LYTH$/, "") ?? "—") : "—"}
-          unit="LYTH"
-          tone="gold"
-          annotation={supply
-            ? "on-chain burn counter · includes fee dust, slash burns, and zero-address burns"
-            : hasLive
-            ? `50% of ${totalFeesLyth ?? "—"} fees · ${_fmtI(digest.txCount)} txs`
-            : burn.isLoading ? "scanning feed…" : "connect a node to derive the burn"}
-          chart={daySeries.length > 1
-            ? <MiniSpark data={daySeries} w={260} h={56} stroke="var(--gold)" fill="rgba(242,180,65,0.10)"/>
-            : null}
-          footer={supply
-            ? `Authoritative counter from ${supplySourceLabel(supply.source) ?? "the on-chain supply counter"}.`
-            : hasLive
-            ? `Derived from fees over ${scanCoverage}${digest.truncated ? " (recent slice only)" : ""}.`
-            : "lyth_txFeed exposes per-tx fee.total_lythoshi"}
-        />
-        <StatBig
-          label="Total fees scanned"
-          value={hasLive ? (totalFeesLyth?.replace(/ LYTH$/, "") ?? "—") : "—"}
-          unit="LYTH"
-          tone="neutral"
-          annotation={hasLive ? "base fee + priority tip, all scanned txs" : "—"}
-          chart={null}
-          footer="Burn is 50% · operators 30% · treasury 20% (fee_burn_bps 5000)"
-        />
-      </section>
-
-      {/* Secondary counters */}
-      <section className="stats-counters">
-        <StatCounter
-          label="Burning txs scanned"
-          value={hasLive ? _fmtI(digest.txCount) : "—"}
-          sub={sourceText}
-          tone="neutral"
-        />
-        <StatCounter
-          label="Scan coverage"
-          value={hasLive ? `${digest.pagesScanned} pages` : "—"}
-          sub={hasLive ? scanCoverage : "transaction feed walk"}
-          tone={hasLive && digest.truncated ? "warn" : "neutral"}
-        />
-        <StatCounter
-          label="Chain tip"
-          value={latestBlock !== null ? _fmtI(latestBlock) : "—"}
-          sub={chainStats.data?.genesisHash
-            ? `genesis ${fmtHashShort(chainStats.data.genesisHash)}`
-            : "latest indexed block"}
-          tone="neutral"
-        />
-        <StatCounter
-          label="Peak burn day"
-          value={peakDay.day ? _fmt(peakDay.burn) : "—"}
-          sub={peakDay.day ? `${peakDay.day} (UTC) · LYTH` : "per-day buckets"}
-          tone="gold"
-        />
-      </section>
+      </Card>
 
       {/* Honesty banner */}
       <section style={{marginTop:4}}>
@@ -1603,13 +1616,12 @@ const BurnSection = ({ go, sectionRef, focused = false }: any) => {
           <div className="mono" style={{color:"var(--fg-300)",fontSize:12,lineHeight:1.6}}>
             <b style={{color:"var(--fg-100)"}}>How this number is derived.</b>{" "}
             chain-69420 has no burn address and no burn event. When available,
-            <span className="mono"> lyth_circulatingSupply</span> supplies the current total and
-            <span className="mono"> lyth_totalBurned</span> supplies the authoritative burn counter.
+            the native supply total and native burned total are used when the node exposes them.
             The per-day chart and recent rows are computed from each retained transaction fee:
             <span className="mono"> burn = floor(fee.total_lythoshi × 5000 / 10000)</span>, summed over the indexed feed.
             That feed walk covers only blocks this node still retains and stops after a bound, so on a long chain those
             rows are a <b style={{color:"var(--fg-200)"}}>partial</b> breakdown. The per-tx floor also omits split dust;
-            use the native counter as the authoritative total when it is present.
+            use the native total when it is present.
           </div>
         </div>
       </section>
@@ -1617,9 +1629,8 @@ const BurnSection = ({ go, sectionRef, focused = false }: any) => {
       {/* Per-day burn table */}
       <section className="stats-split" style={{marginTop:6}}>
         <div>
-          <h3 className="ov-section-title">Burned per day · UTC</h3>
           <Card
-            title=""
+            title="Burned per day · UTC"
             right={
               <span className={`pill ${hasLive ? "ok" : "warn"}`} style={{fontSize:10}}>
                 {hasLive ? "derived" : burn.isLoading ? "loading" : "no data"}
@@ -1663,8 +1674,7 @@ const BurnSection = ({ go, sectionRef, focused = false }: any) => {
 
         {/* Recent burn contributions */}
         <div>
-          <h3 className="ov-section-title">Recent burn contributions</h3>
-          <Card title="">
+          <Card title="Recent burn contributions">
             {!hasLive || digest.recent.length === 0 ? (
               <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0,padding:"10px 6px"}}>
                 {hasLive
@@ -1761,7 +1771,7 @@ const WalletsPage = ({ go }: any) => {
     ? `${_fmtLythCompactRaw(liveSupplyRaw)} LYTH`
     : `${_abbr(fixtureSupply)} LYTH`;
   const pieCenterSub = usingLiveRichList
-    ? supplySourceLabel(nativeSupply.data?.source) ?? "genesis supply baseline"
+    ? "public supply"
     : "(public chain)";
   // Once chainStats has responded, the explorer is connected to a live node
   // and the rich list endpoint speaks for itself. An indexer-disabled signal
@@ -1785,32 +1795,32 @@ const WalletsPage = ({ go }: any) => {
 
   return (
     <div className="ms-page ms-wallets">
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"end",gap:24,marginBottom:24}}>
-        <div style={{maxWidth:620}}>
-          <h1 className="ms-h1">Wallets · rich list</h1>
-          <p className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.6,marginTop:6}}>
+      <section className="wl-hero">
+        <div>
+          <div className="wl-hero__tag mono"><span className="ov-livedot"/> holder distribution</div>
+          <h1>Wallets · rich list</h1>
+          <p className="mono">
             Top LYTH holders on the public chain. Private LYTH holdings are opaque by design and not shown here. Tagged addresses (exchanges, bridges, treasury) are labeled inline; anonymous whales are shown by address.
           </p>
         </div>
-        <div className="mono" style={{fontSize:11,color:"var(--fg-500)",textAlign:"right"}}>
-          <div>{usingLiveRichList
-            ? `${liveHolders.length} live holders`
-            : richListUnavailable
-              ? "rich list empty"
-              : indexerAvailability.liveChain
-                ? "loading rich list…"
-                : `${_fmt(NETWORK_STATS.totals.walletsTotal)} total wallets`}</div>
-          <div style={{color:"var(--fg-400)"}}>
-            {usingLiveRichList
-              ? `top ${Math.min(30, liveHolderRows.length)} hold ${_fmtSupplyPct(liveTopPct)} · ${_fmtLythCompactRaw(liveSupplyRaw)} LYTH`
-              : richListUnavailable
-                ? `token ${_short(richList.data?.tokenId ?? getLythTokenId(), 12)}`
-                : indexerAvailability.liveChain
-                  ? `token ${_short(getLythTokenId(), 12)}`
-                  : `top 30 hold ${_abbr(topSum)} LYTH`}
+        <div className="wl-hero__stats">
+          <div>
+            <span className="mono">Rows</span>
+            <b className="mono num">{usingLiveRichList ? liveHolders.length : richListUnavailable ? 0 : NETWORK_STATS.totals.walletsTotal.toLocaleString()}</b>
+            <small>{usingLiveRichList ? "live holders" : richListUnavailable ? "rich list empty" : indexerAvailability.liveChain ? "loading rich list" : "fixture wallets"}</small>
+          </div>
+          <div>
+            <span className="mono">Top share</span>
+            <b className="mono num">{usingLiveRichList ? _fmtSupplyPct(liveTopPct) : richListUnavailable ? "—" : `${_abbr(topSum)} LYTH`}</b>
+            <small>{usingLiveRichList ? `top ${Math.min(30, liveHolderRows.length)}` : richListUnavailable ? `token ${_short(richList.data?.tokenId ?? getLythTokenId(), 12)}` : "top 30"}</small>
+          </div>
+          <div>
+            <span className="mono">Supply</span>
+            <b className="mono num">{_fmtLythCompactRaw(liveSupplyRaw)}</b>
+            <small>LYTH public supply</small>
           </div>
         </div>
-      </div>
+      </section>
 
       <section className="wl-grid">
         {/* LEFT: pie chart */}
@@ -1828,7 +1838,7 @@ const WalletsPage = ({ go }: any) => {
               </div>
               <div style={{color:"var(--fg-400)"}}>
                 The pie chart will populate from the top holders and remaining
-                public supply once the rich-list and supply counters resolve.
+                public supply once the rich-list and supply data resolve.
               </div>
             </div>
           ) : (
@@ -1854,14 +1864,14 @@ const WalletsPage = ({ go }: any) => {
         </Card>
 
         {/* RIGHT: rich list */}
-        <Card title="">
-          <table className="ms-table wl-table">
+        <Card title="Top holders" right={<span className="mono wl-table-source">{usingLiveRichList ? `${liveHolderRows.length} live rows` : richListUnavailable ? "empty" : "fixture preview"}</span>}>
+          <table className="ms-table wl-table wl-table--holders">
             <thead><tr>
-              <th style={{width:44}}>#</th>
-              <th>Address</th>
+              <th style={{width:54}}>Rank</th>
+              <th>Holder</th>
               <th style={{textAlign:"right"}}>Balance</th>
-              <th style={{textAlign:"right"}}>% of supply</th>
-              <th style={{textAlign:"right"}} title="Indexed transaction count when exposed; account nonce/activity is shown while the aggregate is unavailable.">Tx count</th>
+              <th style={{textAlign:"right"}}>Share</th>
+              <th style={{textAlign:"right"}} title="Indexed transaction count when exposed; account nonce/activity is shown while the aggregate is unavailable.">Activity</th>
             </tr></thead>
             <tbody>
               {richListUnavailable ? (
@@ -1874,17 +1884,18 @@ const WalletsPage = ({ go }: any) => {
                 </tr>
               ) : usingLiveRichList ? liveHolderRows.map((h:any)=>(
                 <tr key={h.address} onClick={()=>go(`#/wallet/${encodeURIComponent(h.address)}`)}>
-                  <td className="mono" style={{color:h.displayRank<=3?"var(--gold)":"var(--fg-400)",fontWeight:h.displayRank<=3?600:400}}>#{h.displayRank}</td>
+                  <td><span className={`mono wl-rank ${h.displayRank<=3 ? "is-top" : ""}`}>{h.displayRank}</span></td>
                   <td>
-                    <div style={{fontWeight:500,fontSize:13,color:"var(--fg-200)",fontFamily:"var(--f-mono)"}}>{fmtAddrShort(h.address)}</div>
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>
-                      live rich list · balance-ranked
-                      {Number.isFinite(Number(h.sourceRank)) && Number(h.sourceRank) !== h.displayRank ? ` · node rank #${h.sourceRank}` : ""}
-                      {" · "}updated block {Number(h.updatedAtBlock).toLocaleString()}
-                    </div>
-                    <div className="mono wl-holder-metrics">
-                      <span><b>% supply</b>{_fmtSupplyPct(h.supplyPct)}</span>
-                      <span title={h.activity.title}><b>tx</b>{h.activity.text}</span>
+                    <div className="wl-holder">
+                      <div className="wl-holder__name mono">{h.displayLabel}</div>
+                      <div className="wl-holder__sub mono">
+                        {fmtAddrShort(h.address)}
+                        {Number(h.updatedAtBlock) > 0 && (
+                          <span className="wl-holder__updated">
+                            updated #{Number(h.updatedAtBlock).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </td>
                   <td className="mono num" style={{textAlign:"right"}}>{_fmtRawToken(h.balance)} <span style={{color:"var(--fg-500)",fontSize:10}}>LYTH</span></td>
@@ -1895,15 +1906,14 @@ const WalletsPage = ({ go }: any) => {
                 </tr>
               )) : walletRows.map((w:any)=>(
                 <tr key={w.addr} onClick={()=>go(`#/wallet/${encodeURIComponent(w.addr)}`)}>
-                  <td className="mono" style={{color:w.displayRank<=3?"var(--gold)":"var(--fg-400)",fontWeight:w.displayRank<=3?600:400}}>#{w.displayRank}</td>
+                  <td><span className={`mono wl-rank ${w.displayRank<=3 ? "is-top" : ""}`}>{w.displayRank}</span></td>
                   <td>
-                    {w.tag
-                      ? <div style={{fontWeight:500,fontSize:13,color:"var(--fg-100)"}}>{w.tag}</div>
-                      : <div style={{fontWeight:500,fontSize:13,color:"var(--fg-200)",fontFamily:"var(--f-mono)"}}>{fmtAddrShort(w.addr)}</div>}
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>{w.tag ? fmtAddrShort(w.addr) : (w.note || "unlabeled")}</div>
-                    <div className="mono wl-holder-metrics">
-                      <span><b>% supply</b>{w.pct.toFixed(2)}%</span>
-                      <span><b>tx</b>{_fmt(w.txCount)}</span>
+                    <div className="wl-holder">
+                      <div className="wl-holder__name mono">{w.tag || fmtAddrShort(w.addr)}</div>
+                      <div className="wl-holder__sub mono">
+                        {w.tag ? fmtAddrShort(w.addr) : (w.note || "unlabeled")}
+                        <span>fixture row</span>
+                      </div>
                     </div>
                   </td>
                   <td className="mono num" style={{textAlign:"right"}}>{_fmt(w.bal)} <span style={{color:"var(--fg-500)",fontSize:10}}>LYTH</span></td>
@@ -2024,7 +2034,7 @@ const WalletPage = ({ addr, go }: any) => {
     extras: [],
     txs: [],
     flow30d: zeroFlow,
-    firstSeenAgo: "live RPC",
+    firstSeenAgo: "live address",
     stakedTo: null,
     txCount: live.data?.nonce ?? 0,
   };
@@ -2041,6 +2051,7 @@ const WalletPage = ({ addr, go }: any) => {
   const liveNonce = profileAccount?.nonce ?? live.data?.nonce ?? null;
   const livePolicy = live.data?.policy ?? null;
   const liveActivity = live.data?.activity ?? [];
+  const [activityPage, setActivityPage] = useStateX(0);
   const liveDelegations = delegations.data?.rows ?? [];
   const livePendingRewards = pendingRewards.data ?? null;
   const livePendingRewardRows = livePendingRewards?.rows ?? [];
@@ -2082,6 +2093,17 @@ const WalletPage = ({ addr, go }: any) => {
   const earliestRetained = liveRetention?.earliestRetained;
   const codeValue = code.data ?? null;
   const isContract = profileAccount?.isContract ?? Boolean(codeValue && codeValue !== "0x");
+  const activityPageSize = 50;
+  const activityTotal = liveActivity.length > 0 ? liveActivity.length : w.txs.length;
+  const activityPageCount = Math.max(1, Math.ceil(activityTotal / activityPageSize));
+  const safeActivityPage = Math.min(activityPage, activityPageCount - 1);
+  const activityStart = safeActivityPage * activityPageSize;
+  const activityEnd = Math.min(activityStart + activityPageSize, activityTotal);
+  const visibleLiveActivity = liveActivity.slice(activityStart, activityEnd);
+  const visibleFallbackTxs = w.txs.slice(activityStart, activityEnd);
+  useEffectX(() => {
+    setActivityPage(0);
+  }, [addr, liveActivity.length, w.txs.length]);
 
   return (
     <div className="ms-page ms-wallet-detail">
@@ -2120,7 +2142,7 @@ const WalletPage = ({ addr, go }: any) => {
             <div className="mono num wd-bal__value">{liveBalance ?? _fmt(w.bal)}</div>
             <div className="mono wd-bal__sub">
               {liveBalance
-                ? "live RPC balance"
+                ? "live balance"
                 : fallbackWallet
                   ? `${w.pct.toFixed(3)}% of supply`
                   : indexerAvailability.liveChain
@@ -2161,7 +2183,7 @@ const WalletPage = ({ addr, go }: any) => {
             </div>
           </Card>
           {liveMrcAccount && (
-            <Card title="MRC account" right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>lyth_mrcAccount</span>}>
+            <Card title="MRC account" right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>account policy</span>}>
               <div className="tx-kv">
                 <KV label="Smart account" value={mrcAccountRecordSummary(liveMrcAccount.smartAccount)} mono/>
                 <KV label="Policy account" value={mrcAccountRecordSummary(liveMrcAccount.policyAccount)} mono/>
@@ -2369,18 +2391,16 @@ const WalletPage = ({ addr, go }: any) => {
 
       {/* Flow diagram */}
       <section>
-        <h3 className="ov-section-title">30-day flow</h3>
         {indexerAvailability.liveChain && !fallbackWallet && !flowTotals ? (
-          <div className="ms-card" style={{padding:"16px 18px"}}>
-            <div className="mono" style={{color:"var(--fg-300)",fontSize:13,lineHeight:1.55}}>
-              {indexerAvailability.disabled
-                ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
-                : "No 30-day flow aggregate for this address yet."}{" "}
-              Inflow/outflow, staking activity, and rewards-earned cards will populate once the indexer reports rows.
-            </div>
-          </div>
+          <Card
+            title="30-day flow"
+            sub={`${indexerAvailability.disabled
+              ? `${indexerAvailability.reason ?? "Indexer is unavailable on the connected node"}.`
+              : "No 30-day flow aggregate for this address yet."} Inflow/outflow, staking activity, and rewards-earned cards will populate once the indexer reports rows.`}
+          />
         ) : (
           <>
+            <h3 className="ov-section-title">30-day flow</h3>
             <p className="ov-section-desc">
               {flowTotals ? `Indexed sample flow from ${addressFlow.data?.sampleSize ?? 0} retained rows.` : "Inflow, outflow, staking delegations, and rewards earned."}
               {" "}Net position {displayedNet >= 0 ? "grew" : "shrank"} by {_fmt(Math.abs(displayedNet))} LYTH over the period.
@@ -2391,15 +2411,14 @@ const WalletPage = ({ addr, go }: any) => {
               <FlowCard label="Staked" value={flowStake} unit="LYTH" tone="neutral" series={w.flow30d.map(d=>d.stake)}/>
               <FlowCard label="Rewards" value={flowRewards} unit="LYTH" tone="gold" series={w.flow30d.map(d=>d.reward)}/>
             </div>
-            <FlowDiagram wallet={w} totalIn={flowIn} totalOut={flowOut} totalRw={flowRewards}/>
+            <FlowDiagram wallet={w} totalIn={flowIn} totalOut={flowOut} totalRw={flowRewards} counterparties={addressFlow.data?.topCounterparties ?? []}/>
           </>
         )}
       </section>
 
       {(addressFlow.data?.topCounterparties?.length ?? 0) > 0 && (
         <section>
-          <h3 className="ov-section-title">Indexed counterparties</h3>
-          <Card title="">
+          <Card title="Indexed counterparties">
             <table className="ms-table">
               <thead><tr><th>Address</th><th style={{textAlign:"right"}}>Events</th><th style={{textAlign:"right"}}>Inbound</th><th style={{textAlign:"right"}}>Outbound</th></tr></thead>
               <tbody>
@@ -2419,8 +2438,7 @@ const WalletPage = ({ addr, go }: any) => {
 
       {/* Recent transactions */}
       <section>
-        <h3 className="ov-section-title">{liveActivity.length > 0 ? "Live address activity" : "Recent transactions"}</h3>
-        <Card title="">
+        <Card title={liveActivity.length > 0 ? "Live address activity" : "Recent transactions"}>
           <table className="ms-table wd-tx-table">
             <thead><tr>
               <th style={{width:40}}></th>
@@ -2431,17 +2449,25 @@ const WalletPage = ({ addr, go }: any) => {
               <th style={{textAlign:"right"}}>When</th>
             </tr></thead>
             <tbody>
-              {/* AddressActivityEntry is keyed by block:txIndex:logIndex.
-                  The row→tx-detail link waits on the SDK adding a txHash
-                  field; until then we link block + counterparty + cluster. */}
-              {liveActivity.length > 0 ? liveActivity.map((row:any)=>{
+              {liveActivity.length > 0 ? visibleLiveActivity.map((row:any)=>{
                 const blockHeight = Number(row.blockHeight);
                 const counterpartyAddress = row.counterparty as string | null;
                 const clusterSlot = row.cluster !== null && row.cluster !== undefined
                   ? `C-${String(Number(row.cluster) + 1).padStart(3, "0")}`
                   : null;
+                const txHash =
+                  typeof row.txHash === "string" ? row.txHash :
+                  typeof row.hash === "string" && row.hash.startsWith("0x") ? row.hash :
+                  null;
+                const rowTarget = txHash
+                  ? `#/tx/${encodeURIComponent(txHash)}`
+                  : `#/round/${blockHeight}`;
                 return (
-                <tr key={`${row.blockHeight}-${row.txIndex}-${row.logIndex}`}>
+                <tr
+                  key={`${row.blockHeight}-${row.txIndex}-${row.logIndex}`}
+                  onClick={()=>go(rowTarget)}
+                  className="wd-activity-row"
+                >
                   <td>
                     <span className={`wd-dir wd-dir--${row.direction === "out" ? "out" : "in"}`}>
                       {row.direction === "out" ? "↗" : "↙"}
@@ -2452,20 +2478,20 @@ const WalletPage = ({ addr, go }: any) => {
                       {row.kind}{row.subKind ? ` · ${row.subKind}` : ""}
                     </div>
                     <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}}>
-                      tx {row.txIndex} · log {row.logIndex}
+                      {txHash ? fmtHashShort(txHash) : `tx ${row.txIndex} · log ${row.logIndex}`}
                     </div>
                   </td>
                   <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
                     {counterpartyAddress ? (
                       <a
-                        onClick={()=>go(`#/wallet/${encodeURIComponent(counterpartyAddress)}`)}
+                        onClick={(event)=>{ event.stopPropagation(); go(`#/wallet/${encodeURIComponent(counterpartyAddress)}`); }}
                         style={{cursor:"pointer",color:"var(--fg-300)"}}
                       >
                         {fmtAddrShort(counterpartyAddress)}
                       </a>
                     ) : clusterSlot ? (
                       <a
-                        onClick={()=>go(`#/cluster/${Number(row.cluster) + 1}`)}
+                        onClick={(event)=>{ event.stopPropagation(); go(`#/cluster/${Number(row.cluster) + 1}`); }}
                         style={{cursor:"pointer",color:"var(--gold)"}}
                       >
                         {clusterSlot}
@@ -2478,7 +2504,7 @@ const WalletPage = ({ addr, go }: any) => {
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>—</td>
                   <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>
                     <a
-                      onClick={()=>go(`#/round/${blockHeight}`)}
+                      onClick={(event)=>{ event.stopPropagation(); go(`#/round/${blockHeight}`); }}
                       style={{cursor:"pointer",color:"var(--gold)"}}
                     >
                       block {blockHeight.toLocaleString()}
@@ -2494,7 +2520,7 @@ const WalletPage = ({ addr, go }: any) => {
                       : "No transactions indexed for this address yet."}
                   </td>
                 </tr>
-              ) : w.txs.map(t=>(
+              ) : visibleFallbackTxs.map(t=>(
                 <tr key={t.hash} onClick={()=>go(`#/tx/${encodeURIComponent(t.hash)}`)} className={t.status==="failed"?"wd-tx-failed":""}>
                   <td>
                     <span className={`wd-dir wd-dir--${t.direction}`}>
@@ -2518,6 +2544,29 @@ const WalletPage = ({ addr, go }: any) => {
               ))}
             </tbody>
           </table>
+          {activityTotal > activityPageSize && (
+            <div className="wd-activity-pager">
+              <span className="mono">
+                Showing {activityStart + 1}-{activityEnd} of {activityTotal}
+              </span>
+              <div>
+                <button
+                  className="ov-cta ov-cta--ghost"
+                  disabled={safeActivityPage === 0}
+                  onClick={()=>setActivityPage((page)=>Math.max(0, page - 1))}
+                >
+                  Newer
+                </button>
+                <button
+                  className="ov-cta ov-cta--ghost"
+                  disabled={safeActivityPage >= activityPageCount - 1}
+                  onClick={()=>setActivityPage((page)=>Math.min(activityPageCount - 1, page + 1))}
+                >
+                  Older
+                </button>
+              </div>
+            </div>
+          )}
         </Card>
       </section>
     </div>
@@ -2537,8 +2586,8 @@ const FlowCard = ({ label, value, unit, tone, series }: any) => (
   </div>
 );
 
-/* A simple Sankey-ish diagram: inflows → wallet → outflows + stake/reward */
-const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
+/* A compact live-flow diagram: retained counterparties -> wallet -> exits. */
+const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw, counterparties = [] }: any) => {
   // Aggregate top 4 counterparties by volume per direction
   const inParties: Record<string, number> = {};
   const outParties: Record<string, number> = {};
@@ -2546,11 +2595,25 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
     const bucket = t.direction === "out" ? outParties : inParties;
     bucket[t.counterparty] = (bucket[t.counterparty] || 0) + t.amount;
   });
-  const topIn  = Object.entries(inParties).sort((a,b)=>b[1]-a[1]).slice(0,4);
-  const topOut = Object.entries(outParties).sort((a,b)=>b[1]-a[1]).slice(0,4);
+  const indexedCounterparties = Array.isArray(counterparties) ? counterparties : [];
+  const topIn = indexedCounterparties.length
+    ? indexedCounterparties
+        .map((row:any) => [row.address, _rawToLythNumber(row.inbound)] as [string, number])
+        .filter(([, value]) => value > 0)
+        .sort((a,b)=>b[1]-a[1])
+        .slice(0,4)
+    : Object.entries(inParties).sort((a,b)=>b[1]-a[1]).slice(0,4);
+  const topOut = indexedCounterparties.length
+    ? indexedCounterparties
+        .map((row:any) => [row.address, _rawToLythNumber(row.outbound)] as [string, number])
+        .filter(([, value]) => value > 0)
+        .sort((a,b)=>b[1]-a[1])
+        .slice(0,4)
+    : Object.entries(outParties).sort((a,b)=>b[1]-a[1]).slice(0,4);
   const stake = wallet.flow30d.reduce((a: number, d: any) => a + d.stake, 0);
   const maxIn  = Math.max(...topIn.map(r=>r[1]), 1);
   const maxOut = Math.max(...topOut.map(r=>r[1]), 1);
+  const net = totalIn - totalOut;
 
   return (
     <div className="wd-flow-diagram">
@@ -2563,17 +2626,18 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
             <div className="mono num wd-flow-node__amt">+{_fmt(amt)}</div>
           </div>
         ))}
+        {topIn.length === 0 && (
+          <div className="mono wd-flow-empty">No retained inbound counterparties yet.</div>
+        )}
       </div>
 
       <div className="wd-flow-center">
         <div className="wd-flow-center__arrows">
           <svg width="100%" height="120" viewBox="0 0 200 120" preserveAspectRatio="none">
-            {/* in arrow */}
-            <path d="M0,60 Q60,60 100,60" stroke="var(--ok, #73d13d)" strokeWidth="2" fill="none" opacity="0.6"/>
-            <path d="M100,60 L200,60" stroke="var(--err, #ff6b6b)" strokeWidth="2" fill="none" opacity="0.6"/>
-            {/* stake/reward branches */}
-            <path d="M100,60 Q130,20 180,20" stroke="var(--fg-400)" strokeWidth="1.5" fill="none" strokeDasharray="3,3" opacity="0.5"/>
-            <path d="M100,60 Q130,100 180,100" stroke="var(--gold)" strokeWidth="1.5" fill="none" strokeDasharray="3,3" opacity="0.6"/>
+            <path className="wd-flow-path wd-flow-path--in" d="M0,58 Q58,36 100,58"/>
+            <path className="wd-flow-path wd-flow-path--out" d="M100,62 Q142,84 200,62"/>
+            <path className="wd-flow-path wd-flow-path--stake" d="M100,60 Q132,20 184,20"/>
+            <path className="wd-flow-path wd-flow-path--reward" d="M100,60 Q132,100 184,100"/>
           </svg>
         </div>
         <div className="wd-flow-center__hub">
@@ -2581,8 +2645,8 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
           <div className="mono num wd-flow-center__value">{_abbr(wallet.bal)}</div>
           <div className="mono wd-flow-center__sub">LYTH</div>
         </div>
-        <div className="wd-flow-center__badge mono">
-          Net · {(totalIn-totalOut) >= 0 ? "+" : "−"}{_fmt(Math.abs(totalIn-totalOut))} LYTH
+        <div className={`wd-flow-center__badge mono ${net >= 0 ? "is-positive" : "is-negative"}`}>
+          Net · {net >= 0 ? "+" : "-"}{_fmt(Math.abs(net))} LYTH
         </div>
       </div>
 
@@ -2595,6 +2659,9 @@ const FlowDiagram = ({ wallet, totalIn, totalOut, totalRw }: any) => {
             <div className="mono num wd-flow-node__amt">−{_fmt(amt)}</div>
           </div>
         ))}
+        {topOut.length === 0 && stake <= 0 && totalRw <= 0 && (
+          <div className="mono wd-flow-empty">No retained outbound counterparties yet.</div>
+        )}
         {stake > 0 && (
           <div className="wd-flow-node" style={{marginTop:12,borderTop:"1px solid var(--fg-700)",paddingTop:10}}>
             <div className="wd-flow-node__bar" style={{width:`60%`, background:"var(--gold)", opacity:0.6}}/>
@@ -2676,7 +2743,7 @@ const TransactionsPage = ({ go }: any) => {
     return {
       hash: tx.hash,
       blockNumber: tx.blockNumber,
-      blockLabel: `block ${Number(tx.blockNumber).toLocaleString()}`,
+        blockLabel: `round ${Number(tx.blockNumber).toLocaleString()}`,
       when: _ageFromTs(tx.blockTimestamp),
       from: tx.from,
       to: tx.to ?? null,
@@ -2703,8 +2770,8 @@ const TransactionsPage = ({ go }: any) => {
     : rows;
   const sourceText = hasLiveDigest
     ? live.data?.source === "lyth_txFeed"
-      ? `lyth_txFeed · cursor ${live.data.nextCursor ? "available" : "head"}`
-      : `live API · scanned ${live.data?.scannedBlocks ?? 0} blocks`
+      ? `live transaction feed · cursor ${live.data.nextCursor ? "available" : "head"}`
+      : `live API · scanned ${live.data?.scannedBlocks ?? 0} rounds`
     : live.isLoading
       ? "checking live API"
       : indexerAvailability.liveChain
@@ -2732,81 +2799,85 @@ const TransactionsPage = ({ go }: any) => {
     const h = heightJump.trim().replace(/[, ]/g, "");
     if (/^\d+$/.test(h)) go(`#/round/${h}`);
   };
+  const okRows = filtered.filter((row: any) => row.status === "ok").length;
+  const failedRows = filtered.filter((row: any) => row.status === "failed").length;
+  const pendingRows = filtered.filter((row: any) => row.status === "pending").length;
+  const liveStateLabel = hasLiveDigest ? "live feed" : live.isLoading ? "loading" : indexerAvailability.liveChain ? "unavailable" : "fallback";
+  const pageModeLabel = usingCursorFeed
+    ? (canOlder ? "cursor pagination active" : "cursor head")
+    : hasLiveDigest
+      ? "single scanned window"
+      : indexerAvailability.liveChain
+        ? "waiting for feed"
+        : "local preview rows";
 
   return (
-    <div className="ms-page ms-transactions">
-      <section style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:18,flexWrap:"wrap"}}>
-        <div>
-          <div className="cap" style={{color:"var(--gold)"}}>Transactions</div>
-          <h1 className="ms-h1" style={{margin:"4px 0 0"}}>Latest transactions</h1>
-          <p className="mono" style={{color:"var(--fg-400)",margin:"8px 0 0",fontSize:13,maxWidth:720,lineHeight:1.55}}>
-            Public transactions newest-first, paged through the live feed. Use Older / Newer to walk the feed, or jump to a specific height. Private transfer amounts remain hidden by protocol rules.
+    <div className="ms-page ms-transactions tx-feed-page">
+      <section className="tx-feed-hero">
+        <div className="tx-feed-hero__copy">
+          <div className="tx-feed-hero__tag">
+            <span className="ov-livedot"/>
+            <span className="mono">{sourceText}</span>
+          </div>
+          <h1 className="tx-feed-hero__title">Latest transactions</h1>
+          <p className="tx-feed-hero__desc">
+            Public rows newest-first from the live feed. Filter by hash, address, method, or block. Private transfer amounts remain hidden by protocol rules.
           </p>
         </div>
-        <button className="ov-cta ov-cta--ghost" onClick={()=>live.refetch()}>
-          {live.isFetching ? "Refreshing…" : "Refresh"}
-        </button>
-      </section>
-
-      <section className="stats-counters">
-        <StatCounter
-          label="Rows shown"
-          value={_fmtI(filtered.length)}
-          sub={`${rows.length.toLocaleString()} loaded`}
-          tone="gold"
-        />
-        <StatCounter
-          label="Latest block"
-          value={hasLiveDigest ? _fmtI(live.data?.latestBlock ?? 0) : "—"}
-          sub={sourceText}
-          tone="neutral"
-        />
-        <StatCounter
-          label="Scanned txs"
-          value={hasLiveDigest ? _fmtI(live.data?.scannedTransactions ?? 0) : indexerAvailability.liveChain ? "—" : _fmtI(Object.keys(TXS).length)}
-          sub={hasLiveDigest
-            ? (live.data?.source === "lyth_txFeed" ? "reported by transaction feed" : "reported by block pages")
-            : indexerAvailability.liveChain
-              ? "awaiting live rows"
-              : "fallback rows"}
-          tone="neutral"
-        />
-        <StatCounter
-          label="Filter"
-          value={q ? "active" : "all"}
-          sub={q ? _short(q, 18) : "hash, address, method, block"}
-          tone="neutral"
-        />
+        <div className="tx-feed-hero__stats">
+          <div className="tx-feed-stat">
+            <span className="mono">Rows</span>
+            <b className="mono num">{_fmtI(filtered.length)}</b>
+            <small>{rows.length.toLocaleString()} loaded</small>
+          </div>
+          <div className="tx-feed-stat">
+            <span className="mono">Latest round</span>
+            <b className="mono num">{hasLiveDigest ? _fmtI(live.data?.latestBlock ?? 0) : "—"}</b>
+            <small>{liveStateLabel}</small>
+          </div>
+          <div className="tx-feed-stat">
+            <span className="mono">Health</span>
+            <b className="mono num">{_fmtI(okRows)} ok</b>
+            <small>{failedRows} failed · {pendingRows} pending</small>
+          </div>
+          <div className="tx-feed-stat tx-feed-stat--accent">
+            <span className="mono">Scanned</span>
+            <b className="mono num">{hasLiveDigest ? _fmtI(live.data?.scannedTransactions ?? 0) : indexerAvailability.liveChain ? "—" : _fmtI(Object.keys(TXS).length)}</b>
+            <small>{pageModeLabel}</small>
+          </div>
+        </div>
       </section>
 
       <Card
         title="Transaction feed"
         right={
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <span className={`pill ${hasLiveDigest ? "ok" : "warn"}`} style={{fontSize:10}}>
+          <div className="tx-feed-card-head">
+            <span className={`pill ${hasLiveDigest ? "ok" : "warn"}`}>
               {hasLiveDigest ? "live" : live.isLoading ? "loading" : indexerAvailability.liveChain ? "unavailable" : "fallback"}
             </span>
-            <input
-              value={query}
-              onChange={(e)=>setQuery(e.target.value)}
-              placeholder="Filter hash, address, method"
-              style={{
-                width:240,
-                padding:"6px 10px",
-                border:"1px solid var(--fg-700)",
-                borderRadius:8,
-                background:"rgba(255,255,255,0.03)",
-                color:"var(--fg-100)",
-                fontSize:12,
-              }}
-            />
           </div>
         }
       >
+        <div className="tx-feed-toolbar">
+          <label className="tx-feed-search">
+            <Icon name="explorer" size={14}/>
+            <input
+              value={query}
+              onChange={(e)=>setQuery(e.target.value)}
+              placeholder="Filter transactions"
+            />
+          </label>
+          <button className="tx-feed-tool" type="button" onClick={()=>live.refetch()}>
+            {live.isFetching ? "Refreshing" : "Refresh"}
+          </button>
+          <div className="tx-feed-source mono">
+            Page {pageIndex + 1} · {pageModeLabel}
+          </div>
+        </div>
         {filtered.length === 0 ? (
-          <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
+          <p className="tx-feed-empty mono">
             {hasLiveDigest
-              ? "No transactions found in the scanned block window."
+              ? "No transactions found in the scanned round window."
               : indexerAvailability.liveChain
                 ? live.isLoading
                   ? "Checking the live transaction feed."
@@ -2814,132 +2885,100 @@ const TransactionsPage = ({ go }: any) => {
                 : "No fallback transactions matched the filter."}
           </p>
         ) : (
-          <div style={{overflowX:"auto"}}>
-          <table className="ms-table ms-table--tight">
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Hash · method</th>
-                <th>Block</th>
-                <th>From</th>
-                <th>To</th>
-                <th style={{textAlign:"right"}}>Value</th>
-                <th style={{textAlign:"right"}}>Fee</th>
-                <th style={{textAlign:"right"}}>Used / Limit</th>
-                <th style={{textAlign:"right"}}>Age</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((tx: any) => (
-                <tr key={`${tx.source}-${tx.hash}`} onClick={()=>go(`#/tx/${encodeURIComponent(tx.hash)}`)}>
-                  <td>
-                    <span
-                      className={`pill ${tx.status === "failed" ? "err" : tx.status === "pending" ? "warn" : "ok"}`}
-                      style={{fontSize:9.5,padding:"2px 7px"}}
-                    >
+          <div className="tx-feed-list">
+            {filtered.map((tx: any) => (
+              <button key={`${tx.source}-${tx.hash}`} type="button" className={`tx-feed-row is-${tx.status}`} onClick={()=>go(`#/tx/${encodeURIComponent(tx.hash)}`)}>
+                <span className="tx-feed-row__status" aria-hidden="true"/>
+                <span className="tx-feed-row__main">
+                  <span className="tx-feed-row__top">
+                    <span className="mono tx-feed-row__hash">{fmtHashShort(tx.hash, 14, 8)}</span>
+                    <span className={`pill ${tx.status === "failed" ? "err" : tx.status === "pending" ? "warn" : "ok"}`}>
                       {tx.status === "failed" ? "failed" : tx.status === "pending" ? "pending" : "ok"}
                     </span>
-                  </td>
-                  <td>
-                    <div className="mono" style={{fontSize:12,color:"var(--fg-100)"}}>{fmtHashShort(tx.hash)}</div>
-                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:1}} title={tx.methodSelector ? `selector ${tx.methodSelector}` : undefined}>
-                      {tx.methodLabel}
-                      {tx.methodSelector ? <span style={{color:"var(--fg-600, var(--fg-500))",marginLeft:6}}>{tx.methodSelector}</span> : null}
-                    </div>
-                  </td>
-                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
-                    <a onClick={(e)=>{ e.stopPropagation(); go(`#/round/${tx.blockNumber}`); }} style={{color:"var(--gold)",cursor:"pointer"}}>
-                      {tx.blockLabel}
-                    </a>
-                  </td>
-                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
-                    <a onClick={(e)=>{ e.stopPropagation(); go(`#/wallet/${encodeURIComponent(tx.from)}`); }} style={{cursor:"pointer"}}>
-                      {fmtAddrShort(tx.from)}
-                    </a>
-                  </td>
-                  <td className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>
-                    {tx.isContractCreation || !tx.to ? (
-                      <span className="pill" style={{fontSize:9.5,padding:"2px 7px"}}>contract creation</span>
-                    ) : (
-                      <a onClick={(e)=>{ e.stopPropagation(); go(`#/wallet/${encodeURIComponent(tx.to)}`); }} style={{cursor:"pointer"}}>
-                        {fmtAddrShort(tx.to)}
-                      </a>
-                    )}
-                  </td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)"}}>{tx.valueLabel}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>{tx.feeLabel}</td>
-                  <td className="mono num" style={{textAlign:"right",color:"var(--fg-400)",fontSize:11}}>{tx.executionLabel}</td>
-                  <td className="mono" style={{textAlign:"right",fontSize:11,color:"var(--fg-400)"}}>{tx.when}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </span>
+                  <span className="tx-feed-row__meta mono" title={tx.methodSelector ? `selector ${tx.methodSelector}` : undefined}>
+                    {tx.methodLabel}
+                    {tx.methodSelector ? <span>{tx.methodSelector}</span> : null}
+                  </span>
+                </span>
+                <span className="tx-feed-flow">
+                  <span className="tx-feed-end" onClick={(e)=>{ e.stopPropagation(); go(`#/wallet/${encodeURIComponent(tx.from)}`); }}>
+                    <small className="mono">From</small>
+                    <b className="mono">{fmtAddrShort(tx.from)}</b>
+                  </span>
+                  <span className="tx-feed-flow__arrow" aria-hidden="true">→</span>
+                  <span
+                    className="tx-feed-end"
+                    onClick={(e)=>{
+                      e.stopPropagation();
+                      if (!tx.isContractCreation && tx.to) go(`#/wallet/${encodeURIComponent(tx.to)}`);
+                    }}
+                  >
+                    <small className="mono">To</small>
+                    <b className="mono">{tx.isContractCreation || !tx.to ? "contract creation" : fmtAddrShort(tx.to)}</b>
+                  </span>
+                </span>
+                <span className="tx-feed-row__numbers">
+                  <span><small className="mono">Value</small><b className="mono num">{tx.valueLabel}</b></span>
+                  <span><small className="mono">Fee</small><b className="mono num">{tx.feeLabel}</b></span>
+                  <span><small className="mono">Units</small><b className="mono num">{tx.executionLabel}</b></span>
+                  <span>
+                    <small className="mono">Round</small>
+                    <b className="mono num" onClick={(e)=>{ e.stopPropagation(); go(`#/round/${tx.blockNumber}`); }}>{tx.blockLabel}</b>
+                  </span>
+                </span>
+                <span className="mono tx-feed-row__age">{tx.when}</span>
+              </button>
+            ))}
           </div>
         )}
 
         {/* ---------- Pagination + jump controls ---------- */}
-        <div
-          style={{
-            display:"flex", alignItems:"center", justifyContent:"space-between",
-            gap:12, flexWrap:"wrap", marginTop:14, paddingTop:14,
-            borderTop:"1px solid var(--fg-700)",
-          }}
-        >
-          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <span className="mono" style={{fontSize:11,color:"var(--fg-300)"}}>Page {pageIndex + 1}</span>
+        <div className="tx-feed-footer">
+          <div className="tx-feed-pager">
+            <span className="mono">Page {pageIndex + 1}</span>
             <button
-              className="ov-cta ov-cta--ghost"
+              className="tx-feed-tool"
               onClick={goNewer}
               disabled={!canNewer}
-              style={{opacity: canNewer ? 1 : 0.4, cursor: canNewer ? "pointer" : "not-allowed"}}
             >
               ← Newer
             </button>
             <button
-              className="ov-cta ov-cta--ghost"
+              className="tx-feed-tool"
               onClick={goOlder}
               disabled={!canOlder}
-              style={{opacity: canOlder ? 1 : 0.4, cursor: canOlder ? "pointer" : "not-allowed"}}
             >
               Older →
             </button>
-            <span className="mono" style={{fontSize:10.5,color:"var(--fg-500)"}}>
+            <span className="mono tx-feed-footer__hint">
               {usingCursorFeed
                 ? (canOlder ? "more pages available" : "end of feed")
-                : hasLiveDigest ? "single page · block scan" : indexerAvailability.liveChain ? "live feed unavailable" : "fallback preview"}
+                : hasLiveDigest ? "single page · round scan" : indexerAvailability.liveChain ? "live feed unavailable" : "fallback preview"}
             </span>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-            <label className="mono" style={{fontSize:11,color:"var(--fg-400)",display:"flex",alignItems:"center",gap:6}}>
+          <div className="tx-feed-jump">
+            <label className="mono">
               rows
               <select
                 value={pageSize}
                 onChange={(e)=>{ setPageSize(Number(e.target.value)); resetPaging(); }}
-                style={{
-                  background:"rgba(255,255,255,0.03)", border:"1px solid var(--fg-700)",
-                  borderRadius:6, color:"var(--fg-100)", fontSize:11, padding:"4px 6px",
-                }}
               >
                 {[25,50,100].map((n)=>(<option key={n} value={n}>{n}</option>))}
               </select>
             </label>
             {/* TODO: missing date-anchored txFeed param (or a date->height index) to jump the feed to a calendar date */}
-            <form onSubmit={(e)=>{ e.preventDefault(); submitHeightJump(); }} style={{display:"flex",alignItems:"center",gap:6}}>
+            <form onSubmit={(e)=>{ e.preventDefault(); submitHeightJump(); }}>
               <input
                 value={heightJump}
                 onChange={(e)=>setHeightJump(e.target.value)}
                 placeholder="go to height"
                 inputMode="numeric"
-                style={{
-                  width:120, padding:"5px 8px", border:"1px solid var(--fg-700)",
-                  borderRadius:6, background:"rgba(255,255,255,0.03)", color:"var(--fg-100)", fontSize:11,
-                }}
               />
               <button
                 type="submit"
-                className="ov-cta ov-cta--ghost"
+                className="tx-feed-tool"
                 disabled={!heightJumpValid}
-                style={{opacity: heightJumpValid ? 1 : 0.4, cursor: heightJumpValid ? "pointer" : "not-allowed"}}
               >
                 Open round
               </button>
@@ -2956,6 +2995,54 @@ const TransactionsPage = ({ go }: any) => {
    Reads live transaction, receipt, native receipt, and status fields. Local
    fixture rows are hidden while connected to a live chain.
 ===================================================== */
+const txCanOpenAddress = (value: unknown) =>
+  typeof value === "string" && /^0x[0-9a-fA-F]{40,}$/.test(value);
+
+const copyTxValue = (label: string, value: string | null | undefined) => {
+  if (!value || value === "—") return;
+  void navigator.clipboard?.writeText(value);
+  window.__msToast?.(`${label} copied`);
+};
+
+const TxHeroMetric = ({ label, value, sub, tone = "neutral", onClick }: any) => {
+  const content = (
+    <>
+      <span className="mono">{label}</span>
+      <b className="mono num">{value}</b>
+      {sub ? <small>{sub}</small> : null}
+    </>
+  );
+  return onClick ? (
+    <button type="button" className={`tx-hero-metric is-${tone}`} onClick={onClick}>
+      {content}
+    </button>
+  ) : (
+    <div className={`tx-hero-metric is-${tone}`}>
+      {content}
+    </div>
+  );
+};
+
+const TxRouteEnd = ({ label, address, note, onOpen }: any) => {
+  const display = txCanOpenAddress(address) ? fmtAddrShort(address) : (address && address !== "—" ? String(address) : "not reported");
+  const content = (
+    <>
+      <span className="mono tx-flow__label">{label}</span>
+      <b className="mono tx-flow__addr" title={txCanOpenAddress(address) ? address : undefined}>{display}</b>
+      <span className="mono tx-flow__note">{note}</span>
+    </>
+  );
+  return txCanOpenAddress(address) ? (
+    <button type="button" className="tx-flow__end" onClick={onOpen}>
+      {content}
+    </button>
+  ) : (
+    <div className="tx-flow__end is-disabled">
+      {content}
+    </div>
+  );
+};
+
 const TxPage = ({ hash, go }: any) => {
   const live = useTxByHashLive(hash);
   const nativeReceipt = useTxNativeReceipt(hash);
@@ -3070,7 +3157,7 @@ const TxPage = ({ hash, go }: any) => {
         round: liveBlockNumber ?? fallback?.round ?? 0,
         roundLabel:
           liveBlockNumber !== null
-            ? `block ${liveBlockNumber.toLocaleString()}`
+            ? `round ${liveBlockNumber.toLocaleString()}`
             : (fallback?.roundLabel ?? "round —"),
       }
     : fallback;
@@ -3086,13 +3173,13 @@ const TxPage = ({ hash, go }: any) => {
       )}
       {indexedStatus?.status === "not_found" && (
         <p className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,maxWidth:680}}>
-          Indexer searched through block #{indexedStatus.latestHeight.toLocaleString()} on {indexedStatus.providerKind};
+          Indexer searched through round #{indexedStatus.latestHeight.toLocaleString()} on {indexedStatus.providerKind};
           indexer is {indexedStatus.indexerEnabled ? "enabled" : "disabled"}.
         </p>
       )}
       {indexedStatus?.status === "found" && (
         <p className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,maxWidth:680}}>
-          The indexer sees this transaction in block #{indexedStatus.blockNumber.toLocaleString()} at index {indexedStatus.txIndex},
+          The indexer sees this transaction in round #{indexedStatus.blockNumber.toLocaleString()} at index {indexedStatus.txIndex},
           but the receipt/detail RPC did not return a full payload.
         </p>
       )}
@@ -3115,30 +3202,73 @@ const TxPage = ({ hash, go }: any) => {
       ? `${tx.clusterName} (${txCluster})`
       : txCluster
     : "not reported";
+  const statusLabel = tx.status === "ok" ? "Confirmed" : tx.status === "pending" ? "Receipt pending" : "Failed";
+  const statusSub = tx.status === "ok"
+    ? "receipt committed"
+    : tx.status === "pending"
+      ? "waiting for receipt"
+      : liveDecoded?.errorCode
+        ? `error ${liveDecoded.errorCode}`
+        : "execution reverted";
+  const txFeeLabel = tx.feeLabel ?? transactionFeeValueLabel(null, tx.fee, tx.feeDenom);
+  const executionPct = tx.gasLimit > 0 ? Math.min(100, Math.max(0, (tx.gasUsed / tx.gasLimit) * 100)) : null;
+  const executionPctLabel = executionPct === null ? "—" : `${executionPct.toFixed(1)}%`;
+  const txSourceLabel = liveNativeReceipt
+    ? "native receipt"
+    : liveReceipt
+      ? "live receipt"
+      : liveTx
+        ? "live transaction"
+        : indexerAvailability.liveChain
+          ? "live lookup"
+          : "fallback preview";
   const showAttestationTimeline = !indexerAvailability.liveChain || tx.signatures.length > 0;
 
   return (
     <div className="ms-page ms-tx-detail">
       {/* Hero */}
-      <section className="tx-hero">
-        <div className="tx-hero__top">
-          <div>
-            <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em"}}>TRANSACTION</div>
-            <div className="mono tx-hero__hash">{tx.hash}</div>
+      <section className={`tx-hero tx-hero--${tx.status}`}>
+        <div className="tx-hero__pulse" aria-hidden="true"/>
+        <div className="tx-hero__main">
+          <div className="tx-hero__tag">
+            <span className="ov-livedot"/>
+            <span className="mono">{txSourceLabel}</span>
+            <span className="mono">{tx.kindLabel}</span>
           </div>
-          <div className="tx-hero__status">
-            <span className={`tx-status tx-status--${tx.status}`}>
-              {tx.status === "ok" ? "✓ Confirmed" : tx.status === "pending" ? "◐ Receipt pending" : "✗ Failed"}
-            </span>
+          <h1 className="tx-hero__title">Transaction</h1>
+          <div className="tx-hero__hashline">
+            <code className="mono" title={tx.hash}>{fmtHashShort(tx.hash, 24, 10)}</code>
+            <button type="button" onClick={()=>copyTxValue("Transaction hash", tx.hash)}>Copy hash</button>
+          </div>
+          <div className="tx-hero__amount">
+            <span className="mono">Value</span>
+            <b className="mono num">{txAmountLabel}</b>
+            <small className="mono">
+              {tx.roundLabel} · {tx.when} · {txClusterRoute ? (
+                <>cluster <a onClick={()=>go(txClusterRoute)}>{txClusterDisplay}</a></>
+              ) : "cluster not reported"}
+            </small>
           </div>
         </div>
-        <div className="tx-hero__amount">
-          <div className="mono" style={{fontSize:11,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>{tx.kindLabel}</div>
-          <div className="mono num tx-hero__big">{txAmountLabel}</div>
-          <div className="mono" style={{fontSize:12,color:"var(--fg-400)"}}>
-            {tx.roundLabel} · {tx.when} · {txClusterRoute ? (
-              <>in cluster <a onClick={()=>go(txClusterRoute)} style={{color:"var(--gold)",cursor:"pointer"}}>{txClusterDisplay}</a></>
-            ) : "cluster not reported"}
+
+        <div className="tx-hero__panel">
+          <div className="tx-hero__status">
+            <span className={`tx-status tx-status--${tx.status}`}>
+              {statusLabel}
+            </span>
+            <small className="mono">{statusSub}</small>
+          </div>
+          <div className="tx-hero__metrics">
+            <TxHeroMetric
+              label="Round"
+              value={tx.round ? `#${Number(tx.round).toLocaleString()}` : "—"}
+              sub={tx.when}
+              tone="gold"
+              onClick={tx.round ? ()=>go(`#/round/${tx.round}`) : undefined}
+            />
+            <TxHeroMetric label="Fee" value={txFeeLabel} sub={liveNativeFee ? "structured native fee" : "reported fee"} />
+            <TxHeroMetric label="Execution" value={executionPctLabel} sub={`${_fmt(tx.gasUsed)} / ${_fmt(tx.gasLimit)} units`} />
+            <TxHeroMetric label="Nonce" value={tx.nonce.toString()} sub={txClusterDisplay} />
           </div>
         </div>
       </section>
@@ -3146,27 +3276,22 @@ const TxPage = ({ hash, go }: any) => {
       {/* From → To */}
       <section>
         <div className="tx-flow">
-          <div className="tx-flow__end" onClick={()=>go(`#/wallet/${encodeURIComponent(tx.from)}`)}>
-            <div className="mono tx-flow__label">FROM</div>
-            <div className="mono tx-flow__addr">{fmtAddrShort(tx.from)}</div>
-            <div className="mono tx-flow__note">
-              <LiveAddressLabel addr={tx.from} fallback={indexerAvailability.liveChain ? null : tagFor(tx.from)}/>
-            </div>
-          </div>
+          <TxRouteEnd
+            label="From"
+            address={tx.from}
+            note={<LiveAddressLabel addr={tx.from} fallback={indexerAvailability.liveChain ? null : tagFor(tx.from)}/>}
+            onOpen={()=>go(`#/wallet/${encodeURIComponent(tx.from)}`)}
+          />
           <div className="tx-flow__arrow">
-            <svg width="100%" height="24" viewBox="0 0 100 24" preserveAspectRatio="none">
-              <path d="M0,12 L92,12" stroke="var(--gold)" strokeWidth="2" fill="none"/>
-              <path d="M86,6 L92,12 L86,18" stroke="var(--gold)" strokeWidth="2" fill="none"/>
-            </svg>
+            <div className="tx-flow__beam" aria-hidden="true"/>
             <div className="mono tx-flow__arrow-label">{txAmountLabel}</div>
           </div>
-          <div className="tx-flow__end" onClick={()=>go(`#/wallet/${encodeURIComponent(tx.to)}`)}>
-            <div className="mono tx-flow__label">TO</div>
-            <div className="mono tx-flow__addr">{fmtAddrShort(tx.to)}</div>
-            <div className="mono tx-flow__note">
-              <LiveAddressLabel addr={tx.to} fallback={indexerAvailability.liveChain ? null : tagFor(tx.to)}/>
-            </div>
-          </div>
+          <TxRouteEnd
+            label="To"
+            address={tx.to}
+            note={<LiveAddressLabel addr={tx.to} fallback={indexerAvailability.liveChain ? null : tagFor(tx.to)}/>}
+            onOpen={()=>go(`#/wallet/${encodeURIComponent(tx.to)}`)}
+          />
         </div>
       </section>
 
@@ -3180,7 +3305,7 @@ const TxPage = ({ hash, go }: any) => {
               label="Indexer status"
               value={
                 indexedStatus?.status === "found"
-                  ? `found · block ${indexedStatus.blockNumber.toLocaleString()} · index ${indexedStatus.txIndex}`
+                  ? `found · round ${indexedStatus.blockNumber.toLocaleString()} · index ${indexedStatus.txIndex}`
                   : indexedStatus?.status === "not_found"
                     ? `not found · latest ${indexedStatus.latestHeight.toLocaleString()} · ${indexedStatus.providerKind}`
                     : txStatus.isLoading
@@ -3204,12 +3329,12 @@ const TxPage = ({ hash, go }: any) => {
         </Card>
         <Card title="Fees & execution">
           <div className="tx-kv">
-            <KV label="Fee" value={tx.feeLabel ?? transactionFeeValueLabel(null, tx.fee, tx.feeDenom)} mono/>
+            <KV label="Fee" value={txFeeLabel} mono/>
             {(tx.feeDetailTexts ?? []).map((detail: string, index: number) => (
               <KV key={`${index}-${detail}`} label={index === 0 ? "Fee detail" : "Fee rates"} value={adr0039FeeDetailText(detail)} mono/>
             ))}
             <KV label="Execution units" value={`${_fmt(tx.gasUsed)} / ${_fmt(tx.gasLimit)}`}/>
-            <KV label="Execution utilization" value={tx.gasLimit > 0 ? `${((tx.gasUsed/tx.gasLimit)*100).toFixed(1)}%` : "—"}/>
+            <KV label="Execution utilization" value={executionPctLabel}/>
             <KV label="Effective rate" value={liveNativeFee ? "—" : txAmount !== null && tx.fee !== null && txAmount > 0 ? `${((tx.fee/txAmount)*10000).toFixed(2)} bp` : "—"} />
             {liveDecoded?.errorCode && <KV label="Error code" value={liveDecoded.errorCode} mono/>}
           </div>
@@ -3218,7 +3343,7 @@ const TxPage = ({ hash, go }: any) => {
 
       {liveDecoded && (
         <section className="tx-split">
-          <Card title="Decoded by RPC">
+          <Card title="Decoded transaction">
             <div className="tx-kv">
               <KV label="Method" value={decodedMethod ?? "raw transfer / memo"} mono/>
               <KV label="Memo" value={liveDecoded.memo ?? "—"}/>
@@ -3278,8 +3403,7 @@ const TxPage = ({ hash, go }: any) => {
       {/* Attestation */}
       {showAttestationTimeline ? (
         <section>
-          <h3 className="ov-section-title">Attestation · who signed what</h3>
-          <Card title="">
+          <Card title="Attestation · who signed what">
             <div className="tx-attest">
               <div className="tx-attest__summary">
                 <div className="tx-attest__badge">
@@ -3296,7 +3420,7 @@ const TxPage = ({ hash, go }: any) => {
                 </div>
               </div>
               <div className="tx-attest__sigs">
-                <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em",marginBottom:8}}>SIGNATURE TIMELINE · ms after block assembly</div>
+                <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.1em",marginBottom:8}}>SIGNATURE TIMELINE · ms after round assembly</div>
                 {tx.signatures.map((s,i)=>(
                   <div key={i} className="tx-sig-row">
                     <span className="tx-sig-row__dot"/>
@@ -3313,8 +3437,7 @@ const TxPage = ({ hash, go }: any) => {
         </section>
       ) : (
         <section>
-          <h3 className="ov-section-title">Attestation</h3>
-          <Card title="">
+          <Card title="Attestation">
             <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"6px 2px"}}>
               Live receipt data does not expose per-signer timing or DAC coverage for this transaction yet. Monoscan is not filling those fields from offline fixtures.
             </div>
@@ -3662,6 +3785,9 @@ const RoundPage = ({ round, go }: any) => {
   const liveVertices = verticesAtRound.data?.vertices ?? [];
   const signerIndices = liveCert?.signer_indices ?? liveCert?.signerIndices ?? [];
   const signerCount = Number(liveCert?.signer_count ?? liveCert?.signerCount ?? signerIndices.length ?? 0);
+  const blockTxCount = blockTransactions.data?.totalTransactions ?? blockTransactions.data?.transactions?.length ?? null;
+  const parentCount = liveParents?.length ?? null;
+  const vertexCount = liveVertices.length || verts.length;
   const liveHeaderTimestamp = (() => {
     const raw = liveHeader?.timestamp;
     if (raw === null || raw === undefined) return null;
@@ -3678,10 +3804,68 @@ const RoundPage = ({ round, go }: any) => {
     return age && age !== "—" ? `${iso} · ${age}` : iso;
   })();
   const found = liveHeader || liveVertices.length > 0 || (liveParents?.length ?? 0) > 0 || verts.length > 0 || (cur > 0 && r > 0 && r <= cur);
+  const roundLag = Number.isFinite(r) ? Math.max(0, cur - r) : 0;
   return (
-    <div className="ms-page">
-      <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/")} style={{marginBottom:16}}>← Overview</button>
-      <h1 className="ms-h1" style={{marginBottom:6}}>Round <span style={{color:"var(--gold)"}}>#{isNaN(r)?round:r.toLocaleString()}</span></h1>
+    <div className="ms-page ms-round-detail">
+      <section className="round-hero">
+        <div className="round-hero__copy">
+          <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/")}>← Overview</button>
+          <div className="round-hero__tag mono"><span className="ov-livedot"/> {liveHeader ? "live header" : curIsLive ? "live head" : "local preview"}</div>
+          <h1>Round <span>#{isNaN(r)?round:r.toLocaleString()}</span></h1>
+          <p className="mono">
+            {found
+              ? liveHeaderTimestampDisplay ?? (curIsLive && r > 0 ? `${Math.max(0, cur - r).toLocaleString()} rounds behind head` : "retained round data")
+              : liveBlock.isLoading || chainStats.isLoading
+                ? "Checking live block..."
+                : curIsLive
+                  ? `Round not found. Current head is ${cur.toLocaleString()}.`
+                  : "Round not found and no live head available."}
+          </p>
+        </div>
+        <div className="round-hero__stats">
+          <div><span className="mono">Transactions</span><b className="mono num">{blockTxCount !== null ? blockTxCount.toLocaleString() : "—"}</b></div>
+          <div><span className="mono">Certificate</span><b className="mono num">{liveCert ? `${signerCount}` : roundCert.isLoading ? "..." : "—"}</b></div>
+          <div><span className="mono">Parents</span><b className="mono num">{parentCount !== null ? parentCount.toLocaleString() : "—"}</b></div>
+          <div><span className="mono">Vertices</span><b className="mono num">{vertexCount ? vertexCount.toLocaleString() : "—"}</b></div>
+        </div>
+      </section>
+      {found && (
+        <section className="round-packet">
+          <div className="round-packet__head">
+            <div>
+              <span className="mono">Starfish DAG packet</span>
+              <h3>Round #{isNaN(r) ? round : r.toLocaleString()}</h3>
+            </div>
+            <b className="mono">{curIsLive ? `${roundLag.toLocaleString()} rounds behind head` : "local preview"}</b>
+          </div>
+          <div className="round-packet__lane">
+            <div className="round-packet__side">
+              <span className="mono">parents</span>
+              <div className="round-packet__mini-nodes" aria-hidden="true">
+                {Array.from({ length: Math.max(2, Math.min(6, parentCount ?? liveParents?.length ?? 3)) }).map((_, i) => (
+                  <i key={i} style={{ animationDelay: `${i * 110}ms` }}/>
+                ))}
+              </div>
+              <b className="mono">{parentCount !== null ? parentCount.toLocaleString() : "—"}</b>
+            </div>
+            <div className="round-packet__core">
+              <div className="round-packet__pulse" aria-hidden="true"/>
+              <span className="mono">current round</span>
+              <b className="mono">#{isNaN(r) ? round : r.toLocaleString()}</b>
+              <small className="mono">{liveHeader?.hash ? fmtHashShort(liveHeader.hash, 18, 6) : liveHeaderTimestampDisplay ?? "retained state"}</small>
+            </div>
+            <div className="round-packet__side round-packet__side--out">
+              <span className="mono">surfaces</span>
+              <div className="round-packet__surface-list">
+                <i className={liveCert ? "is-ok" : "is-muted"}>certificate</i>
+                <i className={blockTxCount !== null ? "is-ok" : "is-muted"}>txs</i>
+                <i className={vertexCount ? "is-ok" : "is-muted"}>vertices</i>
+              </div>
+              <b className="mono">{[Boolean(liveCert), blockTxCount !== null, Boolean(vertexCount)].filter(Boolean).length}/3</b>
+            </div>
+          </div>
+        </section>
+      )}
       {!found ? (
         <p className="mono" style={{color:"var(--fg-400)"}}>
           {liveBlock.isLoading || chainStats.isLoading
@@ -3693,8 +3877,7 @@ const RoundPage = ({ round, go }: any) => {
       ) : (
         <>
           {liveHeader ? (
-            <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
-              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>Live block · header API</div>
+            <Card title="Live round · header API" style={{marginBottom:14}}>
               <div className="tx-kv">
                 <div className="tx-kv__row">
                   <span className="mono tx-kv__k">Hash</span>
@@ -3731,7 +3914,7 @@ const RoundPage = ({ round, go }: any) => {
                   </span>
                 </div>
               </div>
-            </div>
+            </Card>
           ) : (
             <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
               {verts.length > 0
@@ -3742,10 +3925,7 @@ const RoundPage = ({ round, go }: any) => {
             </p>
           )}
           {(liveCert || roundCert.isLoading || roundCert.isFetched) && (
-            <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
-              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>
-                BLS round certificate · lyth_getBlsRoundCertificate
-              </div>
+            <Card title="BLS round certificate" right={<span className="cap">round certificate</span>} style={{marginBottom:14}}>
               {liveCert ? (
                 <div className="tx-kv">
                   <KV label="Round" value={Number(liveCert.round ?? r).toLocaleString()} mono/>
@@ -3755,16 +3935,13 @@ const RoundPage = ({ round, go }: any) => {
                 </div>
               ) : (
                 <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
-                  {roundCert.isLoading ? "checking live certificate…" : "RPC returned null; no persisted certificate is exposed for this round yet"}
+                  {roundCert.isLoading ? "checking live certificate…" : "No persisted certificate is exposed for this round yet"}
                 </p>
               )}
-            </div>
+            </Card>
           )}
           {(liveParents || dagParents.isLoading || dagParents.isFetched) && (
-            <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
-              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>
-                DAG parents · lyth_dagParents
-              </div>
+            <Card title="DAG parents" right={<span className="cap">parent vertices</span>} style={{marginBottom:14}}>
               {liveParents && liveParents.length > 0 ? (
                 <table className="ms-table">
                   <thead><tr><th>Parent vertex</th><th style={{textAlign:"right"}}>Round</th></tr></thead>
@@ -3782,13 +3959,10 @@ const RoundPage = ({ round, go }: any) => {
                   {dagParents.isLoading ? "checking DAG parents…" : "No retained parent vertices reported for this round."}
                 </p>
               )}
-            </div>
+            </Card>
           )}
           {(blockTransactions.data || blockTransactions.isLoading || blockTransactions.isFetched) && (
-            <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
-              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>
-                Transactions in this block · /api/v1/blocks/{roundNumber}/transactions
-              </div>
+            <Card title="Transactions in this round" right={<span className="cap">round transactions API</span>} style={{marginBottom:14}}>
               {blockTransactions.data && blockTransactions.data.transactions.length > 0 ? (
                 <>
                   <table className="ms-table">
@@ -3834,17 +4008,14 @@ const RoundPage = ({ round, go }: any) => {
               ) : (
                 <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
                   {blockTransactions.isLoading
-                    ? "checking block transactions…"
+                    ? "checking round transactions…"
                     : "No transactions reported for this block."}
                 </p>
               )}
-            </div>
+            </Card>
           )}
           {(liveVertices.length > 0 || verticesAtRound.isLoading || verticesAtRound.isFetched) && (
-            <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
-              <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>
-                Vertices · lyth_verticesAtRound
-              </div>
+            <Card title="Vertices" right={<span className="cap">vertices by round</span>} style={{marginBottom:14}}>
               {liveVertices.length > 0 ? (
                 <table className="ms-table">
                   <thead><tr><th>Author</th><th>Vertex hash</th></tr></thead>
@@ -3862,10 +4033,10 @@ const RoundPage = ({ round, go }: any) => {
                   {verticesAtRound.isLoading ? "checking live vertices…" : "No retained vertices reported for this round."}
                 </p>
               )}
-            </div>
+            </Card>
           )}
           {/*
-            When live block / certificate / vertex data exists, the cards
+            When live round / certificate / vertex data exists, the cards
             above already show the truth. Only render the fixture cluster
             vertex sample when monoscan is in offline / design-preview
             mode (no live head reachable) so a live chain never sees
@@ -3993,29 +4164,39 @@ const SearchPage = ({ q, go }: any) => {
 
   const Section = ({ title, items, render }: any) =>
     items.length === 0 ? null : (
-      <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
-        <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>{title} · {items.length}</div>
+      <Card title={`${title} · ${items.length}`} style={{marginBottom:14}}>
         <div style={{display:"flex",flexDirection:"column",gap:8}}>
           {items.slice(0,8).map(render)}
         </div>
-      </div>
+      </Card>
     );
 
   return (
-    <div className="ms-page">
-      <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/")} style={{marginBottom:16}}>← Overview</button>
-      <h1 className="ms-h1" style={{marginBottom:6}}>Search · <span style={{color:"var(--gold)"}}>"{q}"</span></h1>
-      <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
-        {total === 0
-          ? liveSearch.isLoading
-            ? "Checking live search index…"
-            : "No matches. Try a round number, C-NNN cluster id, typed mono1 address, tx hash, or ticker."
-          : `${total} result${total===1?"":"s"}`}
-      </p>
+    <div className="ms-page ms-search-results">
+      <section className="search-hero">
+        <div>
+          <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/")}>← Overview</button>
+          <div className="search-hero__tag mono"><span className="ov-livedot"/> live search</div>
+          <h1>Search</h1>
+          <code className="mono" title={q}>{q}</code>
+          <p className="mono">
+            {total === 0
+              ? liveSearch.isLoading
+                ? "Checking live search index..."
+                : "No matches. Try a round number, C-NNN cluster id, typed mono1 address, tx hash, or ticker."
+              : `${total} result${total===1?"":"s"} across live lookup, indexed search, and explorer sections.`}
+          </p>
+        </div>
+        <div className="search-hero__stats">
+          <div><span className="mono">Live hits</span><b className="mono num">{liveHits}</b></div>
+          <div><span className="mono">Indexed</span><b className="mono num">{rpcHits.length}</b></div>
+          <div><span className="mono">Wallets</span><b className="mono num">{wallets.length}</b></div>
+          <div><span className="mono">Other</span><b className="mono num">{markets.length + clusters.length + operators.length}</b></div>
+        </div>
+      </section>
 
       {(rpcHits.length > 0 || liveSearch.isLoading) && (
-        <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
-          <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>Live search · lyth_search</div>
+        <Card title="Live search" right={<span className="cap">search index</span>} style={{marginBottom:14}}>
           {rpcHits.length > 0 ? (
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {rpcHits.map((hit:any)=>(
@@ -4029,17 +4210,16 @@ const SearchPage = ({ q, go }: any) => {
           ) : (
             <div className="mono" style={{fontSize:11,color:"var(--fg-500)"}}>checking indexed search…</div>
           )}
-        </div>
+        </Card>
       )}
 
       {(looksLikeRound || looksLikeAddress || liveBlockByHash.data || liveTx.data || liveBlockByHash.isLoading || liveTx.isLoading) && (
-        <div className="ms-card" style={{padding:"14px 18px",marginBottom:14}}>
-          <div className="cap" style={{marginBottom:10,color:"var(--gold)"}}>Live lookup</div>
+        <Card title="Live lookup" style={{marginBottom:14}}>
           <div style={{display:"flex",flexDirection:"column",gap:8}}>
             {looksLikeRound && (
               <div className="ov-moverow" onClick={()=>go(`#/round/${q}`)}>
                 <span className="mono" style={{color:"var(--gold)",minWidth:120}}>round</span>
-                <span style={{flex:1}}>Open block/round #{Number(q).toLocaleString()}</span>
+                <span style={{flex:1}}>Open round #{Number(q).toLocaleString()}</span>
               </div>
             )}
             {looksLikeAddress && (
@@ -4056,15 +4236,15 @@ const SearchPage = ({ q, go }: any) => {
             )}
             {liveBlockByHash.data && (
               <div className="ov-moverow" onClick={()=>go(`#/round/${Number((liveBlockByHash.data as any).number)}`)}>
-                <span className="mono" style={{color:"var(--gold)",minWidth:120}}>block hash</span>
-                <span style={{flex:1}}>Block #{Number((liveBlockByHash.data as any).number).toLocaleString()}</span>
+                <span className="mono" style={{color:"var(--gold)",minWidth:120}}>round hash</span>
+                <span style={{flex:1}}>Round #{Number((liveBlockByHash.data as any).number).toLocaleString()}</span>
               </div>
             )}
             {(liveBlockByHash.isLoading || liveTx.isLoading) && (
-              <div className="mono" style={{fontSize:11,color:"var(--fg-500)"}}>checking live RPC…</div>
+              <div className="mono" style={{fontSize:11,color:"var(--fg-500)"}}>checking live data…</div>
             )}
           </div>
-        </div>
+        </Card>
       )}
 
       <Section title="Markets" items={markets} render={(m)=>(
@@ -4132,6 +4312,7 @@ const NativeAgentActionsCard = ({
   );
   const forwarderAddress = getNativeAgentForwarderAddress(capabilities);
   const forwarderRows = capabilities?.nativeModuleForwarders?.agent ?? [];
+  const forwarderReady = Boolean(forwarderAddress || forwarderRows.length > 0);
   const selectedForwarderLabel = forwarderRows.length > 0
     ? `${forwarderRows.length} capability rows`
     : forwarderAddress
@@ -4198,7 +4379,7 @@ const NativeAgentActionsCard = ({
         <select
           value={value}
           onChange={(event) => updateValue(field, event.currentTarget.value)}
-          style={{width:"100%"}}
+          className="protocol-agent-input"
         >
           <option value="false">False</option>
           <option value="true">True</option>
@@ -4210,7 +4391,7 @@ const NativeAgentActionsCard = ({
         <select
           value={value}
           onChange={(event) => updateValue(field, event.currentTarget.value)}
-          style={{width:"100%"}}
+          className="protocol-agent-input"
         >
           {(field.options ?? []).map((option) => (
             <option key={option.value} value={option.value}>{option.label}</option>
@@ -4224,7 +4405,7 @@ const NativeAgentActionsCard = ({
         inputMode={field.kind === "number" || field.kind === "amount" ? "numeric" : "text"}
         onChange={(event) => updateValue(field, event.currentTarget.value)}
         spellCheck={false}
-        style={{width:"100%"}}
+        className="protocol-agent-input"
       />
     );
   };
@@ -4232,52 +4413,71 @@ const NativeAgentActionsCard = ({
   return (
     <Card
       title="Native agent actions"
-      right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>monolythium_submitMrvNativeCall</span>}
+      right={<span className={`pill ${forwarderReady ? "ok" : "warn"}`}>{forwarderReady ? "ready" : "forwarder missing"}</span>}
     >
-      <div style={{display:"grid",gridTemplateColumns:"minmax(220px,0.8fr) minmax(0,1.2fr)",gap:14}}>
-        <div>
-          <label className="mono" style={{display:"block",fontSize:10,color:"var(--fg-500)",marginBottom:6}}>Action</label>
+      <div className="protocol-agent">
+        <div className="protocol-agent__left">
+          <label className="mono protocol-agent__label">Action</label>
           <select
             value={kind}
             onChange={(event) => setKind(event.currentTarget.value as NativeAgentActionKind)}
-            style={{width:"100%"}}
+            className="protocol-agent-input protocol-agent__select"
           >
             {NATIVE_AGENT_ACTIONS.map((entry) => (
               <option key={entry.kind} value={entry.kind}>{entry.group} / {entry.label}</option>
             ))}
           </select>
-          <div className="tx-kv" style={{marginTop:12}}>
-            <KV label="Group" value={action.group}/>
-            <KV label="Forwarder" value={selectedForwarderLabel} mono/>
-            <KV label="Fallback" value={forwarderAddress ? fmtAddrShort(forwarderAddress, "contract") : "—"} mono/>
+          <div className="protocol-agent__summary">
+            <div>
+              <span className="mono">Group</span>
+              <b>{action.group}</b>
+            </div>
+            <div>
+              <span className="mono">Forwarder</span>
+              <b className="mono">{selectedForwarderLabel}</b>
+            </div>
+            <div>
+              <span className="mono">Fallback</span>
+              <b className="mono">{forwarderAddress ? fmtAddrShort(forwarderAddress, "contract") : "—"}</b>
+            </div>
           </div>
         </div>
-        <div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10}}>
+        <div className="protocol-agent__right">
+          <div className="protocol-agent__head">
+            <div>
+              <span className="mono">Wallet call</span>
+              <b>monolythium_submitMrvNativeCall</b>
+            </div>
+            <span className="mono">{indexedNonce !== null ? `nonce ${indexedNonce}` : nonceAccount ? "nonce lookup" : "manual nonce"}</span>
+          </div>
+          <div className="protocol-agent__fields">
             {action.fields.map((field) => (
-              <label key={field.key} style={{display:"grid",gap:5}}>
-                <span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>{field.label}</span>
+              <label key={field.key} className="protocol-agent__field">
+                <span className="mono">{field.label}</span>
                 {fieldInput(field)}
               </label>
             ))}
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:12,flexWrap:"wrap"}}>
+          <div className="protocol-agent__submit">
             <button
-              className="ov-cta"
-              disabled={submit.state === "submitting"}
+              className="ov-cta ov-cta--primary"
+              disabled={submit.state === "submitting" || !forwarderReady}
               onClick={submitAction}
             >
-              {submit.state === "submitting" ? submit.message : "Submit"}
+              {submit.state === "submitting" ? submit.message : "Submit call"}
             </button>
             {submit.state !== "idle" && (
               <span
                 className="mono"
-                style={{fontSize:11,color:submit.state === "error" ? "var(--err)" : submit.state === "success" ? "var(--ok)" : "var(--fg-400)"}}
+                style={{color:submit.state === "error" ? "var(--err)" : submit.state === "success" ? "var(--ok)" : "var(--fg-400)"}}
               >
                 {submit.state === "success" && submit.txHash
                   ? `${submit.message} ${fmtHashShort(submit.txHash)}`
                   : submit.message}
               </span>
+            )}
+            {submit.state === "idle" && !forwarderReady && (
+              <span className="mono">Native agent forwarder is not advertised by this peer.</span>
             )}
           </div>
         </div>
@@ -4328,59 +4528,97 @@ const ProtocolPage = ({ go }: any) => {
   const indexerHeight = network.data?.indexerHeight ?? null;
   const key = encryptionKey.data;
   return (
-    <div className="ms-page">
-      <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/stats")} style={{marginBottom:16}}>← Statistics</button>
-      <h1 className="ms-h1">Protocol status</h1>
-      <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
-        Live execution fees, capability gates, PQ checkpoint rows, and operator exit ledger from the public testnet RPC.
-      </p>
-      <section className="stats-counters">
+    <div className="ms-page ms-protocol-page">
+      <section className="protocol-hero">
+        <div>
+          <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/stats")}>← Statistics</button>
+          <div className="protocol-hero__tag mono"><span className="ov-livedot"/> protocol control plane</div>
+          <h1>Protocol status</h1>
+          <p className="mono">
+            Live execution fees, capability gates, PQ checkpoint rows, operator surfaces, upgrades, and exit ledger from the public testnet.
+          </p>
+        </div>
+        <div className="protocol-hero__stack">
+          <div><span className="mono">Capabilities</span><b className="mono num">{capabilityRows.length ? `${activeCapabilityCount}/${capabilityRows.length}` : "—"}</b></div>
+          <div><span className="mono">Operator surfaces</span><b className="mono num">{surfaceRows.length ? `${availableSurfaceCount}/${surfaceRows.length}` : "—"}</b></div>
+          <div><span className="mono">Indexer</span><b className="mono num">{indexerHeight !== null ? `#${indexerHeight.toLocaleString()}` : network.data ? "off" : "—"}</b></div>
+        </div>
+      </section>
+      <section className="protocol-readiness-strip">
+        <div className={`protocol-readiness-tile ${upgrade?.configured ? "is-ready" : "is-muted"}`}>
+          <span className="mono">Upgrade readiness</span>
+          <b className="mono">{upgrade?.state ?? (upgradeStatus.isLoading ? "checking" : "not reporting")}</b>
+          <small>{upgrade ? (upgrade.configured ? `${upgrade.planCount} plan${upgrade.planCount === 1 ? "" : "s"} · ${upgrade.pendingCount} pending` : "no upgrade plan configured") : "upgrade status unavailable"}</small>
+        </div>
+        <div className="protocol-readiness-tile">
+          <span className="mono">Execution price</span>
+          <b className="mono">{executionUnitPrice ?? "—"}</b>
+          <small>{feePriceSub}</small>
+        </div>
+        <div className="protocol-readiness-tile">
+          <span className="mono">Capabilities</span>
+          <b className="mono">{capabilityRows.length ? `${activeCapabilityCount}/${capabilityRows.length}` : "—"}</b>
+          <small>{capabilities.data ? "latest registry sample" : "capability registry"}</small>
+        </div>
+        <div className="protocol-readiness-tile">
+          <span className="mono">PQ checkpoint</span>
+          <b className="mono">{checkpointHeight !== null && checkpointHeight !== undefined ? `#${Number(checkpointHeight).toLocaleString()}` : "—"}</b>
+          <small>{checkpointRows.length ? `${checkpointRows.length} signature rows` : "latest checkpoint"}</small>
+        </div>
+      </section>
+      <section className="protocol-data-panel">
+        <div className="protocol-data-panel__head">
+          <h3 className="ov-section-title">Protocol surfaces</h3>
+          <p className="ov-section-desc">Grouped RPC and indexer health counters for fees, capabilities, checkpoints, gaps, exits, and encryption.</p>
+        </div>
+        <div className="stats-counters protocol-counter-grid">
         <StatCounter label="Execution price" value={executionUnitPrice ?? "—"} sub={feePriceSub} tone="neutral"/>
         <StatCounter label="Fee samples" value={`${feeStats.data?.baseFeePerGas.length ?? 0}`} sub={feeStats.data?.oldestBlock ? `oldest ${feeStats.data.oldestBlock}` : "fee history"} tone="neutral"/>
         <StatCounter label="Active precompiles" value={`${rows.filter((p:any)=>p.active ?? p.enabled).length}`} sub={`${rows.length} reported`} tone="neutral"/>
         <StatCounter
           label="Capabilities"
           value={capabilityRows.length ? `${activeCapabilityCount}/${capabilityRows.length}` : "—"}
-          sub={capabilities.data ? `sampled at block ${Number(capabilities.data.blockNumber).toLocaleString()}` : "lyth_capabilities"}
+          sub={capabilities.data ? "latest registry sample" : "capability registry"}
           tone="neutral"
         />
         <StatCounter
           label="Operator surfaces"
           value={surfaceRows.length ? `${availableSurfaceCount}/${surfaceRows.length}` : "—"}
-          sub={operatorCapabilities.data ? `schema v${operatorCapabilities.data.schemaVersion}` : "lyth_operatorCapabilities"}
+          sub={operatorCapabilities.data ? `schema v${operatorCapabilities.data.schemaVersion}` : "operator capability registry"}
           tone="neutral"
         />
         <StatCounter
           label="Upgrade status"
           value={upgrade?.state ?? "—"}
-          sub={upgrade ? (upgrade.configured ? `${upgrade.planCount} plans · ${upgrade.pendingCount} pending` : "no plan configured") : "lyth_upgradeStatus"}
+          sub={upgrade ? (upgrade.configured ? `${upgrade.planCount} plans · ${upgrade.pendingCount} pending` : "no plan configured") : "upgrade status unavailable"}
           tone="neutral"
         />
         <StatCounter
           label="PQ checkpoint"
           value={checkpointHeight !== null && checkpointHeight !== undefined ? `#${Number(checkpointHeight).toLocaleString()}` : "—"}
-          sub={checkpointRows.length ? `${checkpointRows.length} operator signature rows` : "lyth_getLatestCheckpoint"}
+          sub={checkpointRows.length ? `${checkpointRows.length} operator signature rows` : "latest checkpoint"}
           tone="neutral"
         />
         <StatCounter
           label="Operator exits"
           value={`${resignationRows.length}`}
-          sub={resignations.data ? "cluster resignation ledger" : "lyth_getClusterResignations"}
+          sub={resignations.data ? "cluster resignation ledger" : "resignation ledger"}
           tone="neutral"
         />
         <StatCounter
           label="Gap windows"
           value={`${recentGaps.length}`}
-          sub={gapRecords.data ? `last ${Number(gapRecords.data.range.fromBlock).toLocaleString()}-${Number(gapRecords.data.range.toBlock).toLocaleString()}` : "lyth_gapRecords"}
+          sub={gapRecords.data ? `last ${Number(gapRecords.data.range.fromBlock).toLocaleString()}-${Number(gapRecords.data.range.toBlock).toLocaleString()}` : "gap records"}
           tone="neutral"
         />
         <StatCounter
           label="Indexer"
           value={indexerHeight !== null ? `#${indexerHeight.toLocaleString()}` : network.data ? "off" : "—"}
-          sub={indexerHeight !== null ? "lyth_indexerStatus" : "disabled or not reporting"}
+          sub={indexerHeight !== null ? "reported height" : "disabled or not reporting"}
           tone="neutral"
         />
-        <StatCounter label="Encryption epoch" value={key ? `${Number(key.epoch).toLocaleString()}` : "—"} sub={key?.algo ?? "lyth_getEncryptionKey"} tone="neutral"/>
+        <StatCounter label="Encryption epoch" value={key ? `${Number(key.epoch).toLocaleString()}` : "—"} sub={key?.algo ?? "encryption key unavailable"} tone="neutral"/>
+        </div>
       </section>
       {key && (
         <Card title="Live encryption key">
@@ -4415,28 +4653,33 @@ const ProtocolPage = ({ go }: any) => {
         </Card>
         <Card title="Upgrade readiness">
           {upgrade ? (
-            <div className="tx-kv">
-              <KV label="State" value={upgrade.state} mono/>
-              <KV label="Configured" value={upgrade.configured ? "yes" : "no"}/>
-              <KV label="Sample block" value={`#${upgrade.blockNumber.toLocaleString()}`} mono/>
-              <KV label="Chain" value={`${upgrade.chainId}`} mono/>
-              <KV label="Plan count" value={`${upgrade.planCount}`} mono/>
-              <KV label="Pending" value={`${upgrade.pendingCount}`} mono/>
-              <KV
-                label="Active plan"
-                value={upgrade.active ? `${upgrade.active.upgradeId} · activates #${upgrade.active.activationHeight.toLocaleString()}` : "—"}
-                mono
-              />
-              <KV
-                label="Next pending"
-                value={upgrade.pending[0] ? `${upgrade.pending[0].upgradeId} · ${upgrade.pending[0].requiredBinaryVersion}` : "—"}
-                mono
-              />
+            <div className={`protocol-upgrade ${upgrade.configured ? "is-configured" : "is-idle"}`}>
+              <div className="protocol-upgrade__lead">
+                <span className="mono">state</span>
+                <b className="mono">{upgrade.state}</b>
+                <p>
+                  {upgrade.configured
+                    ? `${upgrade.planCount} plan${upgrade.planCount === 1 ? "" : "s"} configured, ${upgrade.pendingCount} pending activation.`
+                    : "This peer reports no configured upgrade plan. The chain is running the current binary path."}
+                </p>
+              </div>
+              <div className="protocol-upgrade__grid">
+                <div><span className="mono">Configured</span><b>{upgrade.configured ? "yes" : "no"}</b></div>
+                <div><span className="mono">Sample block</span><b className="mono">#{upgrade.blockNumber.toLocaleString()}</b></div>
+                <div><span className="mono">Chain</span><b className="mono">{upgrade.chainId}</b></div>
+                <div><span className="mono">Pending</span><b className="mono">{upgrade.pendingCount}</b></div>
+                <div><span className="mono">Active plan</span><b className="mono">{upgrade.active ? `${upgrade.active.upgradeId} · #${upgrade.active.activationHeight.toLocaleString()}` : "—"}</b></div>
+                <div><span className="mono">Next pending</span><b className="mono">{upgrade.pending[0] ? `${upgrade.pending[0].upgradeId} · ${upgrade.pending[0].requiredBinaryVersion}` : "—"}</b></div>
+              </div>
             </div>
           ) : (
-            <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
-              {upgradeStatus.isLoading ? "checking upgrade state…" : "upgrade status is not reporting on this peer"}
-            </p>
+            <div className="protocol-upgrade is-idle">
+              <div className="protocol-upgrade__lead">
+                <span className="mono">state</span>
+                <b className="mono">{upgradeStatus.isLoading ? "checking" : "not reporting"}</b>
+                <p>{upgradeStatus.isLoading ? "Reading upgrade readiness from the connected peer." : "This peer does not expose upgrade readiness yet."}</p>
+              </div>
+            </div>
           )}
         </Card>
       </section>
@@ -4457,7 +4700,7 @@ const ProtocolPage = ({ go }: any) => {
           </table>
         ) : (
           <p className="mono" style={{color:"var(--fg-500)",fontSize:12,margin:0}}>
-            {checkpoint.isLoading ? "checking live checkpoint rows…" : "RPC returned no checkpoint rows; checkpoint persistence is not live on this peer yet"}
+            {checkpoint.isLoading ? "checking live checkpoint rows…" : "No checkpoint rows are exposed by this peer yet"}
           </p>
         )}
       </Card>

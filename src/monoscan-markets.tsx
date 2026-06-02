@@ -881,8 +881,9 @@ function _walletTxHash(result: unknown): string | null {
 
 const _nativeStateSource = (state: any) => {
   const source = state?.source;
-  if (!source || typeof source !== "object") return "/api/v1/native-market-state";
-  return Object.entries(source).map(([k, v]) => `${k}=${String(v)}`).join(" · ") || "/api/v1/native-market-state";
+  if (!source || typeof source !== "object") return "native market state";
+  const block = _marketNumber(source, ["block", "blockNumber", "height", "round"], 0);
+  return block > 0 ? `native market state · round ${block.toLocaleString()}` : "native market state";
 };
 
 const NativeMarketEventsCard = ({ rows, latestBlock, loading, scope }: any) => (
@@ -1101,7 +1102,7 @@ const NativeNftListingsTable = ({
       });
       const nonceMessage = nonceResolution.source === "indexed"
         ? `using indexed listing nonce ${nonceResolution.nonce}`
-        : `using fallback listing nonce ${nonceResolution.nonce}; indexed seller nonce unavailable`;
+        : `using manual listing nonce ${nonceResolution.nonce}; indexed seller nonce unavailable`;
       setCreateSubmit({
         state: "submitting",
         message: nonceMessage,
@@ -1144,7 +1145,7 @@ const NativeNftListingsTable = ({
       const nonceMessage = nonceResolution
         ? nonceResolution.source === "indexed"
           ? `using indexed listing nonce ${nonceResolution.nonce}`
-          : `using fallback listing nonce ${nonceResolution.nonce}; indexed seller nonce unavailable`
+          : `using manual listing nonce ${nonceResolution.nonce}; indexed seller nonce unavailable`
         : null;
       const message = nonceMessage ? `${failureMessage}; ${nonceMessage}` : failureMessage;
       setCreateSubmit({ state: "error", message });
@@ -1354,7 +1355,7 @@ const NativeNftListingsTable = ({
           ["paymentAsset", "Payment asset"],
           ["price", "Price"],
           ["quantity", "Quantity"],
-          ["nonce", "Nonce fallback"],
+          ["nonce", "Manual nonce"],
           ["expiresAtBlock", "Expiry block"],
         ].map(([key, label])=>(
           <label key={key} className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
@@ -1607,7 +1608,7 @@ const NativeMarketStateCard = ({ state, rows, loading, scope, latestBlock, forwa
           <h3 style={{margin:"3px 0 0",fontSize:14,fontWeight:500}}>Spot, NFT, and royalty rows</h3>
         </div>
         <div className="mono" style={{fontSize:10,color:"var(--fg-500)",textAlign:"right"}}>
-          {state ? _nativeStateSource(state) : loading ? "reading /api/v1/native-market-state" : "no current-state response"}
+          {state ? _nativeStateSource(state) : loading ? "reading live market state" : "no current-state response"}
           {scope && <div style={{marginTop:3}}>{scope}</div>}
         </div>
       </div>
@@ -1617,7 +1618,7 @@ const NativeMarketStateCard = ({ state, rows, loading, scope, latestBlock, forwa
         </div>
       ) : !state ? (
         <div className="mono" style={{padding:"16px",fontSize:12.5,color:"var(--fg-400)",lineHeight:1.55}}>
-          {loading ? "Reading /api/v1/native-market-state…" : "Native market current state is unavailable from this node."}
+          {loading ? "Reading live market state…" : "Native market current state is unavailable from this node."}
         </div>
       ) : (
         <>
@@ -1688,6 +1689,88 @@ const Spark = ({ data, up, w=100, h=28 }: any) => {
     <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} style={{display:"block"}}>
       <path d={d} fill="none" stroke={color} strokeWidth="1.3" strokeLinejoin="round" strokeLinecap="round"/>
     </svg>
+  );
+};
+
+const _marketSignalWidth = (value: any, max: number) => {
+  const n = Math.max(0, mkDec(value, 0));
+  return `${Math.max(4, Math.min(100, (n / Math.max(1, max)) * 100)).toFixed(1)}%`;
+};
+
+const MarketRowActivity = ({ row, live }: { row: any; live: boolean }) => {
+  if (!live) {
+    return <Spark data={row.sparkline} up={row.chg24h >= 0} w={96} h={24}/>;
+  }
+  const trades = mkDec(row.tradeCount, 0);
+  const volume = mkDec(row.totalVolumeBase ?? row.vol24h, 0);
+  const max = Math.max(1, trades, volume);
+  return (
+    <div className="market-row-signal" title={`${trades.toLocaleString()} indexed trades · ${mkNum(volume)} base volume`}>
+      <span className="market-row-signal__track">
+        <span className="market-row-signal__fill market-row-signal__fill--trades" style={{width:_marketSignalWidth(trades, max)}}/>
+      </span>
+      <span className="market-row-signal__track">
+        <span className="market-row-signal__fill market-row-signal__fill--volume" style={{width:_marketSignalWidth(volume, max)}}/>
+      </span>
+    </div>
+  );
+};
+
+const MarketsHeroActivity = ({
+  rows,
+  events,
+  live,
+}: {
+  rows: any[];
+  events: NativeMarketEventDisplayRow[];
+  live: boolean;
+}) => {
+  const activeRows = rows
+    .slice()
+    .sort((a, b) => mkDec(b.tradeCount ?? b.vol24h, 0) - mkDec(a.tradeCount ?? a.vol24h, 0))
+    .slice(0, 8);
+  const maxVolume = Math.max(1, ...activeRows.map((row) => mkDec(row.vol24h ?? row.totalVolumeBase, 0)));
+  const recentEvents = events.slice(0, 4);
+  return (
+    <div className="markets-hero-activity" aria-label={live ? "Live market activity" : "Fallback market activity"}>
+      <div className="markets-hero-activity__head">
+        <span className="cap">{live ? "Market vertices" : "Preview signal"}</span>
+        <span className="mono">{live ? `${events.length.toLocaleString()} recent events` : "offline fixture"}</span>
+      </div>
+      <div className="markets-hero-bars">
+        {activeRows.length === 0 ? (
+          <div className="mono markets-hero-empty">No indexed market rows yet.</div>
+        ) : activeRows.map((row) => {
+          const volume = mkDec(row.vol24h ?? row.totalVolumeBase, 0);
+          return (
+            <div className="markets-hero-bar" key={row.marketId ?? row.sym}>
+              <span className="markets-hero-bar__label mono" title={row.marketId ?? row.name}>
+                {row.live && !row.hasFallback ? _shortMarketId(row.marketId) : row.sym}
+              </span>
+              <span className="markets-hero-bar__track">
+                <span className="markets-hero-bar__fill" style={{width:_marketSignalWidth(volume, maxVolume)}}/>
+              </span>
+              <span className="markets-hero-bar__value mono num">
+                {live ? mkNum(volume) : mkUsd(volume)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="markets-event-flow">
+        {recentEvents.length === 0 ? (
+          <div className="mono markets-event-flow__empty">
+            {live ? "Awaiting indexed native-market commits." : "Live events appear here when connected."}
+          </div>
+        ) : recentEvents.map((event) => (
+          <div className="markets-event-flow__row" key={`${event.blockHeight ?? "x"}-${event.txIndex ?? "x"}-${event.logIndex}-${event.eventTopic}`}>
+            <span className="markets-event-flow__dot"/>
+            <span className="mono">{_marketEventLabel(event.eventName)}</span>
+            <span className="mono">round {event.blockHeight === null ? "—" : event.blockHeight.toLocaleString()}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 };
 
@@ -1796,80 +1879,91 @@ const MarketsPage = ({ go }: any) => {
   const totalVOL  = marketRows.reduce((a,t)=>a+(t.vol24h || 0),0);
   const totalLIQ  = marketRows.reduce((a,t)=>a+(t.liquidity || 0),0);
   const usingLiveMarkets = hasLiveMarketResponse || indexerAvailability.liveChain;
+  const indexedTradeCount = liveRows.reduce((a,t)=>a+(t.tradeCount || 0),0);
+  const latestIndexedRound = Math.max(
+    0,
+    ...nativeMarketRows.map((event) => Number(event.blockHeight ?? 0)),
+    ...liveRows.map((row) => Number(row.trades?.[0]?.round ?? row.lastBlockHeight ?? 0)),
+  );
+  const marketHeroMetrics = usingLiveMarkets
+    ? [
+        ["Live markets", liveRows.length.toLocaleString(), hasLiveMarketResponse ? "indexed CLOB/native-state rows" : "waiting for indexed peer", "accent"],
+        // Live: sum of per-market base volumes (mixed base assets) — not a
+        // fiat total. No quote-notional aggregate exists upstream.
+        // TODO(core-sdk): no quote-notional traded-volume aggregate endpoint.
+        ["Indexed base volume", mkNum(totalVOL), "mixed base units, not quote notional"],
+        ["Trades indexed", indexedTradeCount.toLocaleString(), "settled fills with on-chain receipts"],
+        ["Native events", nativeMarketRows.length.toLocaleString(), latestIndexedRound > 0 ? `latest round ${latestIndexedRound.toLocaleString()}` : "awaiting commits"],
+      ]
+    : [
+        ["Total MCAP", mkUsd(totalMCAP), "offline fixture preview", "accent"],
+        ["24h volume", mkUsd(totalVOL), "seeded fallback rows"],
+        ["Total liquidity", mkUsd(totalLIQ), "fixture-only estimate"],
+        ["Fallback rows", marketRows.length.toLocaleString(), "hidden once a live chain responds"],
+      ];
 
   return (
     <div className="ms-page ms-markets">
-      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:20,flexWrap:"wrap"}}>
-        <div>
-          <div className="cap">Markets · settled on Monolythium</div>
-          <h1 className="ms-h1" style={{marginTop:4}}>{usingLiveMarkets ? "On-chain CLOB markets" : "Top 100 by 24h volume"}</h1>
-          <div className="mono" style={{color:"var(--fg-400)",marginTop:8,fontSize:13,maxWidth:720,lineHeight:1.55}}>
-            Orderbook matching happens on-chain. Every fill carries a DAG round and an attestation quorum —
-            you can trade from this page and read the receipt in the same place.
+      <section className="markets-hero">
+        <div className="markets-hero__main">
+          <div className="markets-hero__tag">
+            <span className="dot"/>
+            <span className="mono">Markets</span>
+            <span className="mono">{usingLiveMarkets ? "on-chain CLOB" : "offline preview"}</span>
+          </div>
+          <h1>{usingLiveMarkets ? "On-chain CLOB markets" : "Top 100 by 24h volume"}</h1>
+          <p>
+            Order-book matching settles through Starfish DAG rounds. Market rows, native vertices, and commits stay separated here so live base units are never presented as fiat volume.
+          </p>
+          <div className="markets-hero__chips">
+            <span className="pill gold">rounds</span>
+            <span className="pill">vertices</span>
+            <span className="pill">commits</span>
+            <span className="pill">{usingLiveMarkets ? "live index" : "fixture preview"}</span>
           </div>
         </div>
-        <div style={{display:"flex",gap:14,alignItems:"flex-end"}}>
-          <div style={{textAlign:"right"}}>
-            <div className="cap">{usingLiveMarkets ? "Live markets" : "Total MCAP"}</div>
-            <div className="mono num" style={{fontSize:20,color:"var(--fg-100)",marginTop:2}}>
-              {usingLiveMarkets ? liveRows.length.toLocaleString() : mkUsd(totalMCAP)}
-            </div>
+        <div className="markets-hero__side">
+          <div className="markets-hero__metrics">
+            {marketHeroMetrics.map(([label, value, sub, tone]) => (
+              <div key={label} className={`markets-metric${tone === "accent" ? " markets-metric--accent" : ""}`}>
+                <span>{label}</span>
+                <b className="mono num">{value}</b>
+                <small>{sub}</small>
+              </div>
+            ))}
           </div>
-          <div style={{textAlign:"right"}}>
-            <div className="cap">{usingLiveMarkets ? "Indexed base volume" : "24H volume"}</div>
-            {/* Live: sum of per-market base volumes (mixed base assets) — not a
-                fiat total. No quote-notional aggregate exists upstream.
-                TODO(core-sdk): no quote-notional traded-volume aggregate endpoint. */}
-            <div className="mono num" style={{fontSize:20,color:"var(--fg-100)",marginTop:2}}>{usingLiveMarkets ? mkNum(totalVOL) : mkUsd(totalVOL)}</div>
-          </div>
-          <div style={{textAlign:"right"}}>
-            <div className="cap">{usingLiveMarkets ? "Trades indexed" : "Total liquidity"}</div>
-            <div className="mono num" style={{fontSize:20,color:"var(--fg-100)",marginTop:2}}>
-              {usingLiveMarkets ? liveRows.reduce((a,t)=>a+(t.tradeCount || 0),0).toLocaleString() : mkUsd(totalLIQ)}
-            </div>
-          </div>
+          <MarketsHeroActivity rows={marketRows} events={nativeMarketRows} live={usingLiveMarkets}/>
         </div>
-      </div>
+      </section>
 
       {/* filter bar */}
-      <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-        <div style={{display:"flex",gap:2}}>
+      <div className="markets-toolbar">
+        <div className="markets-tabs">
           {tabs.map(t=>(
             <button key={t.k} onClick={()=>setTab(t.k)}
-              className="mono"
-              style={{
-                padding:"7px 14px",borderRadius:8,border:"1px solid var(--fg-700)",
-                background: tab===t.k ? "rgba(242,180,65,0.10)" : "rgba(255,255,255,0.02)",
-                color: tab===t.k ? "var(--gold)" : "var(--fg-300)",
-                fontSize:11,letterSpacing:"0.06em",cursor:"pointer",textTransform:"uppercase",
-              }}>{t.label}</button>
+              className={`mono markets-tab${tab===t.k ? " is-active" : ""}`}
+            >{t.label}</button>
           ))}
         </div>
-        <div style={{flex:1}}/>
-        <div style={{
-          display:"flex",alignItems:"center",gap:8,padding:"7px 12px",
-          background:"rgba(255,255,255,0.03)",border:"1px solid var(--fg-700)",
-          borderRadius:"var(--r-pill)",minWidth:280,
-        }}>
+        <div className="markets-search">
           <span style={{color:"var(--fg-400)",fontSize:12}}>⌕</span>
           <input value={q} onChange={e=>setQ(e.target.value)}
-            placeholder="Filter by symbol or name…"
-            style={{fontSize:12.5,color:"var(--fg-200)"}}/>
-          <span className="mono" style={{color:"var(--fg-500)",fontSize:10,letterSpacing:"0.08em"}}>
-            {filtered.length} / {usingLiveMarkets ? liveRows.length : 100}
+            placeholder="Filter by symbol, name, or market id…"/>
+          <span className="mono">
+            {filtered.length} / {usingLiveMarkets ? liveRows.length : marketRows.length}
           </span>
         </div>
       </div>
 
-      <div className="ms-card" style={{padding:0,overflow:"hidden"}}>
-        <table className="ms-table ms-table--tight">
+      <div className="ms-card markets-table-card" style={{padding:0,overflow:"hidden"}}>
+        <table className="ms-table ms-table--tight markets-table">
           <thead>
             <tr>
               <th onClick={()=>flip("rank")} style={{cursor:"pointer",width:46}}>#{arrow("rank")}</th>
               <th onClick={()=>flip("sym")}  style={{cursor:"pointer"}}>Asset{arrow("sym")}</th>
               <th onClick={()=>flip("price")} style={{cursor:"pointer",textAlign:"right"}}>Price{arrow("price")}</th>
               <th onClick={()=>flip("chg24h")} style={{cursor:"pointer",textAlign:"right",width:92}}>24h{arrow("chg24h")}</th>
-              <th style={{textAlign:"center",width:112}}>7d</th>
+              <th style={{textAlign:"center",width:112}}>Signal</th>
               <th onClick={()=>flip("vol24h")} style={{cursor:"pointer",textAlign:"right"}}>24h vol{arrow("vol24h")}</th>
               <th onClick={()=>flip("liquidity")} style={{cursor:"pointer",textAlign:"right"}}>Liquidity{arrow("liquidity")}</th>
               <th onClick={()=>flip("mcap")} style={{cursor:"pointer",textAlign:"right"}}>MCAP{arrow("mcap")}</th>
@@ -1925,11 +2019,7 @@ const MarketsPage = ({ go }: any) => {
                     {t.live && !t.hasFallback ? "—" : `${t.chg24h>=0?"+":""}${t.chg24h.toFixed(2)}%`}
                   </td>
                   <td style={{textAlign:"center"}}>
-                    {t.live && !t.hasFallback ? (
-                      <span className="mono" style={{fontSize:11,color:"var(--fg-500)"}}>—</span>
-                    ) : (
-                      <span style={{display:"inline-block"}}><Spark data={t.sparkline} up={t.chg24h>=0} w={96} h={24}/></span>
-                    )}
+                    <MarketRowActivity row={t} live={Boolean(t.live && !t.hasFallback)}/>
                   </td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:12}}>
                     {/* Live: base-volume count only — no quote-notional aggregate. */}
@@ -1973,7 +2063,7 @@ const MarketsPage = ({ go }: any) => {
           ? `${indexerAvailability.reason ?? "Indexer disabled on this node"}. Markets read through an indexed peer.`
           : usingLiveMarkets
             ? liveRows.length > 0
-              ? `Live market rows from ${liveRows[0]?.source === "native_market_state" ? "native-market-state" : "indexed trade summaries"}.`
+              ? `Live market rows from ${liveRows[0]?.source === "native_market_state" ? "native market state" : "indexed trade summaries"}.`
               : "Live market index. Empty rows mean the node has no indexed markets yet."
             : "Listing policy: top 100 markets by rolling 24h volume · re-ranked every 240 rounds · full list on the Monoscan API"}
       </div>
@@ -2144,7 +2234,7 @@ const MarketPage = ({ sym, go }: any) => {
   const orderNonceStatus = orderNonceResolution
     ? orderNonceResolution.source === "indexed"
       ? `indexed next ${orderNonceResolution.nonce}`
-      : `fallback ${orderNonceResolution.nonce}`
+      : `manual ${orderNonceResolution.nonce}`
     : "indexed after wallet connect";
 
   useEffect(() => {
@@ -2187,7 +2277,7 @@ const MarketPage = ({ sym, go }: any) => {
         state: "submitting",
         message: nonceResolution.source === "indexed"
           ? `using indexed order nonce ${nonceResolution.nonce}`
-          : `using fallback order nonce ${nonceResolution.nonce}; indexed owner nonce unavailable`,
+          : `using manual order nonce ${nonceResolution.nonce}; indexed owner nonce unavailable`,
       });
       const request = buildMarketOrderWalletRequest({
         marketId,
@@ -2338,6 +2428,37 @@ const MarketPage = ({ sym, go }: any) => {
   // keeps its synthetic quote-notional sum.
   const buyVol  = liveBids.length ? (bids[bids.length - 1]?.total ?? 0) : liveChain ? null : liveBookResponded ? null : tkn.trades.filter(t=>t.side==="buy").reduce((a,t)=>a+t.value,0);
   const sellVol = liveAsks.length ? (asks[asks.length - 1]?.total ?? 0) : liveChain ? null : liveBookResponded ? null : tkn.trades.filter(t=>t.side==="sell").reduce((a,t)=>a+t.value,0);
+  const spread = liveMarket && bestBid !== null && bestAsk !== null ? Math.max(0, bestAsk - bestBid) : tick * 2;
+  const spreadLabel = `${mkFmt(spread)}${(tknIsLive || liveChain) ? ` ${quoteUnitLabel(quoteAssetId)}` : ""}`;
+  const depthSummary = buyVol === null && sellVol === null
+    ? "—"
+    : `${buyVol === null ? "—" : (tknIsLive || liveChain) ? fmtBase(buyVol) : mkUsd(buyVol)} bid / ${sellVol === null ? "—" : (tknIsLive || liveChain) ? fmtBase(sellVol) : mkUsd(sellVol)} ask`;
+  const latestActivityRound = Number(
+    tradeRows[0]?.round
+      ?? nativeMarketRows[0]?.blockHeight
+      ?? liveCandles[liveCandles.length - 1]?.endBlock
+      ?? headBlock
+      ?? 0,
+  );
+  const heroPriceValue = (tknIsLive || liveChain) ? mkFmt(mid) : mkMoney(mid);
+  const heroPriceSub = (tknIsLive || liveChain)
+    ? `${quoteUnitLabel(quoteAssetId)} quote units`
+    : `${up?"▲":"▼"} ${Math.abs(chg).toFixed(3)}% · 24h fixture`;
+  const heroBaseVolumeValue = marketIsLive ? mkNum(totalVolumeBase) : mkUsd(tkn.vol24h);
+  const heroBaseVolumeSub = marketIsLive
+    ? `${baseAssetId ? _shortMarketId(baseAssetId) : "base"} lots`
+    : "offline fixture volume";
+  const heroBookValue = liveBookResponded ? `${bids.length}/${asks.length}` : "—";
+  const heroBookSub = liveBookResponded ? "bid / ask levels" : liveChain ? "awaiting book" : "fixture ladder";
+  const heroSpreadValue = mkFmt(spread);
+  const heroSpreadSub = (tknIsLive || liveChain) ? `${quoteUnitLabel(quoteAssetId)} spread` : "fixture spread";
+  const detailHeroMetrics = [
+    // TODO(core-sdk): missing liquidity aggregate endpoint to return market liquidity in quote terms
+    [marketIsLive ? "Base volume" : "24h volume", heroBaseVolumeValue, heroBaseVolumeSub],
+    ["Book", heroBookValue, heroBookSub],
+    ["Spread", heroSpreadValue, heroSpreadSub],
+    [liveMarket ? "Taker fee" : matchedNativeSummary ? "Commits" : "Age", liveMarket ? (takerFeeBps !== null ? `${takerFeeBps} bps` : "—") : matchedNativeSummary ? mkNum(matchedNativeSummary.tradeCount) : liveChain ? "pending" : `${tkn.age.days}d`, latestActivityRound > 0 ? `latest round ${latestActivityRound.toLocaleString()}` : "awaiting vertices"],
+  ];
 
   // The chain is reachable but this deep-link does not resolve to a live
   // market. On a near-empty chain (zero CLOB markets) every market route
@@ -2357,7 +2478,7 @@ const MarketPage = ({ sym, go }: any) => {
             Resolving live market…
           </div>
           <div className="mono" style={{color:"var(--fg-400)",fontSize:12.5,lineHeight:1.55,marginTop:8,maxWidth:560}}>
-            Checking indexed CLOB summaries and native-market-state before deciding whether this market exists.
+            Checking indexed CLOB summaries and native market state before deciding whether this market exists.
           </div>
         </div>
       </div>
@@ -2400,61 +2521,56 @@ const MarketPage = ({ sym, go }: any) => {
         <b>{tkn.sym}</b>
       </div>
 
-      {/* HEADER */}
-      <section style={{display:"flex",alignItems:"center",gap:18,flexWrap:"wrap",padding:"14px 0 10px"}}>
-        {tknIsLive ? <MarketIdMark id={marketId ?? tkn.sym} size={56}/> : <TokenMark sym={tkn.sym} size={56}/>}
-        <div style={{minWidth:0}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <h1 className="ms-h1" style={{fontSize:30,margin:0,letterSpacing:"-0.02em"}}>{tkn.name}</h1>
-            <span className="mono" style={{color:"var(--fg-400)",fontSize:18,letterSpacing:"0.02em"}}>({tkn.sym})</span>
+      <section className="market-hero">
+        <div className="market-hero__main">
+          <div className="market-hero__identity">
+            {tknIsLive ? <MarketIdMark id={marketId ?? tkn.sym} size={46}/> : <TokenMark sym={tkn.sym} size={46}/>}
+            <div>
+              <div className="market-hero__tag">
+                <span className="dot"/>
+                <span className="mono">{liveMarketSourceLabel ?? (liveChain ? "resolving index" : "fixture preview")}</span>
+              </div>
+              <h1>{tkn.name}</h1>
+              <div className="market-hero__symbol mono">
+                <span>{tkn.sym}</span>
+                {marketId && <span title={marketId}>market {_shortMarketId(marketId)}</span>}
+                {latestActivityRound > 0 && <span>round {latestActivityRound.toLocaleString()}</span>}
+              </div>
+            </div>
+          </div>
+          <div className="market-hero__meta mono">
+            <CopyToClipboard text={marketId ?? tkn.contract} title={marketId ? `copy ${marketId}` : `copy ${tkn.contract}`}/>
             {/* No listing authority verifies a permissionless live CLOB market —
                 show ✓ only for the offline fixture; live rows keep the honest
                 source pill below as their provenance. */}
-            {tkn.verified && !tknIsLive && <span className="pill ok" style={{fontSize:10.5}}>✓ verified</span>}
-            {liveMarketSourceLabel && <span className="pill ok" style={{fontSize:10.5}}>{liveMarketSourceLabel}</span>}
-          </div>
-          <div className="mono" style={{display:"flex",alignItems:"center",gap:10,marginTop:6,color:"var(--fg-400)",fontSize:11.5,letterSpacing:"0.02em"}}>
-            <span style={{padding:"3px 8px",background:"rgba(255,255,255,0.04)",border:"1px solid var(--fg-700)",borderRadius:4}}>{fmtAddr(tkn.contract, "contract")}</span>
-            {marketId && <span title={marketId}>market {_shortMarketId(marketId)}</span>}
-            <CopyToClipboard text={marketId ?? tkn.contract} title={marketId ? `copy ${marketId}` : `copy ${tkn.contract}`}/>
-            <TryApiLink marketId={marketId}/>
-            <span>·</span>
+            {tkn.verified && !tknIsLive && <span className="pill ok">✓ verified</span>}
             {/* TODO(core-sdk): missing lyth_clobMarket listing-age field to return market registration age */}
             <span>{matchedNativeSummary?.createdAtBlock ? `created block ${Number(matchedNativeSummary.createdAtBlock).toLocaleString()}` : liveChain ? "listed pending" : `listed ${tkn.age.days}d ago`}</span>
           </div>
         </div>
-        <div style={{flex:1}}/>
-        <div style={{textAlign:"right"}}>
-          <div className="mono num" style={{fontSize:28,color:"var(--fg-100)",letterSpacing:"-0.02em",fontWeight:300}}>{fmtPrice(mid)}</div>
-          <div className="mono" style={{fontSize:12,marginTop:2,color: up?"var(--ok)":"var(--err)"}}>
-            {liveMarket ? "live CLOB midpoint" : matchedNativeSummary ? "native market last price" : `${up?"▲":"▼"} ${Math.abs(chg).toFixed(3)}% · 24h`}
+
+        <div className="market-hero__panel">
+          <div className="market-hero__price">
+            <span className="cap">{liveMarket ? "CLOB midpoint" : matchedNativeSummary ? "Native market last price" : "Last price"}</span>
+            <b className="mono num" title={fmtPrice(mid)}>{heroPriceValue}</b>
+            <small className="mono" style={{color: liveChain ? "var(--fg-400)" : up ? "var(--ok)" : "var(--err)"}}>
+              {heroPriceSub}
+            </small>
+          </div>
+          <div className="market-stat-grid">
+            {detailHeroMetrics.map(([label, value, sub, tone]) => (
+              <div key={label} className={`market-stat${tone === "accent" ? " market-stat--accent" : ""}`}>
+                <span>{label}</span>
+                <b className="mono num">{value}</b>
+                <small>{sub}</small>
+              </div>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* QUICK STATS STRIP */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(6,minmax(0,1fr))",gap:10,padding:"10px 0"}}>
-        {[
-          ["Price", fmtPrice(mid), up?"var(--ok)":"var(--err)", liveMarket ? "lyth_clobMarket" : matchedNativeSummary ? "native-market-state" : `${chg>=0?"+":""}${chg.toFixed(2)}%`],
-          // TODO(core-sdk): missing liquidity aggregate endpoint to return market liquidity in quote terms
-          ["Liquidity", liveChain ? "pending" : mkUsd(tkn.liquidity)],
-          [marketIsLive ? "Base volume" : "24h volume", marketIsLive ? fmtBase(totalVolumeBase) : mkUsd(tkn.vol24h)],
-          // TODO(core-sdk): missing market-cap aggregate endpoint to return base-token MCAP
-          ["MCAP", liveChain ? "pending" : mkUsd(tkn.mcap)],
-          // TODO(core-sdk): missing holder-count endpoint to return base-token holders for a CLOB market
-          ["Holders", liveChain ? "pending" : mkNum(tkn.holders)],
-          [liveMarket ? "Taker fee" : matchedNativeSummary ? "Trades indexed" : "Age", liveMarket ? (takerFeeBps !== null ? `${takerFeeBps} bps` : "—") : matchedNativeSummary ? mkNum(matchedNativeSummary.tradeCount) : liveChain ? "pending" : `${tkn.age.days}d`],
-        ].map(([k,v,col,sub])=>(
-          <div key={k} style={{padding:"10px 14px",borderRadius:8,border:"1px solid var(--fg-700)",background:"rgba(255,255,255,0.02)"}}>
-            <div className="cap" style={{fontSize:9.5}}>{k}</div>
-            <div className="mono num" style={{fontSize:15,color:"var(--fg-100)",marginTop:3}}>{v}</div>
-            {sub && <div className="mono num" style={{fontSize:10.5,color:col,marginTop:2}}>{sub}</div>}
-          </div>
-        ))}
-      </div>
-
       {/* MAIN : chart + swap */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 340px",gap:16}}>
+      <div className="market-main-grid">
         {/* Chart */}
         <div className="ms-card" style={{padding:"14px 16px",display:"flex",flexDirection:"column",gap:10}}>
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
@@ -2624,7 +2740,7 @@ const MarketPage = ({ sym, go }: any) => {
 
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 10px",background:"rgba(255,255,255,0.025)",borderRadius:8,border:"1px solid var(--fg-700)"}}>
             <div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Nonce fallback</div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Manual nonce</div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:2}}>{orderNonceStatus}</div>
             </div>
             <input
@@ -2694,7 +2810,7 @@ const MarketPage = ({ sym, go }: any) => {
       </div>
 
       {/* TRADES + ORDERBOOK + INFO */}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 320px",gap:16}}>
+      <div className="market-lower-grid">
         {/* LEFT: trade activity tabs */}
         <div className="ms-card" style={{padding:0,overflow:"hidden"}}>
           <div style={{display:"flex",alignItems:"center",gap:18,padding:"10px 14px",borderBottom:"1px solid var(--fg-700)"}}>
@@ -2847,7 +2963,7 @@ const MarketPage = ({ sym, go }: any) => {
               <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.06em"}}>{up?"↑":"↓"} {Math.abs(chg).toFixed(2)}%</span>
               <span style={{flex:1}}/>
               <span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
-                spread {liveMarket && bestBid !== null && bestAsk !== null ? mkFmt(Math.max(0, bestAsk - bestBid)) : (tick*2).toFixed(3)}{(tknIsLive || liveChain) ? ` ${quoteUnitLabel(quoteAssetId)}` : ""}
+                spread {spreadLabel}
               </span>
             </div>
             {/* bids */}
