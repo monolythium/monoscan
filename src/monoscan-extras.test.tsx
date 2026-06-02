@@ -294,7 +294,7 @@ function renderMrvArchiveEvidenceHtml(
     noEvmProof,
     counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
     fee: {
-      total_lythoshi: "12",
+      total_lythoshi: "120000000000",
       total_lyth: "0.00000012",
       cycles_used: 12,
       base_price_per_cycle_lythoshi: "1",
@@ -400,7 +400,8 @@ describe("transactionFeeValueLabel", () => {
 
 describe("executionUnitPriceValueLabel", () => {
   it("renders per-execution-unit prices in LYTH rather than raw lythoshi", () => {
-    expect(executionUnitPriceValueLabel(100n)).toBe("0.000001 LYTH / execution unit");
+    // 1e12 lythoshi == 0.000001 LYTH at the ADR-0037 18-decimal native scale.
+    expect(executionUnitPriceValueLabel(1_000_000_000_000n)).toBe("0.000001 LYTH / execution unit");
     expect(executionUnitPriceValueLabel(null)).toBeNull();
   });
 });
@@ -665,7 +666,7 @@ describe("MrvNativeEvidenceCard", () => {
       noEvmProof: null,
       counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
       fee: {
-        total_lythoshi: "12",
+        total_lythoshi: "120000000000",
         total_lyth: "0.00000012",
         cycles_used: 12,
         base_price_per_cycle_lythoshi: "1",
@@ -727,7 +728,7 @@ describe("MrvNativeEvidenceCard", () => {
       noEvmProof,
       counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
       fee: {
-        total_lythoshi: "12",
+        total_lythoshi: "120000000000",
         total_lyth: "0.00000012",
         cycles_used: 12,
         base_price_per_cycle_lythoshi: "1",
@@ -802,7 +803,7 @@ describe("MrvNativeEvidenceCard", () => {
       noEvmProof,
       counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
       fee: {
-        total_lythoshi: "12",
+        total_lythoshi: "120000000000",
         total_lyth: "0.00000012",
         cycles_used: 12,
         base_price_per_cycle_lythoshi: "1",
@@ -885,7 +886,7 @@ describe("MrvNativeEvidenceCard", () => {
       noEvmProof,
       counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
       fee: {
-        total_lythoshi: "12",
+        total_lythoshi: "120000000000",
         total_lyth: "0.00000012",
         cycles_used: 12,
         base_price_per_cycle_lythoshi: "1",
@@ -1028,7 +1029,7 @@ describe("MrvNativeEvidenceCard", () => {
       noEvmProof,
       counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
       fee: {
-        total_lythoshi: "12",
+        total_lythoshi: "120000000000",
         total_lyth: "0.00000012",
         cycles_used: 12,
         base_price_per_cycle_lythoshi: "1",
@@ -1089,7 +1090,7 @@ describe("MrvNativeEvidenceCard", () => {
       noEvmProof,
       counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
       fee: {
-        total_lythoshi: "12",
+        total_lythoshi: "120000000000",
         total_lyth: "0.00000012",
         cycles_used: 12,
         base_price_per_cycle_lythoshi: "1",
@@ -1144,7 +1145,7 @@ describe("MrvNativeEvidenceCard", () => {
       noEvmProof,
       counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
       fee: {
-        total_lythoshi: "12",
+        total_lythoshi: "120000000000",
         total_lyth: "0.00000012",
         cycles_used: 12,
         base_price_per_cycle_lythoshi: "1",
@@ -1201,7 +1202,7 @@ describe("MrvNativeEvidenceCard", () => {
       noEvmProof,
       counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
       fee: {
-        total_lythoshi: "12",
+        total_lythoshi: "120000000000",
         total_lyth: "0.00000012",
         cycles_used: 12,
         base_price_per_cycle_lythoshi: "1",
@@ -1254,7 +1255,7 @@ describe("MrvNativeEvidenceCard", () => {
       noEvmProof,
       counters: { cycles: 12, syscallUnits: 2, stateIoUnits: 1 },
       fee: {
-        total_lythoshi: "12",
+        total_lythoshi: "120000000000",
         total_lyth: "0.00000012",
         cycles_used: 12,
         base_price_per_cycle_lythoshi: "1",

@@ -8,6 +8,7 @@
  * that the public RPC does not expose yet.
  */
 
+import { LYTHOSHI_PER_LYTH, NATIVE_LYTH_DECIMALS } from "@monolythium/core-sdk";
 import { MARKETS, MONOSCAN_DATA } from "../data/fallback";
 import { getRpcClient, isRpcConfigured } from "../sdk/client";
 import type { ToolName } from "./types";
@@ -29,15 +30,13 @@ const _toBig = (v: string | bigint | number | null | undefined): bigint => {
   return BigInt(v);
 };
 
-const LYTHOSHI_PER_LYTH = 100_000_000n;
-
 const _formatLyth = (lythoshi: bigint): string => {
   const sign = lythoshi < 0n ? "-" : "";
   const abs = lythoshi < 0n ? -lythoshi : lythoshi;
   const whole = abs / LYTHOSHI_PER_LYTH;
   const frac = abs % LYTHOSHI_PER_LYTH;
   if (frac === 0n) return `${sign}${whole}`;
-  const fracText = frac.toString().padStart(8, "0").replace(/0+$/, "");
+  const fracText = frac.toString().padStart(NATIVE_LYTH_DECIMALS, "0").replace(/0+$/, "");
   return `${sign}${whole}.${fracText}`;
 };
 

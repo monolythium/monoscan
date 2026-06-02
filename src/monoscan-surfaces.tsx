@@ -48,8 +48,8 @@ import {
 /* ----------------------------- shared helpers ----------------------------- */
 
 /** Format a raw lythoshi string as a LYTH amount (2 dp).
- *  1 LYTH = 100,000,000 lythoshi (8 decimals) — `LYTHOSHI_PER_LYTH` from the
- *  SDK, the same scale every wallet/RPC surface uses. */
+ *  1 LYTH = 1,000,000,000,000,000,000 lythoshi (18 decimals) —
+ *  `LYTHOSHI_PER_LYTH` from the SDK, the same scale every wallet/RPC surface uses. */
 function fmtLyth(raw: string | null | undefined): string {
   if (raw === null || raw === undefined || raw === "") return "—";
   let v: bigint;

@@ -3414,7 +3414,7 @@ export interface ClusterDescriptor {
   pubkey: string | null;
   /**
    * Total bonded stake / vote weight for the cluster, as a raw lythoshi string
-   * (8 decimals, `1 LYTH = 1e8 lythoshi`) — same scale as every other LYTH
+   * (18 decimals, `1 LYTH = 1e18 lythoshi`) — same scale as every other LYTH
    * amount in this file. `null` whenever the value is not available, in which
    * case {@link stakeIndexed} explains *why* it is null:
    *   - `stakeIndexed === false` → the source endpoint does not carry a stake
@@ -3971,8 +3971,9 @@ export function useLatestTransactions(limit = 50, blockWindow = 24, cursor: stri
 /* Native LYTH supply.                                                        */
 /* -------------------------------------------------------------------------- */
 
-/** 100M LYTH at 8 decimals, pinned by the runtime burn-counter baseline. */
-export const NATIVE_INITIAL_SUPPLY_LYTHOSHI = "10000000000000000";
+/** 100M LYTH at 18 decimals (ADR-0037 / Law §6.2), pinned by the runtime
+ *  burn-counter baseline (`INITIAL_SUPPLY_LYTHOSHI = 100_000_000 × 10^18`). */
+export const NATIVE_INITIAL_SUPPLY_LYTHOSHI = "100000000000000000000000000";
 
 export interface NativeSupply {
   /** Genesis supply baseline, in lythoshi. */

@@ -51,6 +51,7 @@ import { AskPage } from "./nl/AskPage";
 import { MsThemeSwitcher } from "./monoscan-theme";
 import { SearchModal } from "./SearchModal";
 import { fmtAddr, fmtHashShort } from "./sdk/format";
+import { LYTHOSHI_PER_LYTH } from "@monolythium/core-sdk";
 
 /* --- light helpers (mirror desktop's primitives, lighter weight) --- */
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -243,7 +244,6 @@ const Header = ({ go, route }: any) => {
 
 /* ============== LANDING (rebuilt — calm, human-first) ============== */
 const fmtUsd = (n) => n>=1e9 ? `$${(n/1e9).toFixed(2)}B` : n>=1e6 ? `$${(n/1e6).toFixed(1)}M` : n>=1e3 ? `$${(n/1e3).toFixed(1)}K` : `$${n.toFixed(0)}`;
-const LYTHOSHI_PER_LYTH = 100_000_000n;
 const lythoshiToLythNumber = (value: string | bigint | number | null | undefined) => {
   if (value === null || value === undefined || value === "") return 0;
   try {
