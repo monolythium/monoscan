@@ -4,7 +4,7 @@
 ===================================================== */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { Fragment } from "react";
+import { Fragment, type CSSProperties } from "react";
 
 /* ---------- Icon set ----------
    Plain-stroke monoline icons at 16px default.
@@ -376,97 +376,110 @@ const SigningStrip = ({ data = [], label = "Last 23 rounds" }: any) => {
   );
 };
 
-/* ---------- ClusterRing (7 avatars in a circle, 5-of-7 quorum arc) ---------- */
-const ClusterRing = ({ members = [], threshold = 5, size = 260 }: any) => {
-  const cx = size / 2, cy = size / 2;
-  const r = size * 0.38;
-  const have = members.filter(m => m.state === "live").length;
-
-  // quorum arc — fraction filled = have / members.length
-  const total = members.length;
-  const circumference = 2 * Math.PI * (r + 22);
-  const filled = total > 0 ? (have / total) * circumference : 0;
-  const thresholdAngle = total > 0 ? (threshold / total) * 360 - 90 : -90;
+/* ---------- ClusterRing (3D quorum engine + heartbeat trace) ---------- */
+const ClusterRing = ({ members = [], threshold = 5, size = 260, totalOperators }: any) => {
+  const ringSize = Math.max(220, Number(size) || 260);
+  const roster = Array.isArray(members) ? members : [];
+  const reportedTotal = roster.length;
+  const expectedTotal = Math.max(
+    reportedTotal,
+    Number.isFinite(Number(totalOperators)) ? Number(totalOperators) : 0,
+    Number.isFinite(Number(threshold)) ? Number(threshold) : 0,
+  );
+  const displayTotal = expectedTotal > 0 ? expectedTotal : reportedTotal;
+  const have = roster.filter((m: any) => m.state === "live").length;
+  const liveRatio = displayTotal > 0 ? have / displayTotal : 0;
+  const healthy = displayTotal > 0 && have >= threshold;
+  const activeRoster = roster.length > 0
+    ? roster
+    : Array.from({ length: Math.min(displayTotal || 0, 12) }, (_, i) => ({
+        id: `pending-${i}`,
+        handle: `op${String(i + 1).padStart(2, "0")}`,
+        state: "pending",
+      }));
+  const orbitRadius = ringSize * 0.42;
+  const thresholdDeg = displayTotal > 0 ? Math.min(360, Math.max(0, (threshold / displayTotal) * 360)) : 0;
+  const style = {
+    "--cluster-size": `${ringSize}px`,
+    "--live-deg": `${Math.min(360, Math.max(0, liveRatio * 360))}deg`,
+    "--threshold-deg": `${thresholdDeg}deg`,
+    "--cluster-state": healthy ? "var(--ok)" : "var(--err)",
+  } as CSSProperties & Record<string, string>;
 
   return (
-    <div style={{ position: "relative", width: size, height: size }}>
-      <svg width={size} height={size} style={{ position: "absolute", inset: 0 }}>
-        {/* outer threshold ring background */}
-        <circle cx={cx} cy={cy} r={r + 22} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="3"/>
-        {/* filled portion */}
-        <circle
-          cx={cx} cy={cy} r={r + 22}
-          fill="none"
-          stroke={have >= threshold ? "var(--state-nominal)" : "var(--state-jail)"}
-          strokeWidth="3"
-          strokeDasharray={`${filled} ${circumference}`}
-          strokeDashoffset={circumference * 0.25}
-          transform={`rotate(-90 ${cx} ${cy})`}
-          style={{ filter: `drop-shadow(0 0 6px ${have >= threshold ? "var(--state-nominal)" : "var(--state-jail)"})`, transition: "stroke-dasharray 500ms var(--e-out)" }}
-        />
-        {/* threshold tick */}
-          <line
-            x1={cx} y1={cy - (r + 22) - 6} x2={cx} y2={cy - (r + 22) + 6}
-            stroke="var(--state-nominal)" strokeWidth="1.5"
-          transform={`rotate(${thresholdAngle} ${cx} ${cy})`}
-          opacity="0.6"
-        />
-        {/* inner glow */}
-        <circle cx={cx} cy={cy} r={r - 14} fill="url(#innerGlow)"/>
-        <defs>
-          <radialGradient id="innerGlow">
-            <stop offset="0%" stopColor="var(--gold)" stopOpacity="0.12"/>
-            <stop offset="100%" stopColor="var(--gold)" stopOpacity="0"/>
-          </radialGradient>
-        </defs>
-      </svg>
+    <div
+      className={`cluster-engine ${healthy ? "is-quorum" : "is-below-quorum"} ${roster.length === 0 ? "is-pending-roster" : ""}`}
+      style={style}
+      aria-label={`Cluster quorum ${roster.length > 0 ? have : "not reported"} of ${displayTotal || "unknown"} operators`}
+    >
+      <div className="cluster-engine__field" aria-hidden="true"/>
+      <div className="cluster-engine__orbit-shadow" aria-hidden="true"/>
+      <div className="cluster-engine__orbit" aria-hidden="true">
+        <span className="cluster-engine__orbit-line"/>
+        <span className="cluster-engine__quorum-arc"/>
+        <span className="cluster-engine__threshold-mark"/>
+      </div>
+      <div className="cluster-engine__pulse-ring" aria-hidden="true"/>
 
-      {/* members positioned around the ring */}
-      {members.map((m, i) => {
+      {activeRoster.map((m: any, i: number) => {
+        const total = Math.max(activeRoster.length, 1);
         const angle = (i / total) * Math.PI * 2 - Math.PI / 2;
-        const x = cx + Math.cos(angle) * r - 20;
-        const y = cy + Math.sin(angle) * r - 20;
-        const isYou = m.role === "you";
-        const color = m.state === "live" ? "var(--state-nominal)" :
-                      m.state === "lag"  ? "var(--state-maintenance)" :
-                      "var(--state-jail)";
+        const depth = (Math.sin(angle) + 1) / 2;
+        const x = Math.cos(angle) * orbitRadius;
+        const y = Math.sin(angle) * orbitRadius * 0.54;
+        const z = (depth - 0.5) * 110;
+        const tone =
+          m.state === "live" ? "live" :
+          m.state === "lag" || m.state === "maintenance" ? "lag" :
+          m.state === "standby" ? "standby" :
+          m.state === "pending" ? "pending" : "down";
+        const color =
+          tone === "live" ? "var(--ok)" :
+          tone === "lag" ? "var(--warn)" :
+          tone === "standby" ? "var(--info)" :
+          tone === "pending" ? "var(--fg-500)" : "var(--err)";
+        const label = String(m.handle ?? m.id ?? `op${i + 1}`).slice(0, 4);
         const title = [m.handle, m.addrShort, typeof m.rep === "number" ? `rep ${m.rep.toFixed(2)}` : null]
           .filter(Boolean)
           .join(" · ");
+        const nodeStyle = {
+          "--node-x": `${x}px`,
+          "--node-y": `${y}px`,
+          "--node-z": `${z}px`,
+          "--node-scale": `${0.78 + depth * 0.26}`,
+          "--node-opacity": `${0.55 + depth * 0.43}`,
+          "--node-delay": `${i * 110}ms`,
+          "--node-color": color,
+          zIndex: Math.round(14 + depth * 14),
+        } as CSSProperties & Record<string, string | number>;
+
         return (
-          <div key={m.id} title={title} style={{
-            position: "absolute",
-            left: x, top: y,
-            width: 40, height: 40, borderRadius: "50%",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            background: isYou
-              ? "linear-gradient(135deg, var(--gold), var(--gold-lo))"
-              : "var(--ink-2)",
-            border: `2px solid ${color}`,
-            boxShadow: `0 0 10px ${color}55`,
-            fontFamily: "var(--f-mono)", fontSize: 10,
-            color: isYou ? "var(--ink)" : "var(--fg-200)",
-            fontWeight: 600,
-            letterSpacing: "0.04em",
-          }}>
-            {m.handle.slice(0, 4)}
+          <div
+            key={m.id ?? `${label}-${i}`}
+            className={`cluster-engine__node is-${tone} ${m.role === "you" ? "is-you" : ""}`}
+            title={title}
+            style={nodeStyle}
+          >
+            <span className="cluster-engine__node-glow" aria-hidden="true"/>
+            <span className="cluster-engine__node-label">{label}</span>
+            <span className="cluster-engine__node-state" aria-hidden="true"/>
           </div>
         );
       })}
 
-      {/* center info */}
-      <div style={{
-        position: "absolute", inset: 0,
-        display: "flex", flexDirection: "column",
-        alignItems: "center", justifyContent: "center",
-        pointerEvents: "none", textAlign: "center", gap: 2,
-      }}>
-        <div className="cap">operators live</div>
-        <div style={{ fontFamily: "var(--f-mono)", fontSize: 38, fontWeight: 300, color: have >= threshold ? "var(--fg-100)" : "var(--state-jail)", letterSpacing: "-0.02em", lineHeight: 1 }}>
-          {have}<span style={{ color: "var(--fg-500)" }}>/{total}</span>
-        </div>
-        <div className="mono" style={{ fontSize: 10, color: "var(--fg-400)", letterSpacing: "0.08em" }}>
-          threshold {threshold}-of-{total}
+      <div className="cluster-engine__core">
+        <div className="cluster-engine__core-shell">
+          <div className="cluster-engine__core-label mono">quorum</div>
+          <div className="cluster-engine__core-count mono num">
+            {roster.length > 0 ? have : "—"}<span>/{displayTotal || "—"}</span>
+          </div>
+          <div className="cluster-engine__core-threshold mono">
+            {threshold || "?"}-of-{displayTotal || "?"}
+          </div>
+          <svg className="cluster-engine__wave" viewBox="0 0 190 46" aria-hidden="true">
+            <path className="cluster-engine__wave-base" d="M4 24 H35 L43 24 L49 15 L57 34 L66 9 L77 24 H104 L113 24 L120 18 L127 30 L136 24 H186"/>
+            <path className="cluster-engine__wave-trace" d="M4 24 H35 L43 24 L49 15 L57 34 L66 9 L77 24 H104 L113 24 L120 18 L127 30 L136 24 H186"/>
+          </svg>
         </div>
       </div>
     </div>
@@ -548,13 +561,18 @@ const SectionHead = ({ title, sub, right }: any) => (
    Generic glass-frame card with title + optional right slot. Lifted out of
    monoscan-app.tsx so monoscan-extras.tsx can use it without a circular
    import. */
-const Card = ({ title, right, children }: any) => (
-  <div className="ms-card">
-    <div className="ms-card__head">
-      <h3>{title}</h3>
-      {right}
-    </div>
-    <div className="ms-card__body">{children}</div>
+const Card = ({ title, sub, right, children, className = "", style, bodyStyle }: any) => (
+  <div className={`ms-card${className ? ` ${className}` : ""}`} style={style}>
+    {(title || sub || right) && (
+      <div className="ms-card__head">
+        <div className="ms-card__title">
+          {title && <h3>{title}</h3>}
+          {sub && <div className="mono ms-card__sub">{sub}</div>}
+        </div>
+        {right && <div className="ms-card__actions">{right}</div>}
+      </div>
+    )}
+    {children !== undefined && children !== null && <div className="ms-card__body" style={bodyStyle}>{children}</div>}
   </div>
 );
 

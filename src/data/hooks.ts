@@ -1,10 +1,9 @@
 /**
  * React-Query hooks for monoscan.
  *
- * Single seam through which every page reads chain data. Hooks return
- * already-typed values from `@monolythium/core-sdk`; local fallback rows live
- * in `./fallback` for list-level aggregates and per-signer enrichment that a
- * node may not retain yet.
+ * Single seam through which every page reads chain data. Monoscan is live-only:
+ * when a live read is unavailable, callers render empty/loading states instead
+ * of seeded preview data.
  *
  * Cache strategy:
  *   - Chain head polls every 2s. The WebSocket path is gated behind
@@ -20,6 +19,8 @@
 import { QueryClient, useQueries, useQuery } from "@tanstack/react-query";
 import * as CoreSdk from "@monolythium/core-sdk";
 import { keccak256Hex as keccak256 } from "../hash";
+
+export const MONOSCAN_LIVE_ONLY = true;
 import {
   NATIVE_MARKET_ORDER_BOOK_STREAM_TOPIC,
   assertMrvStructuredFeeConformance,
@@ -3362,6 +3363,16 @@ export function nativeAgentStateDisplayRowsAll(rows: NativeAgentStateDisplayRows
 }
 
 function apiActivityToRpcActivity(row: ApiAddressActivityEntry): AddressActivityEntry {
+  const record = row as ApiAddressActivityEntry & {
+    txHash?: unknown;
+    tx_hash?: unknown;
+    hash?: unknown;
+  };
+  const txHash =
+    typeof record.txHash === "string" ? record.txHash :
+    typeof record.tx_hash === "string" ? record.tx_hash :
+    typeof record.hash === "string" ? record.hash :
+    null;
   return {
     blockHeight: numToBig(row.blockHeight),
     txIndex: row.txIndex,
@@ -3374,7 +3385,8 @@ function apiActivityToRpcActivity(row: ApiAddressActivityEntry): AddressActivity
     cluster: row.cluster,
     weightBps: row.weightBps,
     subKind: row.subKind,
-  };
+    ...(txHash ? { txHash } : {}),
+  } as AddressActivityEntry;
 }
 
 function apiClusterStatusToRpcStatus(row: ApiClusterStatus): ClusterStatusResponse {
@@ -4836,9 +4848,9 @@ export interface IndexerAvailability {
  *   2. `lyth_chainStats.indexer` — the indexer block reported alongside chain
  *      stats. A null block means no indexer is wired up on this peer.
  *
- * `liveChain=true` is sticky whenever an RPC endpoint is configured. A live
- * deployment must not fall back to seeded demo rows just because a first read
- * failed or an aggregate endpoint has not landed.
+ * `liveChain=true` is sticky in the live-only explorer. A deployment must not
+ * fall back to seeded demo rows just because a first read failed or an aggregate
+ * endpoint has not landed.
  *
  * `available=false` + `disabled=true` is a hard confirmation that
  * markets/address-activity/NFT-listing endpoints will fail; callers should
@@ -4853,7 +4865,7 @@ export function deriveIndexerAvailability(input: {
   rpcConfigured?: boolean;
 }): IndexerAvailability {
   const surfaceStatus = input.capabilities?.surfaces?.indexer_history?.status ?? null;
-  const liveChain = Boolean(input.stats) || Boolean(input.rpcConfigured);
+  const liveChain = MONOSCAN_LIVE_ONLY || Boolean(input.stats) || Boolean(input.rpcConfigured);
 
   if (surfaceStatus === "disabled") {
     return {
@@ -6401,9 +6413,9 @@ export function useAccountHistory(addr: string | undefined) {
           settle(rpc.lythGetAccountPolicy(addr as string)),
           settle(
             getApiClient()
-              .addressActivity(addr as string, 30)
+              .addressActivity(addr as string, 250)
               .then((response) => response.data.entries.map(apiActivityToRpcActivity))
-              .catch(() => rpc.lythGetAddressActivity(addr as string, 30)),
+              .catch(() => rpc.lythGetAddressActivity(addr as string, 250)),
           ),
         ]);
         return {
@@ -7193,12 +7205,8 @@ async function readLatestHeadFromWebSocket(): Promise<ChainHead | null> {
  *
  * Each hook calls the live `lyth_*` read method published in
  * `@monolythium/core-sdk` 0.3.10 through the SDK client, resolving the node
- * via `sdk/client.ts`. When RPC is unconfigured, a method errors, or the
- * chain returns the `{ status: "indexer_unavailable" }` graceful fallback,
- * the hook degrades to the `data/fallback.ts` fixture (clearly a fixture, not
- * fabricated live data) so the surface still renders. All SDK-type coupling
- * lives in `sdk/surfaces.ts` (re-exports + view-model adapters); the page
- * components consume the view-models unchanged.
+ * via `sdk/client.ts`. In live-only mode, unavailable methods return empty
+ * view-models so the UI does not render seeded preview rows.
  * ========================================================================== */
 
 import {
@@ -7242,9 +7250,8 @@ import type {
 /*                                                                             */
 /* The SDK 0.3.10 RpcClient declares the v5 read methods; we widen the local   */
 /* `RpcClient` reference so call sites stay typed without depending on the     */
-/* exact published method-name list. Every method is invoked through a         */
-/* `try/catch` that degrades to the fixture, so an absent method on an older   */
-/* node simply falls back.                                                     */
+/* exact published method-name list. Unavailable reads resolve to empty live   */
+/* states instead of seeded preview rows.                                      */
 /* -------------------------------------------------------------------------- */
 
 const ZERO_HASH = `0x${"00".repeat(32)}`;
@@ -7307,7 +7314,7 @@ async function readClusterDiversity(
   clusterId: number,
 ): Promise<ClusterDiversityRollup | null> {
   if (!isRpcConfigured()) {
-    return CLUSTER_DIVERSITY.find((v) => v.diversity.clusterId === clusterId) ?? null;
+    return MONOSCAN_LIVE_ONLY ? null : CLUSTER_DIVERSITY.find((v) => v.diversity.clusterId === clusterId) ?? null;
   }
   try {
     const rpc = getRpcClient();
@@ -7330,15 +7337,14 @@ async function readClusterDiversity(
       operators,
     };
   } catch {
-    return CLUSTER_DIVERSITY.find((v) => v.diversity.clusterId === clusterId) ?? null;
+    return MONOSCAN_LIVE_ONLY ? null : CLUSTER_DIVERSITY.find((v) => v.diversity.clusterId === clusterId) ?? null;
   }
 }
 
 /**
  * PF-6 — cluster network-diversity score + per-operator metadata. Live:
  * `lyth_getClusterDiversity` + `lyth_clusterStatus` +
- * `lyth_getOperatorNetworkMetadata`. Falls back to the `CLUSTER_DIVERSITY`
- * fixture when RPC is unconfigured or the method is unavailable.
+ * `lyth_getOperatorNetworkMetadata`.
  */
 export function useClusterDiversity(clusterId: number | undefined) {
   return useQuery<ClusterDiversityRollup | null>({
@@ -7351,14 +7357,13 @@ export function useClusterDiversity(clusterId: number | undefined) {
 
 /**
  * PF-6 — the full diversity set for the index view. Fans `lyth_getClusterDiversity`
- * out over the live `lyth_clusterDirectory` ids; falls back to the fixture set
- * when RPC is unconfigured or the directory cannot be read.
+ * out over the live `lyth_clusterDirectory` ids.
  */
 export function useClusterDiversitySet() {
   return useQuery<ClusterDiversityRollup[] | null>({
     queryKey: QK.clusterDiversitySet(),
     queryFn: async () => {
-      if (!isRpcConfigured()) return CLUSTER_DIVERSITY;
+      if (!isRpcConfigured()) return MONOSCAN_LIVE_ONLY ? [] : CLUSTER_DIVERSITY;
       try {
         const rpc = getRpcClient();
         const directory = await getApiClient()
@@ -7387,7 +7392,7 @@ export function useClusterDiversitySet() {
         );
         return rows.filter((r): r is ClusterDiversityRollup => r !== null);
       } catch {
-        return CLUSTER_DIVERSITY;
+        return MONOSCAN_LIVE_ONLY ? [] : CLUSTER_DIVERSITY;
       }
     },
     staleTime: 60_000,
@@ -7431,15 +7436,14 @@ function oracleFeedFromConfig(
  * feed catalogue (the chain has no "list every feed" method — feeds are read
  * per-id via `lyth_oracleFeedConfig` + `lyth_oracleLatestPrice`), so monoscan
  * enriches each known feed id with the live config/price and otherwise falls
- * back. When the signer projection is unavailable
- * (`{ status: "indexer_unavailable" }`) the signer roster degrades to the
- * fixture.
+   * back. When the signer projection is unavailable, the signer roster renders
+   * empty instead of using preview rows.
  */
 export function useOracleDashboard() {
   return useQuery<OracleDashboard | null>({
     queryKey: QK.oracleDashboard(),
     queryFn: async () => {
-      if (!isRpcConfigured()) return ORACLE_DASHBOARD;
+      if (!isRpcConfigured()) return MONOSCAN_LIVE_ONLY ? { signers: [], feeds: [], admin: null } : ORACLE_DASHBOARD;
       try {
         const rpc = getRpcClient();
         // On a live chain the signer roster is whatever the chain reports —
@@ -7480,7 +7484,7 @@ export function useOracleDashboard() {
         // surfaced as live data, so it renders unset on a live chain.
         return { signers, feeds, admin: null };
       } catch {
-        return ORACLE_DASHBOARD;
+        return MONOSCAN_LIVE_ONLY ? { signers: [], feeds: [], admin: null } : ORACLE_DASHBOARD;
       }
     },
     staleTime: 30_000,
@@ -7525,8 +7529,7 @@ function spendingPolicyFromView(view: SpendingPolicyView): SpendingPolicyDimensi
 /**
  * PF-4 — §18.8 spending-policy dimensions for one agent sub-account. Live:
  * `lyth_getSpendingPolicy`. Returns `null` (the card renders the unconfigured
- * state) when the policy does not exist; falls back to the fixture when RPC is
- * unconfigured or the read errors.
+ * state) when the policy does not exist.
  */
 export function useSpendingPolicy(addr: string | undefined) {
   return useQuery<SpendingPolicyDimensions | null>({
@@ -7534,13 +7537,13 @@ export function useSpendingPolicy(addr: string | undefined) {
     enabled: Boolean(addr),
     queryFn: async () => {
       if (!addr) return null;
-      if (!isRpcConfigured()) return SPENDING_POLICIES[addr] ?? null;
+      if (!isRpcConfigured()) return MONOSCAN_LIVE_ONLY ? null : SPENDING_POLICIES[addr] ?? null;
       try {
         const view = await getRpcClient().lythGetSpendingPolicy(addr);
         if (!view.exists) return null;
         return spendingPolicyFromView(view);
       } catch {
-        return SPENDING_POLICIES[addr] ?? null;
+        return MONOSCAN_LIVE_ONLY ? null : SPENDING_POLICIES[addr] ?? null;
       }
     },
     staleTime: 30_000,
@@ -7585,15 +7588,13 @@ function directoryEntryToView(
  * MB-5 — cluster directory: roster, anchor, effective epoch, formation status.
  *
  * Live: `lyth_clusterDirectory` (the compact descriptor page) joined with
- * `lyth_clusterStatus` per cluster for roster + threshold + epoch. Falls back
- * to the `CLUSTER_DIRECTORY` fixture when RPC is unconfigured or the directory
- * cannot be read.
+ * `lyth_clusterStatus` per cluster for roster + threshold + epoch.
  */
 export function useClusterDirectory() {
   return useQuery<ClusterDirectory | null>({
     queryKey: QK.clusterDirectory(),
     queryFn: async () => {
-      if (!isRpcConfigured()) return CLUSTER_DIRECTORY;
+      if (!isRpcConfigured()) return MONOSCAN_LIVE_ONLY ? { clusters: [], currentEpoch: null } : CLUSTER_DIRECTORY;
       try {
         const rpc = getRpcClient();
         const page = await getApiClient()
@@ -7621,10 +7622,10 @@ export function useClusterDirectory() {
         );
         const currentEpoch =
           clusters.map((c) => c.effectiveEpoch).filter((e) => e > 0).sort((a, b) => b - a)[0] ??
-          CLUSTER_DIRECTORY.currentEpoch;
+          (MONOSCAN_LIVE_ONLY ? null : CLUSTER_DIRECTORY.currentEpoch);
         return { clusters, currentEpoch };
       } catch {
-        return CLUSTER_DIRECTORY;
+        return MONOSCAN_LIVE_ONLY ? { clusters: [], currentEpoch: null } : CLUSTER_DIRECTORY;
       }
     },
     staleTime: 30_000,
@@ -7659,20 +7660,18 @@ function proverBidFromView(requestId: string, bid: ProverBidView): ProverBid {
  *
  * Live: `lyth_listProofRequests` (indexer projection) for the request rows +
  * `lyth_getProverBids` per request for the live bid book. The registered-prover
- * roster has no list method (provers are discovered by capability bit), so it
- * is supplied by the fixture. When the projection is unavailable
- * (`{ status: "indexer_unavailable" }`) or RPC is unconfigured the whole market
- * degrades to the `PROVER_MARKET` fixture.
+   * roster has no list method (provers are discovered by capability bit). When
+   * the projection is unavailable, the market renders empty.
  */
 export function useProverMarket() {
   return useQuery<ProverMarket | null>({
     queryKey: QK.proverMarket(),
     queryFn: async () => {
-      if (!isRpcConfigured()) return PROVER_MARKET;
+      if (!isRpcConfigured()) return MONOSCAN_LIVE_ONLY ? { requests: [], bids: [], provers: [] } : PROVER_MARKET;
       try {
         const rpc = getRpcClient();
         const list = await rpc.lythListProofRequests(null, 50);
-        if (isIndexerUnavailable(list)) return PROVER_MARKET;
+        if (isIndexerUnavailable(list)) return MONOSCAN_LIVE_ONLY ? { requests: [], bids: [], provers: [] } : PROVER_MARKET;
         const requests = (list.requests ?? []).map(proofRequestFromRow);
         // The live projection responded. There is no on-chain "list provers"
         // method (provers are discovered by capability bit), so on a live chain
@@ -7697,7 +7696,7 @@ export function useProverMarket() {
         const bids = bidLists.flat();
         return { requests, bids, provers: [] };
       } catch {
-        return PROVER_MARKET;
+        return MONOSCAN_LIVE_ONLY ? { requests: [], bids: [], provers: [] } : PROVER_MARKET;
       }
     },
     staleTime: 30_000,
@@ -7745,15 +7744,13 @@ function bridgeRouteFromRecord(
  *
  * Live: `lyth_bridgeHealth` (the paged global bridge set; each record carries
  * the circuit-breaker posture). The bridge id alone does not name the wrapped
- * asset, so the rendered `asset` falls back to a short bridge-id label. Falls
- * back to the `BRIDGE_ROUTE_HEALTH` fixture when RPC is unconfigured or the
- * read errors.
+   * asset, so the rendered `asset` falls back to a short bridge-id label.
  */
 export function useBridgeRouteHealth() {
   return useQuery<BridgeRouteHealth[] | null>({
     queryKey: QK.bridgeRouteHealth(),
     queryFn: async () => {
-      if (!isRpcConfigured()) return BRIDGE_ROUTE_HEALTH;
+      if (!isRpcConfigured()) return MONOSCAN_LIVE_ONLY ? [] : BRIDGE_ROUTE_HEALTH;
       try {
         const rpc = getRpcClient();
         const health = await rpc.lythBridgeHealth(null, 50);
@@ -7770,7 +7767,7 @@ export function useBridgeRouteHealth() {
           return bridgeRouteFromRecord(record, "0", assetLabel);
         });
       } catch {
-        return BRIDGE_ROUTE_HEALTH;
+        return MONOSCAN_LIVE_ONLY ? [] : BRIDGE_ROUTE_HEALTH;
       }
     },
     staleTime: 30_000,
