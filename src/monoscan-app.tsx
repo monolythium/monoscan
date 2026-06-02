@@ -28,6 +28,7 @@ import {
   useClusterSet,
   useClusterStatus,
   useClusterApr,
+  useClusterName,
   useHealthyClusters,
   useActiveClusters,
   useOperatorAuthority,
@@ -834,6 +835,10 @@ const ClusterPage = ({ slot, go }: any) => {
   const clusterStatus = useClusterStatus(liveClusterId);
   const liveStatus = clusterStatus.data;
   const clusterApr = useClusterApr(liveClusterId);
+  const clusterName = useClusterName(liveClusterId);
+  // lyth_getClusterName (core-sdk 0.3.14+): on-chain registered name, or null →
+  // fall back to the C-NNN label.
+  const liveClusterName = clusterName.data?.name ?? null;
   // lyth_clusterApr (core-sdk 0.3.14) exposes a real annualized reward rate
   // (aprBps → percent); null when the node hasn't indexed the reward window.
   const liveApyPct = clusterApr.data ? Number(clusterApr.data.aprBps) / 100 : null;
@@ -954,7 +959,7 @@ const ClusterPage = ({ slot, go }: any) => {
             <span className="cap">DVT cluster · {totalOperators ?? "?"} operators · {threshold ?? "?"}-of-{totalOperators ?? "?"} BFT</span>
           </div>
           <h1 className="ms-h1" style={{marginTop:4,marginBottom:4}}>
-            {showLiveHero ? `C-${String(liveClusterId + 1).padStart(3, "0")}` : cl.name}
+            {showLiveHero ? (liveClusterName ?? `C-${String(liveClusterId + 1).padStart(3, "0")}`) : cl.name}
           </h1>
           <div className="mono" style={{fontSize:11,color:"var(--fg-500)",letterSpacing:"0.03em",marginBottom:8}}>
             C-{String(cl.slot).padStart(3,"0")} · {showLiveHero ? "live protocol descriptor" : "operator-named cluster"}

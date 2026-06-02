@@ -59,6 +59,7 @@ import {
   type DagParentsResponse,
   type ClusterStatusResponse,
   type ClusterAprResponse,
+  type ClusterNameResponse,
   type DagSyncStatus,
   type DecodeTxResponse,
   type DelegationCapResponse,
@@ -4619,6 +4620,23 @@ export function useClusterApr(clusterId: number) {
       if (!isRpcConfigured()) return null;
       try {
         return await getRpcClient().lythClusterApr(clusterId);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
+// On-chain cluster name (lyth_getClusterName, core-sdk 0.3.14+). null name means
+// the cluster has not registered a name; callers fall back to the C-NNN label.
+export function useClusterName(clusterId: number) {
+  return useQuery<ClusterNameResponse | null>({
+    queryKey: ["mono", "cluster", clusterId, "name"],
+    queryFn: async () => {
+      if (!isRpcConfigured()) return null;
+      try {
+        return await getRpcClient().lythGetClusterName(clusterId);
       } catch {
         return null;
       }
