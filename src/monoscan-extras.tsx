@@ -50,6 +50,7 @@ import {
   useSpendingPolicy,
   useTokenBalances,
   useTxByHashLive,
+  useTxConfirmations,
   useTxNativeReceipt,
   useTxStatus,
   useUpgradeStatus,
@@ -3047,6 +3048,7 @@ const TxPage = ({ hash, go }: any) => {
   const live = useTxByHashLive(hash);
   const nativeReceipt = useTxNativeReceipt(hash);
   const txStatus = useTxStatus(hash);
+  const txConfirmations = useTxConfirmations(hash);
   const indexerAvailability = useIndexerAvailability();
   const liveTx = live.data?.tx ?? null;
   const liveReceipt = live.data?.receipt ?? null;
@@ -3311,6 +3313,15 @@ const TxPage = ({ hash, go }: any) => {
                     : txStatus.isLoading
                       ? "checking…"
                       : "—"
+              }
+              mono
+            />
+            <KV
+              label="Confirmations"
+              value={
+                txConfirmations.data?.confirmations !== null && txConfirmations.data?.confirmations !== undefined
+                  ? txConfirmations.data.confirmations.toLocaleString()
+                  : "—"
               }
               mono
             />

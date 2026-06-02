@@ -27,6 +27,7 @@ import {
   nextSpotOrderNonceForOwner,
   ownerStateAccount,
   quoteUnitLabel,
+  tokenSymbolFromMetadata,
 } from "./monoscan-markets";
 
 const typedContract = (address: string) => addressToTypedBech32("contract", address);
@@ -110,6 +111,48 @@ describe("mkQuote / quoteUnitLabel", () => {
   it("derives a stable truncated label from the quote asset id", () => {
     const quote = `0x${"ab".repeat(32)}`;
     expect(quoteUnitLabel(quote)).toBe(`quote ${quote.slice(0, 10)}…${quote.slice(-6)}`);
+  });
+
+  it("renders the real quote ticker when MRC metadata is known", () => {
+    const quote = `0x${"ab".repeat(32)}`;
+    // A resolved symbol relabels the unit but never mangles the id through
+    // the truncator.
+    expect(quoteUnitLabel(quote, "USDC")).toBe("quote USDC");
+    expect(quoteUnitLabel(null, "USDC")).toBe("quote USDC");
+    // The numeric integer is unchanged — the symbol only relabels the unit.
+    expect(mkQuote(100, quote, undefined, "USDC")).toBe("100.00 quote USDC");
+  });
+
+  it("ignores a blank symbol and falls back to the asset id", () => {
+    const quote = `0x${"ab".repeat(32)}`;
+    expect(quoteUnitLabel(quote, "   ")).toBe(`quote ${quote.slice(0, 10)}…${quote.slice(-6)}`);
+    expect(quoteUnitLabel(quote, null)).toBe(`quote ${quote.slice(0, 10)}…${quote.slice(-6)}`);
+  });
+});
+
+describe("tokenSymbolFromMetadata", () => {
+  const base = {
+    standard: "mrc20",
+    assetId: `0x${"11".repeat(32)}`,
+    tokenId: null,
+    name: "USD Coin",
+    symbol: "USDC",
+    decimals: 6,
+    uri: null,
+    updatedAtBlock: 100,
+  };
+
+  it("returns the trimmed on-chain symbol when present", () => {
+    expect(tokenSymbolFromMetadata(base)).toBe("USDC");
+    expect(tokenSymbolFromMetadata({ ...base, symbol: "  WBTC  " })).toBe("WBTC");
+  });
+
+  it("returns null when no real symbol resolves (never fabricates)", () => {
+    expect(tokenSymbolFromMetadata(null)).toBeNull();
+    expect(tokenSymbolFromMetadata(undefined)).toBeNull();
+    expect(tokenSymbolFromMetadata({ ...base, symbol: null })).toBeNull();
+    expect(tokenSymbolFromMetadata({ ...base, symbol: "" })).toBeNull();
+    expect(tokenSymbolFromMetadata({ ...base, symbol: "   " })).toBeNull();
   });
 });
 

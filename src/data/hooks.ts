@@ -4645,6 +4645,52 @@ export function useClusterName(clusterId: number) {
   });
 }
 
+// Resolve MRC token metadata (symbol/decimals/name) for a set of raw token ids
+// via lyth_resolveTokenMetadata (core-sdk 0.3.14+). Returns a map keyed by token
+// id; a null entry means the token has no on-chain MRC metadata. List-safe — one
+// query per distinct id through useQueries (no hooks-in-loop violation).
+export function useTokenMetadataMap(
+  tokenIds: ReadonlyArray<string | null | undefined>,
+): Record<string, MrcMetadataRecord | null> {
+  const ids = Array.from(new Set(tokenIds.filter((id): id is string => Boolean(id))));
+  const results = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: ["mono", "tokenMeta", id] as const,
+      queryFn: async (): Promise<MrcMetadataRecord | null> => {
+        if (!isRpcConfigured()) return null;
+        try {
+          return await getRpcClient().lythResolveTokenMetadata(id);
+        } catch {
+          return null;
+        }
+      },
+      staleTime: 300_000,
+    })),
+  });
+  const map: Record<string, MrcMetadataRecord | null> = {};
+  ids.forEach((id, i) => {
+    map[id] = results[i]?.data ?? null;
+  });
+  return map;
+}
+
+// Confirmation depth for a tx hash (lyth_txConfirmations, core-sdk 0.3.14+).
+export function useTxConfirmations(txHash: string | undefined) {
+  return useQuery({
+    queryKey: ["mono", "tx", txHash ?? "", "confirmations"],
+    queryFn: async () => {
+      if (!isRpcConfigured() || !txHash) return null;
+      try {
+        return await getRpcClient().lythTxConfirmations(txHash);
+      } catch {
+        return null;
+      }
+    },
+    enabled: Boolean(txHash),
+    staleTime: 10_000,
+  });
+}
+
 export function useDelegationCap() {
   return useQuery<DelegationCapResponse | null>({
     queryKey: QK.delegationCap(),
