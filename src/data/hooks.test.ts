@@ -4010,15 +4010,18 @@ describe("deriveIndexerAvailability", () => {
     expect(result.reason).toMatch(/no indexer|without an indexer/i);
   });
 
-  it("stays neutral when neither signal has resolved yet", () => {
+  it("treats the chain as live before signals resolve (MONOSCAN_LIVE_ONLY)", () => {
+    // Live-only mode forces liveChain=true so the UI never flashes seeded
+    // preview rows while the live reads are still in flight; indexer
+    // availability stays neutral (not yet known) until a signal resolves.
     expect(deriveIndexerAvailability({ capabilities: null, stats: null })).toEqual({
-      liveChain: false,
+      liveChain: true,
       available: false,
       disabled: false,
       reason: null,
     });
     expect(deriveIndexerAvailability({ capabilities: undefined, stats: undefined })).toEqual({
-      liveChain: false,
+      liveChain: true,
       available: false,
       disabled: false,
       reason: null,

@@ -27,6 +27,7 @@ import {
   useClobMarkets,
   useClusterSet,
   useClusterStatus,
+  useClusterApr,
   useHealthyClusters,
   useActiveClusters,
   useOperatorAuthority,
@@ -832,6 +833,10 @@ const ClusterPage = ({ slot, go }: any) => {
   const liveCluster = liveClusters.data?.find(c => c.id === liveClusterId) ?? null;
   const clusterStatus = useClusterStatus(liveClusterId);
   const liveStatus = clusterStatus.data;
+  const clusterApr = useClusterApr(liveClusterId);
+  // lyth_clusterApr (core-sdk 0.3.14) exposes a real annualized reward rate
+  // (aprBps → percent); null when the node hasn't indexed the reward window.
+  const liveApyPct = clusterApr.data ? Number(clusterApr.data.aprBps) / 100 : null;
   const delegators = useClusterDelegators(liveClusterId);
   const delegationCap = useDelegationCap();
   const clusterEntity = useClusterEntity(liveClusterId);
@@ -1004,10 +1009,10 @@ const ClusterPage = ({ slot, go }: any) => {
           <div className="cl-hero__stats">
             <div className="cl-bigstat cl-bigstat--gold">
               <div className="cap">Current APY</div>
-              <div className="cl-bigstat__num mono num">{showLiveHero ? "not indexed" : fmtClusterApy(apy)}</div>
+              <div className="cl-bigstat__num mono num">{showLiveHero ? (liveApyPct !== null ? fmtClusterApy(liveApyPct) : "not indexed") : fmtClusterApy(apy)}</div>
               <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>
                 {showLiveHero
-                  ? "reward aggregate unavailable"
+                  ? (liveApyPct !== null ? "annualized reward · per delegated stake" : "reward aggregate unavailable")
                   : "paid in LYTH · per delegated stake"}
               </div>
             </div>
