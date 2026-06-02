@@ -43,6 +43,8 @@ import {
   useClobOrderBook,
   useNativeMarketOrderBook,
   useNativeMarketState,
+  useTokenMetadataMap,
+  type MrcMetadataRecord,
 } from "./data/hooks";
 import {
   getApiBaseUrl,
@@ -68,16 +70,29 @@ const mkDec = (value: any, fallback = 0) => {
 const _shortMarketId = (id: string) => `${id.slice(0, 10)}…${id.slice(-6)}`;
 
 /**
+ * Resolve a clean, displayable ticker from a token's MRC metadata record, or
+ * null when no on-chain symbol exists. Never fabricates — a missing/blank
+ * symbol returns null so the caller keeps its existing market-id fallback.
+ */
+export const tokenSymbolFromMetadata = (
+  meta: MrcMetadataRecord | null | undefined,
+): string | null => {
+  const symbol = meta?.symbol?.trim();
+  return symbol ? symbol : null;
+};
+
+/**
  * Derive a short, human-readable label for a market's quote asset so a bare
  * on-chain quote-tick integer can be shown with the unit it is denominated in.
- * The chain has no ticker registry, so for an unnamed quote we fall back to a
- * truncated asset id ("quote 0xab…12") or a neutral "quote" placeholder.
- *
- * TODO(core-sdk): no quote-decimals / quote-symbol metadata on lyth_clobMarket —
- * once exposed, render the symbol and scale values by the quote token decimals.
+ * When the quote token's real MRC ticker is known it is shown ("quote USDC");
+ * otherwise we fall back to a truncated asset id ("quote 0xab…12") or a neutral
+ * "quote" placeholder. Never fabricates a symbol.
  */
-export const quoteUnitLabel = (quoteAssetId?: string | null): string =>
-  quoteAssetId ? `quote ${_shortMarketId(quoteAssetId)}` : "quote";
+export const quoteUnitLabel = (quoteAssetId?: string | null, symbol?: string | null): string => {
+  const sym = symbol?.trim();
+  if (sym) return `quote ${sym}`;
+  return quoteAssetId ? `quote ${_shortMarketId(quoteAssetId)}` : "quote";
+};
 
 /**
  * Shared quote-unit formatter for LIVE markets. Renders a numeric value in the
@@ -88,11 +103,12 @@ export const quoteUnitLabel = (quoteAssetId?: string | null): string =>
  * for the offline (non-live) fixture preview path only.
  *
  * TODO(core-sdk): no USD price oracle and no quote-decimal metadata on CLOB
- * markets — live values are quote-tick/lot integers, never real fiat.
+ * markets — live values are quote-tick/lot integers, never real fiat. The
+ * optional quote symbol only relabels the unit; it never scales the integer.
  */
-export const mkQuote = (n: any, quoteAssetId?: string | null, dp?: any) => {
+export const mkQuote = (n: any, quoteAssetId?: string | null, dp?: any, quoteSymbol?: string | null) => {
   if (n == null || !Number.isFinite(Number(n))) return "—";
-  const unit = quoteUnitLabel(quoteAssetId);
+  const unit = quoteUnitLabel(quoteAssetId, quoteSymbol);
   return `${mkFmt(Number(n), dp)} ${unit}`;
 };
 
@@ -1842,6 +1858,16 @@ const MarketsPage = ({ go }: any) => {
     ? hasLiveMarketResponse ? liveRows : []
     : hasLiveMarketResponse ? liveRows : MARKETS;
 
+  // Resolve real MRC ticker metadata for every base/quote asset id carried by
+  // the rendered rows. One hook call at component top-level (never in a map);
+  // a null entry means the token has no on-chain symbol, so rows fall back to
+  // the existing market-id chip exactly as before.
+  const marketTokenIds = useMemo(
+    () => marketRows.flatMap((row: any) => [row.baseAssetId, row.quoteAssetId]),
+    [marketRows],
+  );
+  const marketTokenMeta = useTokenMetadataMap(marketTokenIds);
+
   const tabs = [
     { k:"all",    label:"All markets" },
     { k:"mono",   label:"MONO pairs" },
@@ -1987,25 +2013,34 @@ const MarketsPage = ({ go }: any) => {
                 </td>
               </tr>
             ) : (
-              filtered.map(t => (
+              filtered.map(t => {
+                // Real on-chain ticker (null when the token has no MRC symbol).
+                // A live row with a resolved base symbol shows it in place of the
+                // MKT-i/CLOB-i placeholder; otherwise the market-id chip stays.
+                const isLiveRow = Boolean(t.live && !t.hasFallback);
+                const baseSym = isLiveRow ? tokenSymbolFromMetadata(marketTokenMeta[t.baseAssetId ?? ""]) : null;
+                const quoteSym = isLiveRow ? tokenSymbolFromMetadata(marketTokenMeta[t.quoteAssetId ?? ""]) : null;
+                return (
                 <tr key={t.marketId ?? t.sym} onClick={()=>go(`#/market/${encodeURIComponent(t.live && !t.hasFallback ? t.marketId : t.sym)}`)}>
                   <td className="mono num" style={{color:"var(--fg-500)",fontSize:11.5}}>{t.rank}</td>
                   <td>
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      {t.live && !t.hasFallback
-                        ? <MarketIdMark id={t.marketId ?? t.sym} size={26}/>
+                      {isLiveRow
+                        ? baseSym
+                          ? <TokenMark sym={baseSym} size={26}/>
+                          : <MarketIdMark id={t.marketId ?? t.sym} size={26}/>
                         : <TokenMark sym={t.sym} size={26}/>}
                       <div style={{minWidth:0}}>
                         <div style={{display:"flex",alignItems:"center",gap:6}}>
-                          <span style={{fontWeight:500,color:"var(--fg-100)",fontSize:13}}>{t.sym}</span>
+                          <span style={{fontWeight:500,color:"var(--fg-100)",fontSize:13}}>{baseSym ?? t.sym}</span>
                           {/* Nothing verifies a permissionless live CLOB — the ✓ is
                               reserved for a real listing-verification signal. */}
                           {t.verified && <span title="verified" style={{color:"var(--gold)",fontSize:11,lineHeight:1}}>✓</span>}
                         </div>
                         <div className="mono" style={{fontSize:10.5,color:"var(--fg-500)",marginTop:1,letterSpacing:"0.02em"}}>
-                          {t.live && !t.hasFallback
+                          {isLiveRow
                             ? t.baseAssetId && t.quoteAssetId
-                              ? `${_shortMarketId(t.baseAssetId)} / ${_shortMarketId(t.quoteAssetId)}`
+                              ? `${baseSym ?? _shortMarketId(t.baseAssetId)} / ${quoteSym ?? _shortMarketId(t.quoteAssetId)}`
                               : `market ${_shortMarketId(t.marketId)}`
                             : t.name}
                         </div>
@@ -2013,7 +2048,7 @@ const MarketsPage = ({ go }: any) => {
                     </div>
                   </td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-100)",fontSize:12.5}}>
-                    {t.live && !t.hasFallback ? mkQuote(t.price, t.quoteAssetId) : mkMoney(t.price)}
+                    {t.live && !t.hasFallback ? mkQuote(t.price, t.quoteAssetId, undefined, quoteSym) : mkMoney(t.price)}
                   </td>
                   <td className="mono num" style={{textAlign:"right",color: t.live && !t.hasFallback ? "var(--fg-500)" : t.chg24h>=0?"var(--ok)":"var(--err)", fontSize:12}}>
                     {t.live && !t.hasFallback ? "—" : `${t.chg24h>=0?"+":""}${t.chg24h.toFixed(2)}%`}
@@ -2024,7 +2059,7 @@ const MarketsPage = ({ go }: any) => {
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:12}}>
                     {/* Live: base-volume count only — no quote-notional aggregate. */}
                     {t.live && !t.hasFallback
-                      ? `${mkNum(t.vol24h)}${t.baseAssetId ? ` ${_shortMarketId(t.baseAssetId)}` : " base"}`
+                      ? `${mkNum(t.vol24h)}${baseSym ? ` ${baseSym}` : t.baseAssetId ? ` ${_shortMarketId(t.baseAssetId)}` : " base"}`
                       : mkUsd(t.vol24h)}
                   </td>
                   <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:12}}>{t.live && !t.hasFallback ? "—" : mkUsd(t.liquidity)}</td>
@@ -2037,7 +2072,8 @@ const MarketsPage = ({ go }: any) => {
                     </span>
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>
@@ -2163,14 +2199,28 @@ const MarketPage = ({ sym, go }: any) => {
   const tknIsLive = Boolean(liveToken && !fixtureMarket);
   const quoteAssetId: string | null = (tkn as any).quoteAssetId ?? null;
   const baseAssetId: string | null = (tkn as any).baseAssetId ?? null;
+  // Resolve real MRC tickers for this market's base/quote tokens (and the
+  // order-panel token sources). One hook call at top-level; null entries keep
+  // the existing market-id chip / short-id fallback. Live markets only.
+  const detailTokenMeta = useTokenMetadataMap([
+    baseAssetId,
+    quoteAssetId,
+    liveMarket?.baseToken ?? null,
+    liveMarket?.quoteToken ?? null,
+    matchedNativeSummary?.baseAssetId ?? null,
+    matchedNativeSummary?.quoteAssetId ?? null,
+  ]);
+  const baseSym = tknIsLive ? tokenSymbolFromMetadata(detailTokenMeta[baseAssetId ?? ""]) : null;
+  const quoteSym = tknIsLive ? tokenSymbolFromMetadata(detailTokenMeta[quoteAssetId ?? ""]) : null;
   // Price/value display: quote-asset units (no fiat) on a live chain; the
   // USD-style fixture formatters are reserved for the offline demo preview.
-  const fmtPrice = (n: any) => (tknIsLive || liveChain) ? mkQuote(n, quoteAssetId) : mkMoney(n);
+  const fmtPrice = (n: any) => (tknIsLive || liveChain) ? mkQuote(n, quoteAssetId, undefined, quoteSym) : mkMoney(n);
   // Quote-notional value (px*sz). On-chain this is a product of unscaled
   // integers, not real fiat — show it in quote-asset terms, never "$".
-  const fmtValue = (n: any) => (tknIsLive || liveChain) ? mkQuote(n, quoteAssetId) : `$${Number(n).toLocaleString(undefined,{maximumFractionDigits:2})}`;
-  // Base-size display with the base-asset label.
-  const fmtBase = (n: any) => `${mkNum(Number(n))}${baseAssetId ? ` ${_shortMarketId(baseAssetId)}` : ""}`;
+  const fmtValue = (n: any) => (tknIsLive || liveChain) ? mkQuote(n, quoteAssetId, undefined, quoteSym) : `$${Number(n).toLocaleString(undefined,{maximumFractionDigits:2})}`;
+  // Base-size display with the base-asset label (real ticker when resolved,
+  // else the truncated base asset id).
+  const fmtBase = (n: any) => `${mkNum(Number(n))}${baseSym ? ` ${baseSym}` : baseAssetId ? ` ${_shortMarketId(baseAssetId)}` : ""}`;
   const [range, setRange] = useState("1D");
   // Range -> (lookback-in-blocks, bucket-size-in-blocks) under the
   // ADR-0031 3 s round cadence. Buckets are sized so a typical range
@@ -2225,6 +2275,10 @@ const MarketPage = ({ sym, go }: any) => {
   const takerFeeBps = liveMarket?.takerFeeBps ?? null;
   const orderBaseTokenId = liveMarket?.baseToken ?? matchedNativeSummary?.baseAssetId ?? null;
   const orderQuoteTokenId = liveMarket?.quoteToken ?? matchedNativeSummary?.quoteAssetId ?? null;
+  // Real tickers for the order-panel base/quote token chips (null -> keep the
+  // existing short-id fallback). Resolved from the same metadata map.
+  const orderBaseSym = tokenSymbolFromMetadata(detailTokenMeta[orderBaseTokenId ?? ""]);
+  const orderQuoteSym = tokenSymbolFromMetadata(detailTokenMeta[orderQuoteTokenId ?? ""]);
   const nativeMarketForwarderAddress = getNativeMarketForwarderAddress(capabilities.data);
   const suggestedOrderPrice = _positiveIntegerText(
     orderSide === "buy" ? liveMarket?.bestBidPrice : liveMarket?.bestAskPrice,
@@ -2429,7 +2483,7 @@ const MarketPage = ({ sym, go }: any) => {
   const buyVol  = liveBids.length ? (bids[bids.length - 1]?.total ?? 0) : liveChain ? null : liveBookResponded ? null : tkn.trades.filter(t=>t.side==="buy").reduce((a,t)=>a+t.value,0);
   const sellVol = liveAsks.length ? (asks[asks.length - 1]?.total ?? 0) : liveChain ? null : liveBookResponded ? null : tkn.trades.filter(t=>t.side==="sell").reduce((a,t)=>a+t.value,0);
   const spread = liveMarket && bestBid !== null && bestAsk !== null ? Math.max(0, bestAsk - bestBid) : tick * 2;
-  const spreadLabel = `${mkFmt(spread)}${(tknIsLive || liveChain) ? ` ${quoteUnitLabel(quoteAssetId)}` : ""}`;
+  const spreadLabel = `${mkFmt(spread)}${(tknIsLive || liveChain) ? ` ${quoteUnitLabel(quoteAssetId, quoteSym)}` : ""}`;
   const depthSummary = buyVol === null && sellVol === null
     ? "—"
     : `${buyVol === null ? "—" : (tknIsLive || liveChain) ? fmtBase(buyVol) : mkUsd(buyVol)} bid / ${sellVol === null ? "—" : (tknIsLive || liveChain) ? fmtBase(sellVol) : mkUsd(sellVol)} ask`;
@@ -2442,16 +2496,16 @@ const MarketPage = ({ sym, go }: any) => {
   );
   const heroPriceValue = (tknIsLive || liveChain) ? mkFmt(mid) : mkMoney(mid);
   const heroPriceSub = (tknIsLive || liveChain)
-    ? `${quoteUnitLabel(quoteAssetId)} quote units`
+    ? `${quoteUnitLabel(quoteAssetId, quoteSym)} quote units`
     : `${up?"▲":"▼"} ${Math.abs(chg).toFixed(3)}% · 24h fixture`;
   const heroBaseVolumeValue = marketIsLive ? mkNum(totalVolumeBase) : mkUsd(tkn.vol24h);
   const heroBaseVolumeSub = marketIsLive
-    ? `${baseAssetId ? _shortMarketId(baseAssetId) : "base"} lots`
+    ? `${baseSym ?? (baseAssetId ? _shortMarketId(baseAssetId) : "base")} lots`
     : "offline fixture volume";
   const heroBookValue = liveBookResponded ? `${bids.length}/${asks.length}` : "—";
   const heroBookSub = liveBookResponded ? "bid / ask levels" : liveChain ? "awaiting book" : "fixture ladder";
   const heroSpreadValue = mkFmt(spread);
-  const heroSpreadSub = (tknIsLive || liveChain) ? `${quoteUnitLabel(quoteAssetId)} spread` : "fixture spread";
+  const heroSpreadSub = (tknIsLive || liveChain) ? `${quoteUnitLabel(quoteAssetId, quoteSym)} spread` : "fixture spread";
   const detailHeroMetrics = [
     // TODO(core-sdk): missing liquidity aggregate endpoint to return market liquidity in quote terms
     [marketIsLive ? "Base volume" : "24h volume", heroBaseVolumeValue, heroBaseVolumeSub],
@@ -2518,13 +2572,17 @@ const MarketPage = ({ sym, go }: any) => {
       <div className="ms-crumb">
         <a href="#/markets" onClick={()=>go("#/markets")}>Markets</a>
         <span>›</span>
-        <b>{tkn.sym}</b>
+        <b>{baseSym ?? tkn.sym}</b>
       </div>
 
       <section className="market-hero">
         <div className="market-hero__main">
           <div className="market-hero__identity">
-            {tknIsLive ? <MarketIdMark id={marketId ?? tkn.sym} size={46}/> : <TokenMark sym={tkn.sym} size={46}/>}
+            {tknIsLive
+              ? baseSym
+                ? <TokenMark sym={baseSym} size={46}/>
+                : <MarketIdMark id={marketId ?? tkn.sym} size={46}/>
+              : <TokenMark sym={tkn.sym} size={46}/>}
             <div>
               <div className="market-hero__tag">
                 <span className="dot"/>
@@ -2532,7 +2590,7 @@ const MarketPage = ({ sym, go }: any) => {
               </div>
               <h1>{tkn.name}</h1>
               <div className="market-hero__symbol mono">
-                <span>{tkn.sym}</span>
+                <span>{baseSym ? (quoteSym ? `${baseSym} / ${quoteSym}` : baseSym) : tkn.sym}</span>
                 {marketId && <span title={marketId}>market {_shortMarketId(marketId)}</span>}
                 {latestActivityRound > 0 && <span>round {latestActivityRound.toLocaleString()}</span>}
               </div>
@@ -2689,10 +2747,17 @@ const MarketPage = ({ sym, go }: any) => {
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"rgba(255,255,255,0.03)",borderRadius:6,border:"1px solid var(--fg-700)"}}>
               {(tknIsLive || liveChain) ? (
-                <>
-                  <MarketIdMark id={orderQuoteTokenId ?? "quote"} size={22}/>
-                  <span className="mono" style={{fontSize:12,fontWeight:500}}>{orderQuoteTokenId ? _shortMarketId(orderQuoteTokenId) : "quote"}</span>
-                </>
+                orderQuoteSym ? (
+                  <>
+                    <TokenMark sym={orderQuoteSym} size={22}/>
+                    <span className="mono" style={{fontSize:12,fontWeight:500}}>{orderQuoteSym}</span>
+                  </>
+                ) : (
+                  <>
+                    <MarketIdMark id={orderQuoteTokenId ?? "quote"} size={22}/>
+                    <span className="mono" style={{fontSize:12,fontWeight:500}}>{orderQuoteTokenId ? _shortMarketId(orderQuoteTokenId) : "quote"}</span>
+                  </>
+                )
               ) : (
                 <>
                   <TokenMark sym="USDC" size={22}/>
@@ -2724,10 +2789,17 @@ const MarketPage = ({ sym, go }: any) => {
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",background:"rgba(255,255,255,0.03)",borderRadius:6,border:"1px solid var(--fg-700)"}}>
               {tknIsLive ? (
-                <>
-                  <MarketIdMark id={marketId ?? tkn.sym} size={22}/>
-                  <span className="mono" style={{fontSize:12,fontWeight:500}}>{_shortMarketId(marketId ?? tkn.sym)}</span>
-                </>
+                orderBaseSym ? (
+                  <>
+                    <TokenMark sym={orderBaseSym} size={22}/>
+                    <span className="mono" style={{fontSize:12,fontWeight:500}}>{orderBaseSym}</span>
+                  </>
+                ) : (
+                  <>
+                    <MarketIdMark id={marketId ?? tkn.sym} size={22}/>
+                    <span className="mono" style={{fontSize:12,fontWeight:500}}>{_shortMarketId(marketId ?? tkn.sym)}</span>
+                  </>
+                )
               ) : (
                 <>
                   <TokenMark sym={tkn.sym} size={22}/>
@@ -2903,8 +2975,8 @@ const MarketPage = ({ sym, go }: any) => {
                         );
                       })()}
                     </td>
-                    <td className="mono num" style={{textAlign:"right",color: t.side==="buy"?"var(--ok)":t.side==="sell"?"var(--err)":"var(--gold)",fontSize:12}}>{t.live ? mkQuote(t.px, quoteAssetId) : mkMoney(t.px)}</td>
-                    <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:11.5}}>{t.live ? mkQuote(t.value, quoteAssetId) : fmtValue(t.value)}</td>
+                    <td className="mono num" style={{textAlign:"right",color: t.side==="buy"?"var(--ok)":t.side==="sell"?"var(--err)":"var(--gold)",fontSize:12}}>{t.live ? mkQuote(t.px, quoteAssetId, undefined, quoteSym) : mkMoney(t.px)}</td>
+                    <td className="mono num" style={{textAlign:"right",color:"var(--fg-200)",fontSize:11.5}}>{t.live ? mkQuote(t.value, quoteAssetId, undefined, quoteSym) : fmtValue(t.value)}</td>
                     <td className="mono num" style={{textAlign:"right",color:"var(--fg-300)",fontSize:11.5}}>{mkNum(t.sz)} {tkn.sym}</td>
                     <td>
                       <div style={{display:"flex",alignItems:"center",gap:8,fontSize:10.5}}>
@@ -2936,7 +3008,7 @@ const MarketPage = ({ sym, go }: any) => {
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
               <h3 style={{margin:0,fontSize:13,fontWeight:500}}>Order book</h3>
               {/* Tick size is a raw quote-tick integer — append the quote-asset label. */}
-              <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.06em"}}>tick {mkFmt(tick)}{(tknIsLive || liveChain) ? ` ${quoteUnitLabel(quoteAssetId)}` : ""}</span>
+              <span className="mono" style={{fontSize:10,color:"var(--fg-500)",letterSpacing:"0.06em"}}>tick {mkFmt(tick)}{(tknIsLive || liveChain) ? ` ${quoteUnitLabel(quoteAssetId, quoteSym)}` : ""}</span>
             </div>
             <div className="mono" style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",fontSize:9.5,color:"var(--fg-500)",letterSpacing:"0.08em",textTransform:"uppercase",paddingBottom:6,borderBottom:"1px solid var(--fg-700)"}}>
               <span>Price</span><span style={{textAlign:"right"}}>Size</span><span style={{textAlign:"right"}}>Total</span>
