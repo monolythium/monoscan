@@ -61,6 +61,7 @@ import {
   MRV_NATIVE_TX_EXTENSION_BODY_HEX,
   MRV_NATIVE_TX_EXTENSION_KIND,
   nativeSupplyFromTotalBurned,
+  nativeSupplyFromTotalSupply,
   NO_EVM_BINARY_RECEIPTS_ROOT_ALGORITHM,
   NO_EVM_BINARY_RECEIPT_LEAF_DOMAIN,
   NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA,
@@ -4235,9 +4236,30 @@ describe("LYTH burn derivation", () => {
     });
   });
 
+  it("prefers the authoritative minted-inclusive lyth_totalSupply", () => {
+    // current = initial (100M) + minted (5M) − burned (1M) = 104M LYTH; the
+    // node returns currentSupplyLythoshi directly (we do not recompute it).
+    const supply = nativeSupplyFromTotalSupply({
+      initialSupplyLythoshi: "100000000000000000000000000",
+      totalMintedLythoshi: "5000000000000000000000000",
+      totalBurnedLythoshi: "1000000000000000000000000",
+      currentSupplyLythoshi: "104000000000000000000000000",
+    });
+
+    expect(supply).toEqual({
+      initialSupplyLythoshi: "100000000000000000000000000",
+      circulatingSupplyLythoshi: "104000000000000000000000000",
+      totalBurnedLythoshi: "1000000000000000000000000",
+      totalMintedLythoshi: "5000000000000000000000000",
+      source: "lyth_totalSupply",
+    });
+  });
+
   it("rejects malformed native supply responses", () => {
     expect(normalizeNativeSupplyResponse({ current: "nope" })).toBeNull();
     expect(nativeSupplyFromTotalBurned("not-a-number")).toBeNull();
+    // lyth_totalSupply with no usable current value → null
+    expect(nativeSupplyFromTotalSupply({ totalBurnedLythoshi: "1" })).toBeNull();
   });
 });
 

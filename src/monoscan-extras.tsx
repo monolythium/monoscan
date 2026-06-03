@@ -1041,6 +1041,8 @@ export const rpcDisplayLabel = (source: string | null | undefined, suffix = "RPC
 export const supplySourceLabel = (source: string | null | undefined): string | null => {
   if (!source) return null;
   switch (source) {
+    case "lyth_totalSupply":
+      return "supply data";
     case "lyth_circulatingSupply":
       return "supply data";
     case "lyth_totalBurned":

@@ -3983,8 +3983,11 @@ export interface NativeSupply {
   circulatingSupplyLythoshi: string;
   /** Cumulative on-chain burn counter, in lythoshi. */
   totalBurnedLythoshi: string;
+  /** Cumulative minted (issuance) total, in lythoshi — present when sourced
+   *  from the authoritative lyth_totalSupply counter (core-sdk 0.3.16+). */
+  totalMintedLythoshi?: string;
   /** RPC path used to build this view. */
-  source: "lyth_circulatingSupply" | "lyth_totalBurned";
+  source: "lyth_totalSupply" | "lyth_circulatingSupply" | "lyth_totalBurned";
 }
 
 function readNonNegativeBigInt(value: string | number | bigint | null | undefined): bigint | null {
@@ -4045,9 +4048,40 @@ export function normalizeNativeSupplyResponse(
   };
 }
 
+/** Authoritative supply from lyth_totalSupply (core-sdk 0.3.16+): current =
+ *  initial + minted − burned. This is minted-inclusive, unlike the legacy
+ *  lyth_circulatingSupply (= initial − burned) which under-reports once any
+ *  staking issuance has accrued. */
+export function nativeSupplyFromTotalSupply(value: unknown): NativeSupply | null {
+  const root = unknownRecord(unknownRecord(value)?.data ?? value);
+  if (!root) return null;
+  const initial =
+    readNonNegativeBigInt(readStringField(root, ["initialSupplyLythoshi", "initial_supply_lythoshi"])) ??
+    BigInt(NATIVE_INITIAL_SUPPLY_LYTHOSHI);
+  const current = readNonNegativeBigInt(readStringField(root, ["currentSupplyLythoshi", "current_supply_lythoshi"]));
+  if (current === null) return null;
+  const burned = readNonNegativeBigInt(readStringField(root, ["totalBurnedLythoshi", "total_burned_lythoshi"])) ?? 0n;
+  const minted = readNonNegativeBigInt(readStringField(root, ["totalMintedLythoshi", "total_minted_lythoshi"]));
+  return {
+    initialSupplyLythoshi: initial.toString(),
+    circulatingSupplyLythoshi: current.toString(),
+    totalBurnedLythoshi: burned.toString(),
+    ...(minted !== null ? { totalMintedLythoshi: minted.toString() } : {}),
+    source: "lyth_totalSupply",
+  };
+}
+
 export async function fetchNativeSupply(): Promise<NativeSupply | null> {
   if (!isRpcConfigured()) return null;
   const rpc = getRpcClient();
+  try {
+    // Preferred: authoritative, minted-inclusive supply (core-sdk 0.3.16+).
+    const response = await rpc.call<unknown>("lyth_totalSupply", []);
+    const supply = nativeSupplyFromTotalSupply(response);
+    if (supply) return supply;
+  } catch {
+    // Node predates lyth_totalSupply; fall through to the legacy counters.
+  }
   try {
     const response = await rpc.call<unknown>("lyth_circulatingSupply", []);
     const supply = normalizeNativeSupplyResponse(response, "lyth_circulatingSupply");
