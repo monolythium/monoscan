@@ -147,7 +147,7 @@ function explainBlock(r: GetBlockResult): string {
     "",
     `- **${r.tx_count}** transactions included`,
     `- Execution units: \`${r.gas_used.toLocaleString()}\` of \`${r.gas_limit.toLocaleString()}\` (${((r.gas_used / r.gas_limit) * 100).toFixed(1)}%)`,
-    `- BLS aggregation latency: **${r.bls_agg_ms.toFixed(2)}ms**`,
+    `- round-certificate latency: **${r.bls_agg_ms.toFixed(2)}ms**`,
     `- DAC coverage: **${(r.dac_coverage * 100).toFixed(2)}%** of expected shards`,
     `- Status: \`${r.status}\` — finalized at ${r.timestamp_iso}`,
     "",
@@ -272,7 +272,7 @@ function explainDirectory(): string {
     "**Cluster directory** — open `#/cluster-directory`.",
     "",
     "Every DVT cluster the chain has formed, fed by the on-chain `ClusterFormed`",
-    "event: roster (BLS pubkeys), anchor address, effective epoch, and formation",
+    "event: roster (consensus pubkeys), anchor address, effective epoch, and formation",
     "status (forming / active / draining / retired).",
   ].join("\n");
 }

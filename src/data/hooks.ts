@@ -42,7 +42,7 @@ import {
   type AddressFlowResponse,
   type AddressProfileResponse,
   type AgentReputationResponse,
-  type BlsCertificateResponse,
+  type BlsCertificateResponse as RoundCertificateResponse,
   type BlockHeader,
   type CapabilitiesResponse,
   type ChainStatsResponse,
@@ -763,7 +763,8 @@ export const NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM = "binary-keccak-receipt-tr
 export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA = CoreSdk.NO_EVM_ARCHIVE_PROOF_SCHEMA;
 export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE = "indexerReceiptArchiveContentDigest";
 export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA = CoreSdk.NO_EVM_FINALITY_EVIDENCE_SCHEMA;
-export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE = CoreSdk.NO_EVM_FINALITY_EVIDENCE_SOURCE;
+export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE = "roundCertificate";
+const NO_EVM_RECEIPT_LEGACY_FINALITY_EVIDENCE_SOURCE = "blsRoundCertificate";
 
 const HEX_BYTES_RE = /^0x(?:[0-9a-fA-F]{2})*$/;
 const HASH32_RE = /^0x[0-9a-fA-F]{64}$/;
@@ -834,7 +835,7 @@ export interface NoEvmReceiptArchiveProofBinding {
   coveringSnapshot?: NoEvmArchiveCoveringSnapshot;
 }
 
-export interface NoEvmReceiptBlsCertificate {
+export interface NoEvmReceiptRoundCertificate {
   round: number;
   signature: string;
   signersBitmap: string;
@@ -846,7 +847,7 @@ export interface NoEvmReceiptFinalityEvidence {
   schema: typeof NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA;
   source: typeof NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE;
   round: number;
-  certificate: NoEvmReceiptBlsCertificate;
+  certificate: NoEvmReceiptRoundCertificate;
 }
 
 export interface NoEvmCompactReceiptProofTranscript {
@@ -1931,10 +1932,10 @@ function readArchiveProofBinding(
   };
 }
 
-function readBlsCertificate(
+function readRoundCertificate(
   value: unknown,
   errors: string[],
-): NoEvmReceiptBlsCertificate | null {
+): NoEvmReceiptRoundCertificate | null {
   const row = unknownRecord(value);
   if (!row) {
     errors.push("finalityEvidence.certificate must be an object");
@@ -2007,12 +2008,16 @@ function readFinalityEvidence(
   const schema = readTranscriptString(row, "schema", errors, "finalityEvidence.schema");
   const source = readTranscriptString(row, "source", errors, "finalityEvidence.source");
   const round = readTranscriptNumber(row, "round", errors, "finalityEvidence.round");
-  const certificate = readBlsCertificate(row.certificate, errors);
+  const certificate = readRoundCertificate(row.certificate, errors);
 
   if (schema !== null && schema !== NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA) {
     errors.push(`finalityEvidence.schema must be ${NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA}`);
   }
-  if (source !== null && source !== NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE) {
+  if (
+    source !== null &&
+    source !== NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE &&
+    source !== NO_EVM_RECEIPT_LEGACY_FINALITY_EVIDENCE_SOURCE
+  ) {
     errors.push(`finalityEvidence.source must be ${NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE}`);
   }
   if (round !== null && certificate !== null && round !== certificate.round) {
@@ -2022,7 +2027,10 @@ function readFinalityEvidence(
   if (
     errors.length > startErrorCount
     || schema !== NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA
-    || source !== NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE
+    || (
+      source !== NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE &&
+      source !== NO_EVM_RECEIPT_LEGACY_FINALITY_EVIDENCE_SOURCE
+    )
     || round === null
     || certificate === null
   ) {
@@ -2031,7 +2039,7 @@ function readFinalityEvidence(
 
   return {
     schema,
-    source,
+    source: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE,
     round,
     certificate,
   };
@@ -2089,14 +2097,20 @@ const NO_EVM_RECEIPT_TRUST_REGISTRY_NETWORK = "testnet-69420";
 const NO_EVM_FINALITY_TRUST_ENV = {
   chainId: ["VITE_MONOSCAN_CHAIN_ID", "VITE_MONO_CHAIN_ID"],
   clusterPublicKey: [
+    "VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_CLUSTER_PUBKEY",
+    "VITE_MONO_TRUSTED_ROUND_FINALITY_CLUSTER_PUBKEY",
     "VITE_MONOSCAN_TRUSTED_BLS_CLUSTER_PUBKEY",
     "VITE_MONO_TRUSTED_BLS_CLUSTER_PUBKEY",
   ],
   committeeSize: [
+    "VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_COMMITTEE_SIZE",
+    "VITE_MONO_TRUSTED_ROUND_FINALITY_COMMITTEE_SIZE",
     "VITE_MONOSCAN_TRUSTED_BLS_COMMITTEE_SIZE",
     "VITE_MONO_TRUSTED_BLS_COMMITTEE_SIZE",
   ],
   threshold: [
+    "VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_THRESHOLD",
+    "VITE_MONO_TRUSTED_ROUND_FINALITY_THRESHOLD",
     "VITE_MONOSCAN_TRUSTED_BLS_THRESHOLD",
     "VITE_MONO_TRUSTED_BLS_THRESHOLD",
   ],
@@ -2202,7 +2216,7 @@ function normalizeFinalityClusterPublicKey(
     ? hexBytesToUint8Array(value)
     : new Uint8Array(value);
   if (!bytes || bytes.length !== 48) {
-    errors.push("trusted BLS cluster public key must be 48 bytes");
+    errors.push("trusted round-finality cluster public key must be 48 bytes");
     return null;
   }
   return bytes;
@@ -2212,25 +2226,25 @@ function normalizeNoEvmFinalityTrustOptions(
   options: NoEvmFinalityVerificationTrustOptions,
 ): NoEvmFinalityTrustResolution {
   const errors: string[] = [];
-  const chainId = parseNonNegativeU64Input(options.chainId, "trusted BLS chain id", errors);
+  const chainId = parseNonNegativeU64Input(options.chainId, "trusted round-finality chain id", errors);
   const clusterPublicKey = normalizeFinalityClusterPublicKey(options.clusterPublicKey, errors);
   const committeeSize = parsePositiveSafeIntegerInput(
     options.committeeSize,
-    "trusted BLS committee size",
+    "trusted round-finality committee size",
     errors,
   );
   const threshold = parsePositiveSafeIntegerInput(
     options.threshold,
-    "trusted BLS threshold",
+    "trusted round-finality threshold",
     errors,
   );
 
   if (committeeSize !== null && threshold !== null && threshold > committeeSize) {
-    errors.push("trusted BLS threshold cannot exceed committee size");
+    errors.push("trusted round-finality threshold cannot exceed committee size");
   }
 
   if (errors.length > 0 || chainId === null || clusterPublicKey === null || committeeSize === null || threshold === null) {
-    return { kind: "invalid", reason: `trusted BLS finality config invalid: ${errors.join("; ")}` };
+    return { kind: "invalid", reason: `trusted round-finality config invalid: ${errors.join("; ")}` };
   }
 
   return {
@@ -2308,7 +2322,7 @@ function noEvmFinalityTrustOptionsFromEnv(): NoEvmFinalityTrustResolution {
   if (values.every((value) => value === null)) {
     return {
       kind: "unconfigured",
-      reason: "trusted BLS finality key not configured",
+      reason: "trusted round-finality key not configured",
     };
   }
 
@@ -2320,7 +2334,7 @@ function noEvmFinalityTrustOptionsFromEnv(): NoEvmFinalityTrustResolution {
   if (missing.length > 0) {
     return {
       kind: "invalid",
-      reason: `trusted BLS finality config incomplete: missing ${missing.join(", ")}`,
+      reason: `trusted round-finality config incomplete: missing ${missing.join(", ")}`,
     };
   }
 
@@ -2342,8 +2356,8 @@ function noEvmFinalityTrustOptionsFromRegistry(
     return {
       kind: "invalid",
       reason: error instanceof Error
-        ? `registry BLS finality trust policy invalid: ${error.message}`
-        : "registry BLS finality trust policy invalid",
+        ? `registry round-finality trust policy invalid: ${error.message}`
+        : "registry round-finality trust policy invalid",
     };
   }
 
@@ -2351,13 +2365,13 @@ function noEvmFinalityTrustOptionsFromRegistry(
   if (finalityPolicy === null) {
     return {
       kind: "unconfigured",
-      reason: "trusted BLS finality key not configured",
+      reason: "trusted round-finality key not configured",
     };
   }
   if (finalityPolicy.mode !== "cluster") {
     return {
       kind: "invalid",
-      reason: "registry BLS finality trust policy mode multisig is not supported by Monoscan threshold-cluster verification",
+      reason: "registry round-finality trust policy mode multisig is not supported by Monoscan threshold-cluster verification",
     };
   }
 
@@ -2372,7 +2386,7 @@ function noEvmFinalityTrustOptionsFromRegistry(
   ) {
     return {
       kind: "invalid",
-      reason: `registry BLS finality trust policy is not valid at round ${finalityEvidence.round}`,
+      reason: `registry round-finality trust policy is not valid at round ${finalityEvidence.round}`,
     };
   }
 
@@ -2380,7 +2394,7 @@ function noEvmFinalityTrustOptionsFromRegistry(
   if (chainId == null) {
     return {
       kind: "invalid",
-      reason: "registry BLS finality trust policy requires a chain id",
+      reason: "registry round-finality trust policy requires a chain id",
     };
   }
 
@@ -2399,7 +2413,7 @@ function resolveNoEvmFinalityTrustOptions(
   if (trustOptions === null) {
     return {
       kind: "unconfigured",
-      reason: "trusted BLS finality key not configured",
+      reason: "trusted round-finality key not configured",
     };
   }
   if (trustOptions !== undefined) {
@@ -2508,8 +2522,17 @@ function noEvmFinalityMismatchReason(result: NoEvmBlsFinalityVerification): stri
   if (!result.signerIndicesInRange) issues.push("signer index outside configured committee");
   if (!result.allSignersTrusted) issues.push("untrusted signer index");
   if (!result.thresholdMet) issues.push("threshold not met");
-  if (!result.signatureValid) issues.push("BLS signature invalid");
-  return issues.join("; ") || "BLS finality evidence did not satisfy configured trust policy";
+  if (!result.signatureValid) issues.push("round-certificate signature invalid");
+  return issues.join("; ") || "round-finality evidence did not satisfy configured trust policy";
+}
+
+function finalityEvidenceForCurrentSdk(
+  finalityEvidence: NoEvmReceiptFinalityEvidence,
+): Parameters<typeof CoreSdk.verifyNoEvmFinalityEvidenceThreshold>[0] {
+  return {
+    ...finalityEvidence,
+    source: NO_EVM_RECEIPT_LEGACY_FINALITY_EVIDENCE_SOURCE,
+  } as Parameters<typeof CoreSdk.verifyNoEvmFinalityEvidenceThreshold>[0];
 }
 
 function noEvmArchiveSignatureSource(
@@ -2569,7 +2592,7 @@ export function verifyNoEvmReceiptFinalityEvidence(
 
   try {
     const result = CoreSdk.verifyNoEvmFinalityEvidenceThreshold(
-      finalityEvidence as Parameters<typeof CoreSdk.verifyNoEvmFinalityEvidenceThreshold>[0],
+      finalityEvidenceForCurrentSdk(finalityEvidence),
       trustResolution.options,
     );
     return {
@@ -2583,7 +2606,7 @@ export function verifyNoEvmReceiptFinalityEvidence(
       result: null,
       reason: error instanceof Error
         ? error.message
-        : "BLS finality evidence verification failed",
+        : "round-finality evidence verification failed",
     };
   }
 }
@@ -3392,7 +3415,7 @@ function apiActivityToRpcActivity(row: ApiAddressActivityEntry): AddressActivity
 }
 
 function apiClusterStatusToRpcStatus(row: ApiClusterStatus): ClusterStatusResponse {
-  return {
+  return normalizeClusterStatusResponse({
     clusterId: row.clusterId,
     threshold: row.threshold,
     size: row.size,
@@ -3407,6 +3430,24 @@ function apiClusterStatusToRpcStatus(row: ApiClusterStatus): ClusterStatusRespon
     reputationScore: row.reputationScore,
     livenessScore: row.livenessScore,
     lastUpdateHeight: numToBig(row.lastUpdateHeight),
+  });
+}
+
+function consensusPubkeyFromMember(member: unknown): string {
+  if (member === null || typeof member !== "object") return "";
+  const row = member as { consensusPubkey?: unknown; blsPubkey?: unknown };
+  if (typeof row.consensusPubkey === "string") return row.consensusPubkey;
+  if (typeof row.blsPubkey === "string") return row.blsPubkey;
+  return "";
+}
+
+function normalizeClusterStatusResponse(row: ClusterStatusResponse): ClusterStatusResponse {
+  return {
+    ...row,
+    members: (row.members ?? []).map((member) => ({
+      ...member,
+      blsPubkey: consensusPubkeyFromMember(member),
+    })),
   };
 }
 
@@ -4467,7 +4508,9 @@ export function useClusterStatus(cluster: number | undefined) {
         return await getApiClient()
           .cluster(cluster as number)
           .then((response) => apiClusterStatusToRpcStatus(response.data.cluster))
-          .catch(() => getRpcClient().lythClusterStatus(cluster as number));
+          .catch(() => getRpcClient()
+            .lythClusterStatus(cluster as number)
+            .then(normalizeClusterStatusResponse));
       } catch {
         return null;
       }
@@ -4482,8 +4525,8 @@ const OPERATOR_ID_RE = /^0x[0-9a-fA-F]{64}$/;
 export interface LiveOperatorRosterEntry {
   /** 32-byte hex operator id (the addressable identity). */
   operatorId: string;
-  /** BLS aggregate public key registered with this cluster slot. */
-  blsPubkey: string;
+  /** Consensus public key registered with this cluster slot. */
+  consensusPubkey: string;
   /** Reported per-cluster state (active / standby / jailed / etc.). */
   state: string;
   /** Cluster id this operator is currently sitting in. */
@@ -4525,7 +4568,9 @@ export function useLiveOperatorRoster(maxClusters = 50): LiveOperatorRoster {
           return await getApiClient()
             .cluster(id)
             .then((response) => apiClusterStatusToRpcStatus(response.data.cluster))
-            .catch(() => getRpcClient().lythClusterStatus(id));
+            .catch(() => getRpcClient()
+              .lythClusterStatus(id)
+              .then(normalizeClusterStatusResponse));
         } catch {
           return null;
         }
@@ -4548,7 +4593,7 @@ export function useLiveOperatorRoster(maxClusters = 50): LiveOperatorRoster {
       if (operatorsById.has(operatorId)) continue;
       operatorsById.set(operatorId, {
         operatorId,
-        blsPubkey: typeof member.blsPubkey === "string" ? member.blsPubkey : "",
+        consensusPubkey: consensusPubkeyFromMember(member),
         state: typeof member.state === "string" ? member.state : "unknown",
         clusterId: id,
       });
@@ -5092,13 +5137,20 @@ export function useClusterResignations(
   });
 }
 
-export function useBlsRoundCertificate(round: number | undefined) {
-  return useQuery<BlsCertificateResponse | null>({
-    queryKey: QK.blsRoundCert(round ?? ""),
+export function useRoundCertificate(round: number | undefined) {
+  return useQuery<RoundCertificateResponse | null>({
+    queryKey: QK.roundCert(round ?? ""),
     enabled: round !== undefined && Number.isFinite(round) && isRpcConfigured(),
     queryFn: async () => {
       try {
-        return await getRpcClient().lythGetBlsRoundCertificate(round as number);
+        const rpc = getRpcClient() as ReturnType<typeof getRpcClient> & {
+          lythGetRoundCertificate?: (round: number) => Promise<RoundCertificateResponse>;
+          lythGetBlsRoundCertificate?: (round: number) => Promise<RoundCertificateResponse>;
+        };
+        if (typeof rpc.lythGetRoundCertificate === "function") {
+          return await rpc.lythGetRoundCertificate(round as number);
+        }
+        return await rpc.lythGetBlsRoundCertificate?.(round as number) ?? null;
       } catch {
         return null;
       }
@@ -7440,7 +7492,9 @@ async function readClusterDiversity(
     let operators: OperatorNetworkMetadataRow[] = [];
     let resolvedMembers = 0;
     try {
-      const status: ClusterStatusResponse = await rpc.lythClusterStatus(clusterId);
+      const status: ClusterStatusResponse = normalizeClusterStatusResponse(
+        await rpc.lythClusterStatus(clusterId),
+      );
       const members = status.members ?? [];
       resolvedMembers = members.length;
       const rows = await Promise.all(
@@ -7685,7 +7739,7 @@ function directoryEntryToView(
 ): ClusterDirectoryEntry {
   const size = status?.size ?? entry.size;
   const threshold = status?.threshold ?? entry.threshold;
-  const roster = (status?.members ?? []).map((m) => m.blsPubkey).filter(Boolean);
+  const roster = (status?.members ?? []).map(consensusPubkeyFromMember).filter(Boolean);
   const epoch = status?.epoch != null ? Number(status.epoch) : 0;
   return {
     clusterId: entry.clusterId,
@@ -7731,7 +7785,9 @@ export function useClusterDirectory() {
               status = await getApiClient()
                 .cluster(entry.clusterId)
                 .then((r) => apiClusterStatusToRpcStatus(r.data.cluster))
-                .catch(() => rpc.lythClusterStatus(entry.clusterId));
+                .catch(() => rpc
+                  .lythClusterStatus(entry.clusterId)
+                  .then(normalizeClusterStatusResponse));
             } catch {
               status = null;
             }

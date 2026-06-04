@@ -230,7 +230,7 @@ function compactNoEvmReceiptProofTranscript(
     targetReceiptBytes,
     missingProofMaterial: [
       "signed archive or snapshot manifest binding receipt bytes to blockHash and receiptsRoot",
-      "BLS aggregate finality certificate for block round",
+      "round certificate for block round",
     ],
     ...overrides,
   };
@@ -845,9 +845,9 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain("Archive signatures");
     expect(html).toContain("absent · validator finality not asserted");
     expect(html).toContain("Finality evidence");
-    expect(html).toContain("absent · BLS round certificate not returned; no live finality proof asserted");
+    expect(html).toContain("absent · round certificate not returned; no live finality proof asserted");
     expect(html).toContain("Missing proof material");
-    expect(html).toContain("BLS aggregate finality certificate for block round");
+    expect(html).toContain("round certificate for block round");
     expect(html).not.toContain("live block cache");
     expect(html).not.toContain("Finality proof");
   });
@@ -1116,7 +1116,7 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).not.toContain("Archive signature digest");
   });
 
-  it("renders BLS round certificate finality evidence without claiming full live finality", () => {
+  it("renders round-certificate finality evidence without claiming full live finality", () => {
     const noEvmProof = compactNoEvmReceiptProofTranscript({
       finalityEvidence: blsFinalityEvidence(57),
       missingProofMaterial: [
@@ -1167,16 +1167,16 @@ describe("MrvNativeEvidenceCard", () => {
     const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
 
     expect(html).toContain("Finality evidence");
-    expect(html).toContain("present · BLS round certificate material · round 57 · cert round 57 · signers 2");
+    expect(html).toContain("present · round certificate material · round 57 · cert round 57 · signers 2");
     expect(html).toContain("signature 0x1234");
     expect(html).toContain("bitmap 0xabcd");
-    expect(html).toContain("unverified · trusted BLS finality key not configured");
+    expect(html).toContain("unverified · trusted round-finality key not configured");
     expect(html).toContain("Archive signatures");
     expect(html).toContain("absent · validator finality not asserted");
     expect(html).not.toContain("Finality proof");
   });
 
-  it("renders verified BLS round certificate finality evidence only with configured trust", () => {
+  it("renders verified round-certificate finality evidence only with configured trust", () => {
     const noEvmProof = compactNoEvmReceiptProofTranscript({
       finalityEvidence: verifiedBlsFinalityEvidence(),
     });
@@ -1223,9 +1223,9 @@ describe("MrvNativeEvidenceCard", () => {
 
     const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
 
-    expect(html).toContain("present · BLS round certificate material · round 58 · cert round 58 · signers 1");
-    expect(html).toContain("verified · configured trusted BLS cluster key · accepted 1/1 signatures");
-    expect(html).not.toContain("trusted BLS finality key not configured");
+    expect(html).toContain("present · round certificate material · round 58 · cert round 58 · signers 1");
+    expect(html).toContain("verified · configured trusted round-finality key · accepted 1/1 signatures");
+    expect(html).not.toContain("trusted round-finality key not configured");
   });
 
   it("renders compact mismatch details for a well-formed no-EVM receipt transcript", () => {

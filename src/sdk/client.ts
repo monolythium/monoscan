@@ -303,7 +303,7 @@ export const QK = {
     ["mono", "protocol", "latest-checkpoint", belowHeight ?? "latest"] as const,
   clusterResignations: (operator: string | null = null, status: string | null = null) =>
     ["mono", "protocol", "cluster-resignations", operator ?? "all", status ?? "all"] as const,
-  blsRoundCert: (round: number | string) => ["mono", "round", round, "bls-cert"] as const,
+  roundCert: (round: number | string) => ["mono", "round", round, "round-cert"] as const,
   feeStats: () => ["mono", "protocol", "fees"] as const,
   encryptionKey: () => ["mono", "protocol", "encryption-key"] as const,
   clusterDelegators: (id: string | number) => ["mono", "cluster", id, "delegators"] as const,

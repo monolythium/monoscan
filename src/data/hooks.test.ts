@@ -342,7 +342,7 @@ function compactNoEvmReceiptProofTranscript(
     targetReceiptBytes,
     missingProofMaterial: [
       "signed archive or snapshot manifest binding receipt bytes to blockHash and receiptsRoot",
-      "BLS aggregate finality certificate for block round",
+      "round certificate for block round",
     ],
     ...overrides,
   };
@@ -491,7 +491,7 @@ describe("live-SDK seam", () => {
     expect(typeof proto.lythAgentReputation).toBe("function");
     expect(typeof proto.lythGetLatestCheckpoint).toBe("function");
     expect(typeof proto.lythGetClusterResignations).toBe("function");
-    expect(typeof proto.lythGetBlsRoundCertificate).toBe("function");
+    expect(typeof ((proto as Record<string, unknown>).lythGetRoundCertificate ?? proto.lythGetBlsRoundCertificate)).toBe("function");
     expect(typeof proto.lythGetLeaderCertificate).toBe("function");
     expect(typeof proto.lythGetDacCertificate).toBe("function");
     expect(typeof proto.lythDecodeTx).toBe("function");
@@ -3571,7 +3571,7 @@ describe("API execution-unit transformations", () => {
     expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof)).toMatchObject({
       state: "unverified",
       result: null,
-      reason: "trusted BLS finality key not configured",
+      reason: "trusted round-finality key not configured",
     });
   });
 
@@ -3597,9 +3597,9 @@ describe("API execution-unit transformations", () => {
   it("lets env no-EVM trust config override the bundled registry policy", () => {
     setTestnetReceiptProofTrust(registryReceiptProofTrustPolicy());
     vi.stubEnv("VITE_MONOSCAN_CHAIN_ID", "69421");
-    vi.stubEnv("VITE_MONOSCAN_TRUSTED_BLS_CLUSTER_PUBKEY", verifiedBlsClusterPublicKey);
-    vi.stubEnv("VITE_MONOSCAN_TRUSTED_BLS_COMMITTEE_SIZE", "7");
-    vi.stubEnv("VITE_MONOSCAN_TRUSTED_BLS_THRESHOLD", "1");
+    vi.stubEnv("VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_CLUSTER_PUBKEY", verifiedBlsClusterPublicKey);
+    vi.stubEnv("VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_COMMITTEE_SIZE", "7");
+    vi.stubEnv("VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_THRESHOLD", "1");
     vi.stubEnv("VITE_MONOSCAN_TRUSTED_ARCHIVE_PUBKEYS", sdkBytesToHex(untrustedArchiveSigner.publicKey()));
     vi.stubEnv("VITE_MONOSCAN_TRUSTED_ARCHIVE_THRESHOLD", "1");
     const noEvmProof = compactVerifiedTrustProof();
@@ -3618,7 +3618,7 @@ describe("API execution-unit transformations", () => {
         verified: false,
         signatureValid: false,
       },
-      reason: "BLS signature invalid",
+      reason: "round-certificate signature invalid",
     });
   });
 
@@ -3629,11 +3629,11 @@ describe("API execution-unit transformations", () => {
     expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof)).toMatchObject({
       state: "mismatch",
       result: null,
-      reason: "registry BLS finality trust policy mode multisig is not supported by Monoscan threshold-cluster verification",
+      reason: "registry round-finality trust policy mode multisig is not supported by Monoscan threshold-cluster verification",
     });
   });
 
-  it("accepts BLS finality evidence on compact no-EVM receipt proofs as certificate material", () => {
+  it("accepts round-finality evidence on compact no-EVM receipt proofs as certificate material", () => {
     const finalityEvidence = blsFinalityEvidence(57);
     const noEvmProof = compactNoEvmReceiptProofTranscript({
       txHash: `0x${"79".repeat(32)}`,
@@ -3680,14 +3680,14 @@ describe("API execution-unit transformations", () => {
     expect(evidence?.proof?.finalityVerification).toMatchObject({
       state: "unverified",
       result: null,
-      reason: "trusted BLS finality key not configured",
+      reason: "trusted round-finality key not configured",
     });
     expect(evidence?.blockers).not.toContain(
       "native-receipt.noEvmProof must return a bounded receipts transcript or compact receipt inclusion proof before Monoscan can render no-EVM receipt proof evidence.",
     );
   });
 
-  it("verifies BLS finality evidence when a trusted cluster key policy is supplied", () => {
+  it("verifies round-finality evidence when a trusted cluster key policy is supplied", () => {
     const finalityEvidence = verifiedBlsFinalityEvidence();
     const noEvmProof = compactNoEvmReceiptProofTranscript({
       txHash: `0x${"7f".repeat(32)}`,
@@ -3743,7 +3743,7 @@ describe("API execution-unit transformations", () => {
     });
   });
 
-  it("marks configured BLS finality evidence mismatched for the wrong chain id", () => {
+  it("marks configured round-finality evidence mismatched for the wrong chain id", () => {
     const noEvmProof = compactNoEvmReceiptProofTranscript({
       txHash: `0x${"70".repeat(32)}`,
       blockHash: `0x${"3a".repeat(32)}`,
@@ -3762,11 +3762,11 @@ describe("API execution-unit transformations", () => {
         verified: false,
         signatureValid: false,
       },
-      reason: "BLS signature invalid",
+      reason: "round-certificate signature invalid",
     });
   });
 
-  it("fails closed when configured BLS finality trust policy is malformed", () => {
+  it("fails closed when configured round-finality trust policy is malformed", () => {
     const noEvmProof = compactNoEvmReceiptProofTranscript({
       txHash: `0x${"71".repeat(32)}`,
       blockHash: `0x${"3b".repeat(32)}`,
@@ -3782,7 +3782,7 @@ describe("API execution-unit transformations", () => {
     expect(verification).toMatchObject({
       state: "mismatch",
       result: null,
-      reason: "trusted BLS finality config invalid: trusted BLS cluster public key must be 48 bytes",
+      reason: "trusted round-finality config invalid: trusted round-finality cluster public key must be 48 bytes",
     });
   });
 

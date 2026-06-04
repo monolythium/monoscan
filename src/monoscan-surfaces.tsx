@@ -695,7 +695,7 @@ const ClusterDirectoryPage = ({ go }: any) => {
                       <td className="surface-strong">C-{String(c.clusterId + 1).padStart(3, "0")}</td>
                       <td><Halo tone={formationHaloTone(c.status)} label={c.status}/></td>
                       <td className="mono surface-code surface-muted">{c.anchorAddress ? fmtAddrShort(c.anchorAddress, "user", 12, 6) : "pending anchor"}</td>
-                      <td className="mono num">{(c.roster.length || c.size).toLocaleString()} BLS keys</td>
+                      <td className="mono num">{(c.roster.length || c.size).toLocaleString()} consensus keys</td>
                       <td className="surface-live-cell">
                         <div className="mono surface-live-cell__text">
                           <b>{c.liveMembers}</b><span>/{c.size}</span><small>thr {c.threshold}</small>
