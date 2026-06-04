@@ -19,7 +19,7 @@ import {
   useAgentReputation,
   useNativeAgentState,
   useActivePrecompiles,
-  useBlsRoundCertificate,
+  useRoundCertificate,
   useBlockByHash,
   useBlockByNumber,
   useBlockTransactions,
@@ -1011,7 +1011,8 @@ export const rpcDisplayLabel = (source: string | null | undefined, suffix = "RPC
     lyth_metricsRange: "retained metrics",
     lyth_txFeed: "transaction feed",
     lyth_mrcAccount: "MRC account",
-    lyth_getBlsRoundCertificate: "BLS round certificate",
+    lyth_getRoundCertificate: "round certificate",
+    lyth_getBlsRoundCertificate: "round certificate",
     lyth_dagParents: "DAG parents",
     lyth_verticesAtRound: "vertices by round",
     lyth_search: "search",
@@ -3367,7 +3368,7 @@ const TxPage = ({ hash, go }: any) => {
           </Card>
           <Card title="Finality">
             <div className="tx-kv">
-              <KV label="BLS attestation" value={liveDecoded.blsAttestation ? "present" : "—"}/>
+              <KV label="Round attestation" value={((liveDecoded as { roundAttestation?: unknown }).roundAttestation ?? liveDecoded.blsAttestation) ? "present" : "—"}/>
               <KV label="PQ checkpoint" value={liveDecoded.pqAttestation ? `#${Number(liveDecoded.pqAttestation.checkpointHeight).toLocaleString()}` : "—"} mono/>
               <KV label="PQ signer" value={liveDecoded.pqAttestation?.signerId ? fmtHashShort(liveDecoded.pqAttestation.signerId) : "—"} mono/>
               <KV label="Finality proof" value={liveDecoded.finalityProof ? "present" : "—"}/>
@@ -3690,13 +3691,13 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
   const finalityVerification = evidence.proof?.finalityVerification ?? null;
   const finalityVerificationValue = finalityVerification
     ? finalityVerification.state === "verified"
-      ? `verified · configured trusted BLS cluster key · accepted ${finalityVerification.result?.acceptedSignatureCount.toLocaleString() ?? "—"}/${finalityVerification.result?.requiredSignatureCount.toLocaleString() ?? "—"} signatures`
-      : `${finalityVerification.state} · ${finalityVerification.reason ?? "trusted BLS finality verification unavailable"}`
+      ? `verified · configured trusted round-finality key · accepted ${finalityVerification.result?.acceptedSignatureCount.toLocaleString() ?? "—"}/${finalityVerification.result?.requiredSignatureCount.toLocaleString() ?? "—"} signatures`
+      : `${finalityVerification.state} · ${finalityVerification.reason ?? "trusted round-finality verification unavailable"}`
     : null;
   const finalityEvidenceValue = proofTranscript
     ? finalityEvidence
-      ? `present · BLS round certificate material · round ${finalityEvidence.round.toLocaleString()} · cert round ${finalityEvidence.certificate.round.toLocaleString()} · signers ${finalityEvidence.certificate.signerCount.toLocaleString()} · signature ${_short(finalityEvidence.certificate.signature, 18)} · bitmap ${_short(finalityEvidence.certificate.signersBitmap, 18)}${finalityVerificationValue ? ` · ${finalityVerificationValue}` : " · trusted BLS finality key not configured"}`
-      : "absent · BLS round certificate not returned; no live finality proof asserted"
+      ? `present · round certificate material · round ${finalityEvidence.round.toLocaleString()} · cert round ${finalityEvidence.certificate.round.toLocaleString()} · signers ${finalityEvidence.certificate.signerCount.toLocaleString()} · signature ${_short(finalityEvidence.certificate.signature, 18)} · bitmap ${_short(finalityEvidence.certificate.signersBitmap, 18)}${finalityVerificationValue ? ` · ${finalityVerificationValue}` : " · trusted round-finality key not configured"}`
+      : "absent · round certificate not returned; no live finality proof asserted"
     : null;
   const missingProofMaterial = proofTranscript?.missingProofMaterial ?? [];
   const missingProofMaterialValue = missingProofMaterial.length > 0
@@ -3779,7 +3780,7 @@ const RoundPage = ({ round, go }: any) => {
   const roundNumber = Number.isFinite(r) ? r : undefined;
   const liveBlock = useBlockByNumber(roundNumber);
   const blockTransactions = useBlockTransactions(roundNumber, 0, 25);
-  const roundCert = useBlsRoundCertificate(roundNumber);
+  const roundCert = useRoundCertificate(roundNumber);
   const dagParents = useDagParents(roundNumber);
   const verticesAtRound = useVerticesAtRound(roundNumber);
   const chainStats = useChainStats();
@@ -3938,7 +3939,7 @@ const RoundPage = ({ round, go }: any) => {
             </p>
           )}
           {(liveCert || roundCert.isLoading || roundCert.isFetched) && (
-            <Card title="BLS round certificate" right={<span className="cap">round certificate</span>} style={{marginBottom:14}}>
+            <Card title="Round certificate" right={<span className="cap">round certificate</span>} style={{marginBottom:14}}>
               {liveCert ? (
                 <div className="tx-kv">
                   <KV label="Round" value={Number(liveCert.round ?? r).toLocaleString()} mono/>
@@ -4053,13 +4054,13 @@ const RoundPage = ({ round, go }: any) => {
             above already show the truth. Only render the fixture cluster
             vertex sample when monoscan is in offline / design-preview
             mode (no live head reachable) so a live chain never sees
-            invented BLS-agg and DAC numbers — including for a live round
+            invented round-certificate and DAC numbers — including for a live round
             whose header/cert/vertices are simply not yet exposed.
           */}
           {!curIsLive && !(liveHeader || liveCert || liveVertices.length > 0 || (liveParents?.length ?? 0) > 0) && (
             <div className="ms-card" style={{padding:0}}>
               <table className="ms-table">
-                <thead><tr><th>Cluster</th><th>Txs</th><th>BLS agg</th><th>DAC</th><th></th></tr></thead>
+                <thead><tr><th>Cluster</th><th>Txs</th><th>Round cert</th><th>DAC</th><th></th></tr></thead>
                 <tbody>
                   {(verts.length ? verts : (MONOSCAN_DATA?.recentVertices || []).slice(0,6)).map((v,i)=>(
                     <tr key={i} onClick={()=>go(`#/cluster/${v.clusterSlot}`)} style={{cursor:"pointer"}}>

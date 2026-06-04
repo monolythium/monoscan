@@ -882,10 +882,10 @@ const ClusterPage = ({ slot, go }: any) => {
         ? `One operator is degraded or offline. ${cl.members} of ${cl.size} are signing — still safely above quorum.`
         : `Below quorum. ${cl.members} of ${cl.size} operators signing — delegated stake is safe but not earning until quorum is restored.`;
   const memberRows = liveStatus?.members?.length
-    ? liveStatus.members.map((m) => ({
+      ? liveStatus.members.map((m) => ({
         handle: fmtHashShort(m.operatorId, 10, 6),
         addrShort: m.operatorId,
-        blsPubkey: m.blsPubkey,
+        consensusPubkey: m.blsPubkey,
         role: m.state,
         rep: null,
         vertexRate: null,
@@ -1105,10 +1105,10 @@ const ClusterPage = ({ slot, go }: any) => {
             <div><span className="mono">Delegation cap</span><b>{delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "disabled" : `${delegationCap.data.capBps} bps`) : "—"}</b></div>
             <div><span className="mono">Entity</span><b className="mono">{clusterEntity.data?.entity ?? "—"}</b></div>
             <div><span className="mono">Entity ratchet</span><b className="mono">{entityRatchet.data ? `${entityRatchet.data.active}/${entityRatchet.data.threshold === 4294967295 ? "unset" : entityRatchet.data.threshold}` : "—"}</b></div>
-            <div><span className="mono">First BLS key</span><b className="mono" title={liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? undefined}>{fmtHashShort(liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? "—")}</b></div>
+            <div><span className="mono">First consensus key</span><b className="mono" title={liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? undefined}>{fmtHashShort(liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? "—")}</b></div>
           </div>
           <div className="mono cl-protocol-note">
-            Cluster status, quorum, and member BLS keys come from public RPC. Economic aggregates are hidden until live TVS, reward history, and vertex-inclusion endpoints exist.
+            Cluster status, quorum, and member consensus keys come from public RPC. Economic aggregates are hidden until live TVS, reward history, and vertex-inclusion endpoints exist.
           </div>
         </Card>
         <Card title={`Members · ${memberRows.length} operator${memberRows.length === 1 ? "" : "s"}`}>
@@ -1142,7 +1142,7 @@ const ClusterPage = ({ slot, go }: any) => {
                     </span>
                     <span className="cl-member-card__foot mono">
                       {showLiveHero
-                        ? (m.blsPubkey ? `BLS ${fmtHashShort(m.blsPubkey, 8, 0)}` : "BLS not reported")
+                        ? ((m.consensusPubkey ?? m.blsPubkey) ? `consensus ${fmtHashShort(m.consensusPubkey ?? m.blsPubkey, 8, 0)}` : "consensus key not reported")
                         : `${m.rep == null ? "rep -" : `rep ${m.rep.toFixed(2)}`}`}
                     </span>
                   </span>
@@ -1225,7 +1225,7 @@ const ClusterPage = ({ slot, go }: any) => {
       {selectedMember && (() => {
         const role = operatorRoleMeta(selectedMember.role);
         const operatorId = selectedMember.addrShort ?? "not reported";
-        const blsKey = selectedMember.blsPubkey ?? "not reported";
+        const consensusKey = selectedMember.consensusPubkey ?? selectedMember.blsPubkey ?? "not reported";
         const source = selectedMember.source ?? (showLiveHero ? "live cluster status" : "fixture preview");
         return (
           <div className="cl-member-modal" role="dialog" aria-modal="true" aria-label="Operator details" onClick={()=>setSelectedMember(null)}>
@@ -1257,8 +1257,8 @@ const ClusterPage = ({ slot, go }: any) => {
                     <code>{operatorId}</code>
                   </div>
                   <div>
-                    <span className="mono">BLS public key</span>
-                    <code>{blsKey}</code>
+                    <span className="mono">Consensus public key</span>
+                    <code>{consensusKey}</code>
                   </div>
                   <div>
                     <span className="mono">Data source</span>
@@ -1282,15 +1282,16 @@ const ClusterPage = ({ slot, go }: any) => {
                   <button
                     type="button"
                     className="ov-cta"
-                    disabled={!selectedMember.blsPubkey}
+                    disabled={!(selectedMember.consensusPubkey ?? selectedMember.blsPubkey)}
                     onClick={()=>{
-                      if (selectedMember.blsPubkey) {
-                        navigator.clipboard?.writeText(selectedMember.blsPubkey);
-                        window.__msToast?.("BLS key copied");
+                      const key = selectedMember.consensusPubkey ?? selectedMember.blsPubkey;
+                      if (key) {
+                        navigator.clipboard?.writeText(key);
+                        window.__msToast?.("Consensus key copied");
                       }
                     }}
                   >
-                    Copy BLS key
+                    Copy consensus key
                   </button>
                   <button
                     type="button"
@@ -1484,7 +1485,14 @@ const OperatorPage = ({ addr, go }: any) => {
     ? (operatorInfo.data?.moniker ?? operatorInfo.data?.alias ?? (liveOperatorId ? fmtHashShort(liveOperatorId, 12, 6) : addr))
     : op.handle;
   const displayId = useLiveProfile ? (liveOperatorId ?? addr) : op.addrShort;
-  const blsKey = authority.data?.blsPubkey || liveMembership?.blsPubkey || operatorInfo.data?.blsKeyFingerprint || "";
+  const consensusKey =
+    (authority.data as { consensusPubkey?: string } | null | undefined)?.consensusPubkey ||
+    authority.data?.blsPubkey ||
+    liveMembership?.consensusPubkey ||
+    (liveMembership as { blsPubkey?: string } | null | undefined)?.blsPubkey ||
+    (operatorInfo.data as { consensusKeyFingerprint?: string | null } | null | undefined)?.consensusKeyFingerprint ||
+    operatorInfo.data?.blsKeyFingerprint ||
+    "";
   const chainAddress = useLiveProfile
     ? operatorInfo.data?.chainAddress
       ? fmtAddr(operatorInfo.data.chainAddress, "user")
@@ -1572,7 +1580,7 @@ const OperatorPage = ({ addr, go }: any) => {
               <div className="op-hero-key-list">
                 <OperatorHeroKey label="Operator id" value={displayId}/>
                 <OperatorHeroKey label="Chain address" value={chainAddress}/>
-                <OperatorHeroKey label="BLS key" value={blsKey}/>
+                <OperatorHeroKey label="Consensus key" value={consensusKey}/>
               </div>
               <div className="op-hero-facts">
                 <span><small className="mono">Lifecycle</small><b className="mono">{operatorInfo.data?.lifecycleState ?? (useLiveProfile ? "—" : "active")}</b></span>
@@ -1640,9 +1648,9 @@ const OperatorPage = ({ addr, go }: any) => {
                     <span className={`pill ${role.tone === "neutral" ? "" : role.tone}`}>{role.label}</span>
                     <span className="mono op-membership-card__meta">
                       {isRosterCluster
-                        ? liveMembership?.blsPubkey
-                          ? `BLS ${fmtHashShort(liveMembership.blsPubkey, 12, 0)}`
-                          : "BLS not reported"
+                        ? liveMembership?.consensusPubkey
+                          ? `consensus ${fmtHashShort(liveMembership.consensusPubkey, 12, 0)}`
+                          : "consensus key not reported"
                         : "reported by operator info"}
                     </span>
                   </button>
@@ -2257,7 +2265,7 @@ const OperatorsPage = ({go}: any) => {
     return {
       mode: "live",
       key: op.operatorId,
-      search: `${op.operatorId} ${op.blsPubkey ?? ""} ${op.state ?? ""} ${cluster} cluster-${op.clusterId + 1}`.toLowerCase(),
+      search: `${op.operatorId} ${op.consensusPubkey ?? ""} ${op.state ?? ""} ${cluster} cluster-${op.clusterId + 1}`.toLowerCase(),
       clusterSearch: `${cluster} cluster-${op.clusterId + 1} ${op.clusterId + 1}`.toLowerCase(),
       stateKind,
       href: `#/operator/${encodeURIComponent(op.operatorId)}`,
@@ -2268,8 +2276,8 @@ const OperatorsPage = ({go}: any) => {
       pillLabel: role.label,
       pillTone: role.tone,
       clusterLabel: cluster,
-      kvLabel: "BLS",
-      kvValue: op.blsPubkey ? fmtHashShort(op.blsPubkey, 10, 0) : "not reported",
+      kvLabel: "Consensus",
+      kvValue: op.consensusPubkey ? fmtHashShort(op.consensusPubkey, 10, 0) : "not reported",
     };
   }), [roster.operators]);
   const fixtureOperatorRows = useMemo<OperatorCardRow[]>(() => SCAN.operators.map((op) => {
@@ -2357,7 +2365,7 @@ const OperatorsPage = ({go}: any) => {
             <input
               value={operatorQuery}
               onChange={(event)=>setOperatorQuery(event.target.value)}
-              placeholder={useLiveRoster ? "operator id, BLS key, state" : "handle, address, region"}
+              placeholder={useLiveRoster ? "operator id, consensus key, state" : "handle, address, region"}
             />
           </label>
           <label className="op-search op-search--small">

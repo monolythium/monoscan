@@ -300,7 +300,7 @@ const MARKET_DEFS: Array<[number, string, string, string, string]> = [
   [24, "wLINK", "Wrapped Chainlink", "major", "mid"],
   [25, "wUNI", "Wrapped Uniswap", "major", "mid"],
   [26, "wAAVE", "Wrapped Aave", "major", "mid"],
-  [27, "BLS", "BLS-agg rewards", "major", "mid"],
+  [27, "Round cert", "round-certificate rewards", "major", "mid"],
   [28, "SLH", "SLH-DSA credit", "major", "mid"],
   [29, "wDAI", "Wrapped DAI", "stable", "mid"],
   [30, "wTON", "Wrapped TON", "major", "mid"],

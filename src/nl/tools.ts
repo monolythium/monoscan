@@ -659,7 +659,7 @@ export const TOOL_CATALOG: ReadonlyArray<{
 }> = [
   {
     name: "get_block",
-    description: "Fetch a block by number or hash. Returns committed state, execution-unit usage, transaction count, BLS aggregation, DAC coverage.",
+    description: "Fetch a block by number or hash. Returns committed state, execution-unit usage, transaction count, round-certificate status, DAC coverage.",
     input_schema: {
       type: "object",
       properties: {
