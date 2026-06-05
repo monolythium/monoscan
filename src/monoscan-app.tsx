@@ -29,6 +29,7 @@ import {
   useClusterStatus,
   useClusterApr,
   useClusterName,
+  useClusterHistory,
   useHealthyClusters,
   useActiveClusters,
   useOperatorAuthority,
@@ -64,6 +65,25 @@ const SCAN = MONOSCAN_DATA;
 const CHAIN_ID = 69420;
 
 const clusterLabel = (slot: number | string) => `C-${String(slot).padStart(3, "0")}`;
+
+const clusterHistoryWhen = (row: any) => {
+  if (typeof row.timestamp === "number" && Number.isFinite(row.timestamp) && row.timestamp > 0) {
+    return new Date(row.timestamp * 1000).toLocaleString(undefined, {
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+  return `block #${Number(row.blockNumber ?? 0).toLocaleString()}`;
+};
+
+const clusterHistoryTone = (row: any) => {
+  if (row.kind === "joined" || row.kind === "formed") return "ok";
+  if (row.kind === "left" || row.kind === "pending_remove") return "warn";
+  if (row.status === "cancelled" || row.status === "expired") return "err";
+  return row.status === "applied" ? "ok" : "info";
+};
 
 const openWalletStakeIntent = (cluster: any) => {
   const clusterId = String(cluster.slot);
@@ -836,6 +856,7 @@ const ClusterPage = ({ slot, go }: any) => {
   const liveStatus = clusterStatus.data;
   const clusterApr = useClusterApr(liveClusterId);
   const clusterName = useClusterName(liveClusterId);
+  const clusterHistory = useClusterHistory(liveClusterId);
   // lyth_getClusterName (core-sdk 0.3.14+): on-chain registered name, or null →
   // fall back to the C-NNN label.
   const liveClusterName = clusterName.data?.name ?? null;
@@ -1182,10 +1203,51 @@ const ClusterPage = ({ slot, go }: any) => {
                 Per-cluster vertex history is not exposed by the live index yet.
               </div>
             </Card>
-            <Card title="State history · last 14 days">
-              <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"6px 2px"}}>
-                Historical cluster state and slash records are not exposed by this node yet.
-              </div>
+            <Card title="Cluster history">
+              {clusterHistory.isLoading ? (
+                <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"6px 2px"}}>
+                  Loading cluster history…
+                </div>
+              ) : clusterHistory.data?.events?.length ? (
+                <>
+                  <table className="ms-table">
+                    <thead>
+                      <tr><th>When</th><th>Event</th><th>Operator</th><th>Status</th><th>Anchor</th></tr>
+                    </thead>
+                    <tbody>
+                      {clusterHistory.data.events.slice(0, 12).map((row:any) => (
+                        <tr key={row.id}>
+                          <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{clusterHistoryWhen(row)}</td>
+                          <td>
+                            <div style={{display:"grid",gap:3}}>
+                              <span style={{fontSize:12,color:"var(--fg-100)"}}>{row.label}</span>
+                              <span className="mono" style={{fontSize:10.5,color:"var(--fg-500)"}}>{row.detail}</span>
+                            </div>
+                          </td>
+                          <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>
+                            {row.operatorId ? fmtHashShort(row.operatorId, 12, 6) : "cluster"}
+                          </td>
+                          <td>
+                            <span className={`pill ${clusterHistoryTone(row)}`}>{row.inferred ? "derived" : row.status}</span>
+                          </td>
+                          <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)"}}>
+                            {row.txHash ? fmtHashShort(row.txHash, 10, 6) : `#${Number(row.blockNumber ?? 0).toLocaleString()}`}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {clusterHistory.data.truncated && (
+                    <div className="mono" style={{fontSize:10,color:"var(--fg-500)",marginTop:10}}>
+                      Showing events since block #{clusterHistory.data.fromBlock.toLocaleString()}.
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"6px 2px"}}>
+                  No cluster membership events found in the retained window.
+                </div>
+              )}
             </Card>
           </>
         ) : (

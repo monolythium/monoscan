@@ -272,6 +272,8 @@ export const QK = {
   activeClusters: () => ["mono", "clusters", "active"] as const,
   healthyClusters: () => ["mono", "clusters", "healthy"] as const,
   clusterStatus: (id: string | number) => ["mono", "cluster", id, "status"] as const,
+  clusterHistory: (id: string | number, windowBlocks: number) =>
+    ["mono", "cluster", id, "history", windowBlocks] as const,
   clusterEntity: (id: string | number) => ["mono", "cluster", id, "entity"] as const,
   operatorAuthority: (id: string) => ["mono", "operator", id, "authority"] as const,
   operatorInfo: (id: string) => ["mono", "operator", id, "info"] as const,

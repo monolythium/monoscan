@@ -4519,6 +4519,668 @@ export function useClusterStatus(cluster: number | undefined) {
   });
 }
 
+const CLUSTER_HISTORY_WINDOW_BLOCKS = 150_000;
+const CLUSTER_HISTORY_LOG_CHUNK = 1024;
+const CLUSTER_HISTORY_LIMIT = 160;
+const CLUSTER_HISTORY_MEMBER_REF_BYTES = 48;
+
+const CLUSTER_HISTORY_EVENT_SIGS = {
+  clusterFormed: CoreSdk.CLUSTER_FORMED_EVENT_SIG,
+  clusterJoinRequested: "ClusterJoinRequested(uint32,bytes32,address,uint64,uint16,uint16,uint128)",
+  clusterJoinVoted: "ClusterJoinVoted(uint32,bytes32,bytes32,uint16,uint16)",
+  clusterJoinAdmitted: "ClusterJoinAdmitted(uint32,bytes32,uint64,bool)",
+  clusterJoinCancelled: "ClusterJoinCancelled(uint32,bytes32,uint8)",
+  pendingChangeQueued: "PendingChangeQueued(uint8,uint64,bytes32,uint64)",
+  pendingChangeCancelled: "PendingChangeCancelled(uint64,bytes32)",
+  validatorSetTransition: "ValidatorSetTransition(uint64,uint32,uint32,uint32,uint32,uint32)",
+  entityChanged: "EntityChanged(uint32,uint8)",
+} as const;
+
+const CLUSTER_HISTORY_TOPICS = Object.fromEntries(
+  Object.entries(CLUSTER_HISTORY_EVENT_SIGS).map(([key, sig]) => [
+    key,
+    keccak256(new TextEncoder().encode(sig)),
+  ]),
+) as Record<keyof typeof CLUSTER_HISTORY_EVENT_SIGS, string>;
+
+interface EthLogRow {
+  address: string;
+  topics: string[];
+  data: string;
+  blockHash: string;
+  blockNumber: string;
+  transactionHash: string;
+  transactionIndex: string;
+  logIndex: string;
+  removed?: boolean;
+}
+
+export type ClusterHistoryKind =
+  | "formed"
+  | "joined"
+  | "left"
+  | "join_requested"
+  | "join_voted"
+  | "join_admitted"
+  | "join_cancelled"
+  | "pending_add"
+  | "pending_remove"
+  | "pending_rotate"
+  | "pending_cancelled"
+  | "transition"
+  | "entity_changed";
+
+export interface ClusterHistoryRow {
+  id: string;
+  clusterId: number | null;
+  kind: ClusterHistoryKind;
+  label: string;
+  detail: string;
+  status: "applied" | "queued" | "pending" | "cancelled" | "expired" | "info" | "derived";
+  operatorId: string | null;
+  actorId: string | null;
+  blockNumber: number;
+  blockHash: string | null;
+  txHash: string | null;
+  txIndex: number | null;
+  logIndex: number | null;
+  timestamp: number | null;
+  effectiveEpoch: string | null;
+  anchor: string | null;
+  inferred: boolean;
+}
+
+export interface ClusterHistoryResponse {
+  clusterId: number;
+  fromBlock: number;
+  toBlock: number;
+  truncated: boolean;
+  events: ClusterHistoryRow[];
+  source: {
+    registryLogs: boolean;
+    resignations: boolean;
+    activationRows: "canonical" | "derived";
+  };
+}
+
+interface ClusterMembershipHistoryRpcRow {
+  clusterId?: number | string | bigint | null;
+  operatorId?: string | null;
+  operatorPubkey?: string | null;
+  action?: "joined" | "left" | string | null;
+  epoch?: number | string | bigint | null;
+  appliedAtHeight?: number | string | bigint | null;
+  appliedAtTimestampMs?: number | string | bigint | null;
+  sequence?: number | string | bigint | null;
+}
+
+interface ClusterMembershipHistoryRpcResponse {
+  schemaVersion?: number;
+  source?: string;
+  rows?: ClusterMembershipHistoryRpcRow[];
+}
+
+function clusterHistoryTopic(sig: keyof typeof CLUSTER_HISTORY_EVENT_SIGS): string {
+  return CLUSTER_HISTORY_TOPICS[sig].toLowerCase();
+}
+
+function hexQuantity(n: number): string {
+  return `0x${Math.max(0, Math.trunc(n)).toString(16)}`;
+}
+
+function parseHexQuantity(value: string | number | bigint | null | undefined): number {
+  if (typeof value === "bigint") return Number(value);
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (!value) return 0;
+  const trimmed = String(value).trim();
+  if (trimmed.startsWith("0x") || trimmed.startsWith("0X")) {
+    return Number.parseInt(trimmed.slice(2) || "0", 16);
+  }
+  return Number(trimmed) || 0;
+}
+
+function normalizeHex(value: string): string {
+  const body = value.startsWith("0x") || value.startsWith("0X") ? value.slice(2) : value;
+  return `0x${body.toLowerCase()}`;
+}
+
+function wordAt(data: string, index: number): string | null {
+  const body = normalizeHex(data).slice(2);
+  const start = index * 64;
+  if (body.length < start + 64) return null;
+  return `0x${body.slice(start, start + 64)}`;
+}
+
+function wordBigInt(word: string | null | undefined): bigint {
+  if (!word) return 0n;
+  try {
+    return BigInt(normalizeHex(word));
+  } catch {
+    return 0n;
+  }
+}
+
+function wordNumber(word: string | null | undefined): number {
+  return Number(wordBigInt(word));
+}
+
+function wordAddress(word: string | null | undefined): string | null {
+  if (!word) return null;
+  const body = normalizeHex(word).slice(2).padStart(64, "0");
+  return `0x${body.slice(24)}`;
+}
+
+function topicNumber(topic: string | null | undefined): number {
+  return wordNumber(topic ?? null);
+}
+
+function topicHash(topic: string | null | undefined): string | null {
+  return topic ? normalizeHex(topic) : null;
+}
+
+function pendingChangeKind(kind: number): "add" | "remove" | "rotate" | "unknown" {
+  if (kind === 1) return "add";
+  if (kind === 2) return "remove";
+  if (kind === 3) return "rotate";
+  return "unknown";
+}
+
+function clusterHistoryBase(
+  log: EthLogRow,
+  blockTimestamps: Map<number, number | null>,
+): Pick<ClusterHistoryRow, "blockNumber" | "blockHash" | "txHash" | "txIndex" | "logIndex" | "timestamp" | "anchor"> {
+  const blockNumber = parseHexQuantity(log.blockNumber);
+  return {
+    blockNumber,
+    blockHash: log.blockHash ?? null,
+    txHash: log.transactionHash ?? null,
+    txIndex: parseHexQuantity(log.transactionIndex),
+    logIndex: parseHexQuantity(log.logIndex),
+    timestamp: blockTimestamps.get(blockNumber) ?? null,
+    anchor: log.transactionHash ?? log.blockHash ?? null,
+  };
+}
+
+function clusterHistoryRowId(row: Pick<ClusterHistoryRow, "kind" | "blockNumber" | "txIndex" | "logIndex" | "operatorId">): string {
+  return [
+    row.kind,
+    row.blockNumber,
+    row.txIndex ?? "x",
+    row.logIndex ?? "x",
+    row.operatorId ?? "cluster",
+  ].join(":");
+}
+
+function clusterMembershipHistoryRow(row: ClusterMembershipHistoryRpcRow): ClusterHistoryRow | null {
+  const action = row.action === "joined" || row.action === "left" ? row.action : null;
+  const operatorId = typeof row.operatorId === "string" && row.operatorId.trim() ? normalizeHex(row.operatorId) : null;
+  const blockNumber = readNumberField(row, ["appliedAtHeight", "applied_at_height"]);
+  if (!action || !operatorId || blockNumber === null) return null;
+  const clusterId = readNumberField(row, ["clusterId", "cluster_id"]);
+  const epoch = readStringField(row, ["epoch"]) ?? "";
+  const timestampMs = readNumberField(row, ["appliedAtTimestampMs", "applied_at_timestamp_ms"]);
+  const sequence = readNumberField(row, ["sequence"]) ?? 0;
+  return {
+    id: `membership:${action}:${blockNumber}:${sequence}:${operatorId}`,
+    clusterId,
+    kind: action,
+    label: action === "joined" ? "Operator joined" : "Operator left",
+    detail: `${action === "joined" ? "activated" : "removed"} at epoch ${epoch || "unknown"}`,
+    status: "applied",
+    operatorId,
+    actorId: null,
+    blockNumber,
+    blockHash: null,
+    txHash: null,
+    txIndex: null,
+    logIndex: null,
+    timestamp: timestampMs === null ? null : Math.floor(timestampMs / 1000),
+    effectiveEpoch: epoch || null,
+    anchor: null,
+    inferred: false,
+  };
+}
+
+function clusterMembershipDedupKey(row: Pick<ClusterHistoryRow, "kind" | "operatorId" | "blockNumber">): string | null {
+  if ((row.kind !== "joined" && row.kind !== "left") || !row.operatorId) return null;
+  return `${row.kind}:${row.operatorId.toLowerCase()}:${row.blockNumber}`;
+}
+
+async function fetchCanonicalClusterMembershipHistory(clusterId: number): Promise<ClusterHistoryRow[]> {
+  const rpc = getRpcClient();
+  const response = await rpc.call<ClusterMembershipHistoryRpcResponse>("lyth_clusterMembershipHistory", [
+    clusterId,
+    { limit: CLUSTER_HISTORY_LIMIT },
+  ]);
+  const rows = Array.isArray(response?.rows) ? response.rows : [];
+  return rows
+    .map(clusterMembershipHistoryRow)
+    .filter((row): row is ClusterHistoryRow => row !== null && row.clusterId === clusterId);
+}
+
+function rosterOperatorIds(rosterHex: string): string[] {
+  const body = normalizeHex(rosterHex).slice(2);
+  const memberHexLen = CLUSTER_HISTORY_MEMBER_REF_BYTES * 2;
+  const out: string[] = [];
+  for (let i = 0; i + memberHexLen <= body.length; i += memberHexLen) {
+    const opHash = body.slice(i, i + 64);
+    if (!/^0+$/.test(opHash)) out.push(`0x${opHash}`);
+  }
+  return out;
+}
+
+async function fetchClusterHistoryLogs(fromBlock: number, toBlock: number): Promise<EthLogRow[]> {
+  const rpc = getRpcClient();
+  const eventTopics = Object.keys(CLUSTER_HISTORY_EVENT_SIGS).map((key) =>
+    clusterHistoryTopic(key as keyof typeof CLUSTER_HISTORY_EVENT_SIGS),
+  );
+  const rows: EthLogRow[] = [];
+  for (let from = fromBlock; from <= toBlock; from += CLUSTER_HISTORY_LOG_CHUNK) {
+    const to = Math.min(toBlock, from + CLUSTER_HISTORY_LOG_CHUNK - 1);
+    const page = await rpc.call<EthLogRow[]>("eth_getLogs", [{
+      fromBlock: hexQuantity(from),
+      toBlock: hexQuantity(to),
+      address: CoreSdk.nodeRegistryAddressHex(),
+      topics: [eventTopics],
+    }]);
+    rows.push(...page);
+  }
+  return rows;
+}
+
+async function fetchClusterHistoryTimestamps(blocks: Iterable<number>): Promise<Map<number, number | null>> {
+  const rpc = getRpcClient();
+  const unique = [...new Set([...blocks].filter((b) => Number.isFinite(b) && b >= 0))];
+  const entries = await Promise.all(unique.map(async (height) => {
+    try {
+      const block = await rpc.ethGetBlockByNumber(height);
+      return [height, block ? Number(block.timestamp) : null] as const;
+    } catch {
+      return [height, null] as const;
+    }
+  }));
+  return new Map(entries);
+}
+
+function decodeClusterHistoryLogs(
+  clusterId: number,
+  logs: EthLogRow[],
+  blockTimestamps: Map<number, number | null>,
+): ClusterHistoryRow[] {
+  const rows: ClusterHistoryRow[] = [];
+  const admittedByEpoch = new Map<string, ClusterHistoryRow[]>();
+  const removedByEpoch = new Map<string, ClusterHistoryRow[]>();
+  const transitionRows: Array<ClusterHistoryRow & { admittedCount: number; deactivatedCount: number }> = [];
+
+  for (const log of logs) {
+    const topic0 = normalizeHex(log.topics[0] ?? "");
+    const base = clusterHistoryBase(log, blockTimestamps);
+    const push = (row: Omit<ClusterHistoryRow, "id">) => {
+      const full = { ...row, id: clusterHistoryRowId(row) };
+      rows.push(full);
+      return full;
+    };
+
+    if (topic0 === clusterHistoryTopic("clusterFormed")) {
+      let formed: CoreSdk.ClusterFormedEvent;
+      try {
+        formed = CoreSdk.decodeClusterFormedEvent(log.topics, log.data);
+      } catch {
+        continue;
+      }
+      if (formed.clusterId !== clusterId) continue;
+      const operatorIds = rosterOperatorIds(formed.operatorRoster);
+      push({
+        ...base,
+        clusterId,
+        kind: "formed",
+        label: "Cluster formed",
+        detail: `${operatorIds.length} founding operator${operatorIds.length === 1 ? "" : "s"}; effective epoch ${formed.effectiveEpoch.toString()}`,
+        status: "applied",
+        operatorId: null,
+        actorId: null,
+        effectiveEpoch: formed.effectiveEpoch.toString(),
+        anchor: formed.anchorAddress,
+        inferred: false,
+      });
+      for (const operatorId of operatorIds) {
+        push({
+          ...base,
+          clusterId,
+          kind: "joined",
+          label: "Founding operator joined",
+          detail: `included in formation roster for epoch ${formed.effectiveEpoch.toString()}`,
+          status: "applied",
+          operatorId,
+          actorId: null,
+          effectiveEpoch: formed.effectiveEpoch.toString(),
+          anchor: log.transactionHash ?? formed.anchorAddress,
+          inferred: false,
+        });
+      }
+      continue;
+    }
+
+    if (topic0 === clusterHistoryTopic("clusterJoinRequested")) {
+      const eventCluster = topicNumber(log.topics[1]);
+      if (eventCluster !== clusterId) continue;
+      const requestEpoch = wordBigInt(wordAt(log.data, 1));
+      push({
+        ...base,
+        clusterId,
+        kind: "join_requested",
+        label: "Join requested",
+        detail: `owner ${wordAddress(wordAt(log.data, 0)) ?? "unknown"}; requested at epoch ${requestEpoch.toString()}`,
+        status: "pending",
+        operatorId: topicHash(log.topics[2]),
+        actorId: null,
+        effectiveEpoch: requestEpoch.toString(),
+        inferred: false,
+      });
+      continue;
+    }
+
+    if (topic0 === clusterHistoryTopic("clusterJoinVoted")) {
+      const eventCluster = topicNumber(log.topics[1]);
+      if (eventCluster !== clusterId) continue;
+      const voteCount = wordNumber(wordAt(log.data, 0));
+      const threshold = wordNumber(wordAt(log.data, 1));
+      push({
+        ...base,
+        clusterId,
+        kind: "join_voted",
+        label: "Join vote recorded",
+        detail: `${voteCount}/${threshold} votes collected`,
+        status: "pending",
+        operatorId: topicHash(log.topics[2]),
+        actorId: topicHash(log.topics[3]),
+        effectiveEpoch: null,
+        inferred: false,
+      });
+      continue;
+    }
+
+    if (topic0 === clusterHistoryTopic("clusterJoinAdmitted")) {
+      const eventCluster = topicNumber(log.topics[1]);
+      if (eventCluster !== clusterId) continue;
+      const effectiveEpoch = wordBigInt(wordAt(log.data, 0)).toString();
+      const sealRosterPending = wordBigInt(wordAt(log.data, 1)) !== 0n;
+      const row = push({
+        ...base,
+        clusterId,
+        kind: "join_admitted",
+        label: "Join admitted",
+        detail: `scheduled for epoch ${effectiveEpoch}; seal roster ${sealRosterPending ? "pending" : "ready"}`,
+        status: "queued",
+        operatorId: topicHash(log.topics[2]),
+        actorId: null,
+        effectiveEpoch,
+        inferred: false,
+      });
+      const admitted = admittedByEpoch.get(effectiveEpoch) ?? [];
+      admitted.push(row);
+      admittedByEpoch.set(effectiveEpoch, admitted);
+      continue;
+    }
+
+    if (topic0 === clusterHistoryTopic("clusterJoinCancelled")) {
+      const eventCluster = topicNumber(log.topics[1]);
+      if (eventCluster !== clusterId) continue;
+      const statusCode = wordNumber(wordAt(log.data, 0));
+      const expired = statusCode === 4;
+      push({
+        ...base,
+        clusterId,
+        kind: "join_cancelled",
+        label: expired ? "Join expired" : "Join cancelled",
+        detail: `request status ${statusCode}`,
+        status: expired ? "expired" : "cancelled",
+        operatorId: topicHash(log.topics[2]),
+        actorId: null,
+        effectiveEpoch: null,
+        inferred: false,
+      });
+      continue;
+    }
+
+    if (topic0 === clusterHistoryTopic("pendingChangeQueued")) {
+      if (clusterId !== 0) continue;
+      const kindCode = topicNumber(log.topics[1]);
+      const kind = pendingChangeKind(kindCode);
+      const effectiveEpoch = wordBigInt(log.topics[2]).toString();
+      const operatorId = wordAt(log.data, 0);
+      const intentId = wordBigInt(wordAt(log.data, 1));
+      const historyKind: ClusterHistoryKind =
+        kind === "add" ? "pending_add" : kind === "remove" ? "pending_remove" : "pending_rotate";
+      const row = push({
+        ...base,
+        clusterId: null,
+        kind: historyKind,
+        label: kind === "add" ? "Pending add queued" : kind === "remove" ? "Pending remove queued" : "Pending rotation queued",
+        detail: `effective epoch ${effectiveEpoch}; intent ${intentId.toString()}`,
+        status: "queued",
+        operatorId,
+        actorId: null,
+        effectiveEpoch,
+        inferred: true,
+      });
+      if (kind === "remove" && operatorId) {
+        const removed = removedByEpoch.get(effectiveEpoch) ?? [];
+        removed.push(row);
+        removedByEpoch.set(effectiveEpoch, removed);
+      }
+      continue;
+    }
+
+    if (topic0 === clusterHistoryTopic("pendingChangeCancelled")) {
+      if (clusterId !== 0) continue;
+      push({
+        ...base,
+        clusterId: null,
+        kind: "pending_cancelled",
+        label: "Pending change cancelled",
+        detail: `effective epoch ${wordBigInt(log.topics[1]).toString()}`,
+        status: "cancelled",
+        operatorId: topicHash(log.topics[2]),
+        actorId: null,
+        effectiveEpoch: wordBigInt(log.topics[1]).toString(),
+        inferred: true,
+      });
+      continue;
+    }
+
+    if (topic0 === clusterHistoryTopic("validatorSetTransition")) {
+      if (clusterId !== 0) continue;
+      const effectiveEpoch = wordBigInt(log.topics[1]).toString();
+      const oldSize = wordNumber(wordAt(log.data, 0));
+      const newSize = wordNumber(wordAt(log.data, 1));
+      const admittedCount = wordNumber(wordAt(log.data, 2));
+      const deactivatedCount = wordNumber(wordAt(log.data, 3));
+      const stalledCount = wordNumber(wordAt(log.data, 4));
+      const row = push({
+        ...base,
+        clusterId: null,
+        kind: "transition",
+        label: "Roster transition applied",
+        detail: `${oldSize} -> ${newSize}; ${admittedCount} joined, ${deactivatedCount} left, ${stalledCount} stalled`,
+        status: "applied",
+        operatorId: null,
+        actorId: null,
+        effectiveEpoch,
+        inferred: false,
+      }) as ClusterHistoryRow & { admittedCount: number; deactivatedCount: number };
+      row.admittedCount = admittedCount;
+      row.deactivatedCount = deactivatedCount;
+      transitionRows.push(row);
+      continue;
+    }
+
+    if (topic0 === clusterHistoryTopic("entityChanged")) {
+      const eventCluster = topicNumber(log.topics[1]);
+      if (eventCluster !== clusterId) continue;
+      push({
+        ...base,
+        clusterId,
+        kind: "entity_changed",
+        label: "Entity classification changed",
+        detail: `new kind ${wordNumber(wordAt(log.data, 0))}`,
+        status: "applied",
+        operatorId: null,
+        actorId: null,
+        effectiveEpoch: null,
+        inferred: false,
+      });
+    }
+  }
+
+  for (const transition of transitionRows) {
+    const epoch = transition.effectiveEpoch ?? "";
+    const admitted = admittedByEpoch.get(epoch) ?? [];
+    for (const admittedRow of admitted.slice(0, Math.max(0, transition.admittedCount))) {
+      rows.push({
+        ...transition,
+        id: `joined:${transition.blockNumber}:${transition.txIndex ?? "x"}:${transition.logIndex ?? "x"}:${admittedRow.operatorId}`,
+        clusterId,
+        kind: "joined",
+        label: "Operator joined",
+        detail: `activated at epoch ${epoch}; derived from admission plus roster transition`,
+        status: "derived",
+        operatorId: admittedRow.operatorId,
+        actorId: null,
+        inferred: true,
+      });
+    }
+    const removed = removedByEpoch.get(epoch) ?? [];
+    for (const removedRow of removed.slice(0, Math.max(0, transition.deactivatedCount))) {
+      rows.push({
+        ...transition,
+        id: `left:${transition.blockNumber}:${transition.txIndex ?? "x"}:${transition.logIndex ?? "x"}:${removedRow.operatorId}`,
+        clusterId,
+        kind: "left",
+        label: "Operator left",
+        detail: `removed at epoch ${epoch}; derived from pending remove plus roster transition`,
+        status: "derived",
+        operatorId: removedRow.operatorId,
+        actorId: null,
+        inferred: true,
+      });
+    }
+  }
+
+  return rows;
+}
+
+async function readClusterHistory(clusterId: number): Promise<ClusterHistoryResponse | null> {
+  if (!isRpcConfigured()) return null;
+  const rpc = getRpcClient();
+  const latest = Number(await rpc.ethBlockNumber());
+  const fromBlock = Math.max(0, latest - CLUSTER_HISTORY_WINDOW_BLOCKS);
+  const canonicalMembershipRows = await fetchCanonicalClusterMembershipHistory(clusterId).catch(() => []);
+  const logs = await fetchClusterHistoryLogs(fromBlock, latest);
+  const resignationRows = clusterId === 0
+    ? await rpc.lythGetClusterResignations(null, "all").then((r) => r.rows).catch(() => [])
+    : [];
+  const logBlocks = logs.map((log) => parseHexQuantity(log.blockNumber));
+  const resignationBlocks = resignationRows.flatMap((row) => [
+    row.submitted_at_height === undefined ? null : Number(row.submitted_at_height),
+    row.effective_at_height === undefined ? null : Number(row.effective_at_height),
+  ]).filter((height): height is number => height !== null && Number.isFinite(height));
+  const blockTimestamps = await fetchClusterHistoryTimestamps([...logBlocks, ...resignationBlocks]);
+  const canonicalMembershipKeys = new Set(
+    canonicalMembershipRows
+      .map(clusterMembershipDedupKey)
+      .filter((key): key is string => key !== null),
+  );
+  const events = decodeClusterHistoryLogs(clusterId, logs, blockTimestamps)
+    .filter((row) => {
+      const key = clusterMembershipDedupKey(row);
+      return !(row.inferred && key !== null && canonicalMembershipKeys.has(key));
+    });
+  events.push(...canonicalMembershipRows);
+
+  for (const row of resignationRows) {
+    if (row.submitted_at_height !== undefined) {
+      const blockNumber = Number(row.submitted_at_height);
+      events.push({
+        id: `resignation-submitted:${blockNumber}:${row.operator}:${row.nonce.toString()}`,
+        clusterId: null,
+        kind: "pending_remove",
+        label: "Resignation submitted",
+        detail: `nonce ${row.nonce.toString()}; ${row.expedited ? "expedited" : "standard"} path`,
+        status: row.status === "applied" ? "applied" : "pending",
+        operatorId: row.operator,
+        actorId: null,
+        blockNumber,
+        blockHash: null,
+        txHash: null,
+        txIndex: null,
+        logIndex: null,
+        timestamp: blockTimestamps.get(blockNumber) ?? null,
+        effectiveEpoch: null,
+        anchor: null,
+        inferred: true,
+      });
+    }
+    if (row.status === "applied" && row.effective_at_height !== undefined) {
+      const blockNumber = Number(row.effective_at_height);
+      events.push({
+        id: `resignation-applied:${blockNumber}:${row.operator}:${row.nonce.toString()}`,
+        clusterId: null,
+        kind: "left",
+        label: "Operator left",
+        detail: `resignation applied; nonce ${row.nonce.toString()}`,
+        status: "applied",
+        operatorId: row.operator,
+        actorId: null,
+        blockNumber,
+        blockHash: null,
+        txHash: null,
+        txIndex: null,
+        logIndex: null,
+        timestamp: blockTimestamps.get(blockNumber) ?? null,
+        effectiveEpoch: null,
+        anchor: null,
+        inferred: false,
+      });
+    }
+  }
+
+  events.sort((a, b) =>
+    b.blockNumber - a.blockNumber ||
+    (b.txIndex ?? -1) - (a.txIndex ?? -1) ||
+    (b.logIndex ?? -1) - (a.logIndex ?? -1) ||
+    a.kind.localeCompare(b.kind),
+  );
+
+  return {
+    clusterId,
+    fromBlock,
+    toBlock: latest,
+    truncated: fromBlock > 0,
+    events: events.slice(0, CLUSTER_HISTORY_LIMIT),
+    source: {
+      registryLogs: true,
+      resignations: clusterId === 0,
+      activationRows: canonicalMembershipRows.length > 0 ? "canonical" : "derived",
+    },
+  };
+}
+
+export function useClusterHistory(cluster: number | undefined) {
+  return useQuery<ClusterHistoryResponse | null>({
+    queryKey: QK.clusterHistory(cluster ?? "", CLUSTER_HISTORY_WINDOW_BLOCKS),
+    enabled: cluster !== undefined && isRpcConfigured(),
+    queryFn: async () => {
+      try {
+        return await readClusterHistory(cluster as number);
+      } catch {
+        return null;
+      }
+    },
+    staleTime: 60_000,
+  });
+}
+
 const OPERATOR_ID_RE = /^0x[0-9a-fA-F]{64}$/;
 
 /** One row in `useLiveOperatorRoster`. */
