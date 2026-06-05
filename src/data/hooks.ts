@@ -93,6 +93,7 @@ import {
   type PeerSummaryAggregate,
   type PeerSummary,
   type PrecompileDescriptor,
+  type RegistryRecord,
   type RpcClient,
   type RichListResponse,
   type SearchResponse,
@@ -5182,6 +5183,41 @@ export function useClusterHistory(cluster: number | undefined) {
 }
 
 const OPERATOR_ID_RE = /^0x[0-9a-fA-F]{64}$/;
+const NODE_REGISTRY_SERVICE_MASK = 0x0000_FFFF;
+
+export interface RegisteredOperatorEntry {
+  operatorId: string;
+  capabilities: number;
+  endpoint: string;
+  bond: string;
+  registeredAtBlock: string;
+}
+
+function registryOperatorEntry(row: RegistryRecord): RegisteredOperatorEntry | null {
+  const operatorId = typeof row.peerId === "string" ? normalizeHex(row.peerId) : "";
+  if (!OPERATOR_ID_RE.test(operatorId)) return null;
+  return {
+    operatorId,
+    capabilities: Number(row.capabilities ?? 0),
+    endpoint: typeof row.endpoint === "string" ? row.endpoint : "",
+    bond: typeof row.bond === "string" ? row.bond : String(row.bond ?? ""),
+    registeredAtBlock: String(row.registeredAtBlock ?? ""),
+  };
+}
+
+export function useRegisteredOperators(limit = 256) {
+  return useQuery<RegisteredOperatorEntry[]>({
+    queryKey: QK.operatorRegistry(NODE_REGISTRY_SERVICE_MASK, limit),
+    enabled: isRpcConfigured(),
+    queryFn: async () => {
+      const rows = await getRpcClient().lythListProviders(NODE_REGISTRY_SERVICE_MASK, null, limit);
+      return rows
+        .map(registryOperatorEntry)
+        .filter((row): row is RegisteredOperatorEntry => row !== null);
+    },
+    staleTime: 60_000,
+  });
+}
 
 /** One row in `useLiveOperatorRoster`. */
 export interface LiveOperatorRosterEntry {

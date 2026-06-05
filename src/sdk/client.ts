@@ -276,6 +276,7 @@ export const QK = {
     ["mono", "cluster", id, "history", windowBlocks] as const,
   clusterEntity: (id: string | number) => ["mono", "cluster", id, "entity"] as const,
   operatorAuthority: (id: string) => ["mono", "operator", id, "authority"] as const,
+  operatorRegistry: (mask: number, limit: number) => ["mono", "operator", "registry", mask, limit] as const,
   operatorInfo: (id: string) => ["mono", "operator", id, "info"] as const,
   operatorSigningActivity: (idx: string | number) => ["mono", "operator", idx, "signing"] as const,
   operatorDuties: (idx: string | number) => ["mono", "operator", idx, "duties"] as const,

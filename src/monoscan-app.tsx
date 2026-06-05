@@ -46,6 +46,7 @@ import {
   useNativeSupply,
   useIndexerAvailability,
   useLiveOperatorRoster,
+  useRegisteredOperators,
   useOperatorCapabilities,
   NATIVE_INITIAL_SUPPLY_LYTHOSHI,
 } from "./data/hooks";
@@ -2272,7 +2273,7 @@ const MiniRing = ({ members, size=110, threshold=5, centerValue, centerLabel = "
 
 type OperatorCardMetric = { label: string; value: string };
 type OperatorCardRow = {
-  mode: "live" | "fixture";
+  mode: "live" | "registry" | "fixture";
   key: string;
   search: string;
   clusterSearch: string;
@@ -2297,6 +2298,7 @@ const OperatorsPage = ({go}: any) => {
   const clusters = useClusterSet();
   const healthyClusters = useHealthyClusters();
   const roster = useLiveOperatorRoster();
+  const registeredOperators = useRegisteredOperators();
   const indexerAvailability = useIndexerAvailability();
   const liveCount = clusters.data?.length ?? null;
   const healthyCount = healthyClusters.data?.length ?? null;
@@ -2306,6 +2308,13 @@ const OperatorsPage = ({go}: any) => {
   // fixture roster only when the cluster directory is unreachable — show
   // a typed empty/operator-id row whenever the live data resolves.
   const useLiveRoster = indexerAvailability.liveChain || (roster.loaded && roster.operators.length > 0);
+  const liveHistoryClusterId = useLiveRoster
+    ? (roster.fetchedClusters[0] ?? clusters.data?.[0]?.id ?? 0)
+    : undefined;
+  const liveHistoryClusterLabel = liveHistoryClusterId !== undefined
+    ? `C-${String(liveHistoryClusterId + 1).padStart(3, "0")}`
+    : "C-001";
+  const membershipHistory = useClusterHistory(liveHistoryClusterId);
   const [operatorQuery, setOperatorQuery] = useState("");
   const [operatorStateFilter, setOperatorStateFilter] = useState("all");
   const [operatorClusterFilter, setOperatorClusterFilter] = useState("");
@@ -2342,6 +2351,31 @@ const OperatorsPage = ({go}: any) => {
       kvValue: op.consensusPubkey ? fmtHashShort(op.consensusPubkey, 10, 0) : "not reported",
     };
   }), [roster.operators]);
+  const registryOperatorRows = useMemo<OperatorCardRow[]>(() => {
+    const seated = new Set(liveOperatorRows.map((row) => row.key.toLowerCase()));
+    return (registeredOperators.data ?? [])
+      .filter((op) => !seated.has(op.operatorId.toLowerCase()))
+      .map((op) => ({
+        mode: "registry" as const,
+        key: op.operatorId,
+        search: `${op.operatorId} ${op.endpoint} registered unclustered no cluster capability-${op.capabilities}`.toLowerCase(),
+        clusterSearch: "registered unclustered no cluster".toLowerCase(),
+        stateKind: "registered",
+        href: `#/operator/${encodeURIComponent(op.operatorId)}`,
+        tone: "info" as const,
+        avatarHue: operatorAvatarHue(op.operatorId),
+        name: fmtHashShort(op.operatorId, 10, 4),
+        id: fmtHashShort(op.operatorId, 14, 8),
+        pillLabel: "registered",
+        pillTone: "info",
+        clusterLabel: "No cluster",
+        metrics: [
+          { label: "Bonded", value: fmtLythAmount(op.bond) },
+          { label: "Since", value: op.registeredAtBlock ? `#${Number(op.registeredAtBlock).toLocaleString()}` : "—" },
+          { label: "Caps", value: `0x${op.capabilities.toString(16)}` },
+        ],
+      }));
+  }, [liveOperatorRows, registeredOperators.data]);
   const fixtureOperatorRows = useMemo<OperatorCardRow[]>(() => SCAN.operators.map((op) => {
     const clustersText = op.memberships.map((m) => `C-${String(m.slot).padStart(3, "0")} cluster-${m.slot}`).join(" ");
     return {
@@ -2365,9 +2399,9 @@ const OperatorsPage = ({go}: any) => {
       ],
     };
   }), []);
-  const allOperatorRows = useLiveRoster ? liveOperatorRows : fixtureOperatorRows;
+  const allOperatorRows = useLiveRoster ? [...liveOperatorRows, ...registryOperatorRows] : fixtureOperatorRows;
   const operatorStateOptions = useLiveRoster
-    ? [["all", "All"], ["active", "Active"], ["standby", "Standby"], ["lagging", "Lagging"], ["issues", "Issues"]]
+    ? [["all", "All"], ["active", "Active"], ["standby", "Standby"], ["registered", "Registered"], ["lagging", "Lagging"], ["issues", "Issues"]]
     : [["all", "All"], ["clean", "Clean"], ["issues", "Issues"]];
   const normalizedOperatorQuery = operatorQuery.trim().toLowerCase();
   const normalizedOperatorCluster = operatorClusterFilter.trim().toLowerCase();
@@ -2387,20 +2421,20 @@ const OperatorsPage = ({go}: any) => {
             <span className="ov-livedot"/>
             <span className="mono">
               {useLiveRoster
-                ? `${roster.operators.length} live roster rows${liveCount !== null ? ` · ${liveCount} cluster descriptor${liveCount===1?"":"s"}` : ""}`
+                ? `${allOperatorRows.length} live operator rows${registryOperatorRows.length ? ` · ${registryOperatorRows.length} registered without cluster` : ""}${liveCount !== null ? ` · ${liveCount} cluster descriptor${liveCount===1?"":"s"}` : ""}`
                 : `${SCAN.operators.length} preview operators · identity follows address`}
             </span>
           </div>
           <h1 className="op-overview-hero__title">Operator roster</h1>
           <p className="op-overview-hero__desc">
-            Operators carry stable identity across clusters. Live rows come from cluster status; richer reputation, uptime, bonded amount, and slash history appear once operator aggregates are indexed.
+            Operators carry stable identity across clusters. Live rows combine seated cluster members with bonded registry registrations; richer reputation, uptime, and slash history appear once operator aggregates are indexed.
           </p>
         </div>
         <div className="op-overview-hero__stats">
           <div className="op-stat-card">
             <span className="mono">Operators</span>
-            <b className="mono num">{useLiveRoster ? roster.operators.length : SCAN.operators.length}</b>
-            <small>{useLiveRoster ? "reported by cluster status" : "offline preview set"}</small>
+            <b className="mono num">{useLiveRoster ? allOperatorRows.length : SCAN.operators.length}</b>
+            <small>{useLiveRoster ? `${roster.operators.length} seated · ${registryOperatorRows.length} registered` : "offline preview set"}</small>
           </div>
           <div className="op-stat-card">
             <span className="mono">Active</span>
@@ -2510,6 +2544,52 @@ const OperatorsPage = ({go}: any) => {
           </div>
         )}
       </Card>
+
+      {useLiveRoster && (
+        <Card
+          title="Membership history"
+          sub={`${liveHistoryClusterLabel} joined and left operator records`}
+          right={<a className="ms-link" href={`#/cluster/${(liveHistoryClusterId ?? 0) + 1}`} onClick={()=>go(`#/cluster/${(liveHistoryClusterId ?? 0) + 1}`)}>Open cluster →</a>}
+        >
+          {membershipHistory.isLoading ? (
+            <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"6px 2px"}}>
+              Loading membership history…
+            </div>
+          ) : membershipHistory.data?.events?.length ? (
+            <table className="ms-table">
+              <thead>
+                <tr><th>When</th><th>Event</th><th>Operator</th><th>Status</th><th>Anchor</th></tr>
+              </thead>
+              <tbody>
+                {membershipHistory.data.events.slice(0, 10).map((row:any) => (
+                  <tr key={row.id} onClick={()=>row.operatorId && go(`#/operator/${encodeURIComponent(row.operatorId)}`)}>
+                    <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>{clusterHistoryWhen(row)}</td>
+                    <td>
+                      <div style={{display:"grid",gap:3}}>
+                        <span style={{fontSize:12,color:"var(--fg-100)"}}>{row.label}</span>
+                        <span className="mono" style={{fontSize:10.5,color:"var(--fg-500)"}}>{row.detail}</span>
+                      </div>
+                    </td>
+                    <td className="mono" style={{fontSize:11,color:"var(--fg-400)"}}>
+                      {row.operatorId ? fmtHashShort(row.operatorId, 12, 6) : liveHistoryClusterLabel}
+                    </td>
+                    <td>
+                      <span className={`pill ${clusterHistoryTone(row)}`}>{row.inferred ? "derived" : row.status}</span>
+                    </td>
+                    <td className="mono" style={{fontSize:10.5,color:"var(--fg-500)"}}>
+                      {row.txHash ? fmtHashShort(row.txHash, 10, 6) : row.blockNumber ? `#${Number(row.blockNumber).toLocaleString()}` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="mono" style={{color:"var(--fg-400)",fontSize:12,lineHeight:1.55,padding:"6px 2px"}}>
+              No membership changes have activated for {liveHistoryClusterLabel} yet.
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
 };
