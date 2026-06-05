@@ -5407,11 +5407,12 @@ export function useClusterApr(clusterId: number) {
 
 // On-chain cluster name (lyth_getClusterName, core-sdk 0.3.14+). null name means
 // the cluster has not registered a name; callers fall back to the C-NNN label.
-export function useClusterName(clusterId: number) {
+export function useClusterName(clusterId: number | undefined) {
   return useQuery<ClusterNameResponse | null>({
-    queryKey: ["mono", "cluster", clusterId, "name"],
+    queryKey: QK.clusterName(clusterId ?? ""),
+    enabled: clusterId !== undefined && isRpcConfigured(),
     queryFn: async () => {
-      if (!isRpcConfigured()) return null;
+      if (clusterId === undefined || !isRpcConfigured()) return null;
       try {
         return await getRpcClient().lythGetClusterName(clusterId);
       } catch {
@@ -5420,6 +5421,38 @@ export function useClusterName(clusterId: number) {
     },
     staleTime: 60_000,
   });
+}
+
+export function useClusterNameMap(
+  clusterIds: ReadonlyArray<number | null | undefined>,
+): Record<number, string> {
+  const ids = Array.from(
+    new Set(
+      clusterIds
+        .filter((id): id is number => typeof id === "number" && Number.isFinite(id) && id >= 0)
+        .map((id) => Math.trunc(id)),
+    ),
+  );
+  const results = useQueries({
+    queries: ids.map((id) => ({
+      queryKey: QK.clusterName(id),
+      enabled: isRpcConfigured(),
+      queryFn: async (): Promise<ClusterNameResponse | null> => {
+        try {
+          return await getRpcClient().lythGetClusterName(id);
+        } catch {
+          return null;
+        }
+      },
+      staleTime: 60_000,
+    })),
+  });
+  const names: Record<number, string> = {};
+  for (let i = 0; i < ids.length; i += 1) {
+    const name = results[i]?.data?.name?.trim();
+    if (name) names[ids[i]] = name;
+  }
+  return names;
 }
 
 // Resolve MRC token metadata (symbol/decimals/name) for a set of raw token ids

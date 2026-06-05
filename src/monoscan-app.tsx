@@ -29,6 +29,7 @@ import {
   useClusterStatus,
   useClusterApr,
   useClusterName,
+  useClusterNameMap,
   useClusterHistory,
   useHealthyClusters,
   useActiveClusters,
@@ -318,6 +319,14 @@ export const fmtClusterStake = (cl: any) =>
   cl?.stake !== null && cl?.stake !== undefined ? fmtLythAmount(cl.stake) : "not indexed";
 // One-based padded cluster label from a zero-based protocol cluster id.
 export const cName = (id: number | string) => `C-${String(Number(id) + 1).padStart(3, "0")}`;
+const clusterDisplayName = (id: number | string, names?: Record<number, string>) => {
+  const numericId = Number(id);
+  if (Number.isFinite(numericId)) {
+    const registered = names?.[numericId]?.trim();
+    if (registered) return registered;
+  }
+  return cName(id);
+};
 const surfaceLabel = (method = "") =>
   method
     .replace(/^lyth_/, "")
@@ -1512,6 +1521,11 @@ const OperatorPage = ({ addr, go }: any) => {
   const keyRotationLabel = keyRotation && "nextRound" in keyRotation
     ? `round ${fmtRoundish(keyRotation.nextRound)}`
     : "—";
+  const liveClusterIds = Array.from(new Set([
+    ...(liveMembership ? [liveMembership.clusterId] : []),
+    ...(operatorInfo.data?.activeClusterIds ?? []),
+  ]));
+  const liveClusterNames = useClusterNameMap(useLiveProfile ? liveClusterIds : []);
   if (indexerAvailability.liveChain && !useLiveProfile) {
     return (
       <div className="ms-page ms-operator-profile">
@@ -1533,15 +1547,11 @@ const OperatorPage = ({ addr, go }: any) => {
     useLiveProfile ? (liveMembership?.state ?? operatorInfo.data?.lifecycleState) : (op.slashes === 0 ? "active" : "lagging"),
   );
   const profileTone = operatorDetailTone(profileRole.tone);
-  const liveClusterIds = Array.from(new Set([
-    ...(liveMembership ? [liveMembership.clusterId] : []),
-    ...(operatorInfo.data?.activeClusterIds ?? []),
-  ]));
   const primaryClusterLabel = useLiveProfile
     ? liveClusterIds.length === 0
       ? "—"
       : liveClusterIds.length === 1
-        ? cName(liveClusterIds[0])
+        ? clusterDisplayName(liveClusterIds[0], liveClusterNames)
         : `${liveClusterIds.length} clusters`
     : `${op.memberships.length} clusters`;
   const displayName = useLiveProfile
@@ -1707,7 +1717,7 @@ const OperatorPage = ({ addr, go }: any) => {
                 return (
                   <button key={clusterId} type="button" className={`op-membership-card is-${tone}`} onClick={()=>go(`#/cluster/${clusterId + 1}`)}>
                     <span className="op-membership-card__pulse" aria-hidden="true"/>
-                    <span className="mono op-membership-card__label">{cName(clusterId)}</span>
+                    <span className="mono op-membership-card__label">{clusterDisplayName(clusterId, liveClusterNames)}</span>
                     <span className={`pill ${role.tone === "neutral" ? "" : role.tone}`}>{role.label}</span>
                     <span className="mono op-membership-card__meta">
                       {isRosterCluster
@@ -2276,6 +2286,7 @@ type OperatorCardRow = {
   mode: "live" | "registry" | "fixture";
   key: string;
   operatorId?: string;
+  clusterId?: number;
   search: string;
   clusterSearch: string;
   stateKind: string;
@@ -2343,11 +2354,12 @@ const OperatorsPage = ({go}: any) => {
   // fixture roster only when the cluster directory is unreachable — show
   // a typed empty/operator-id row whenever the live data resolves.
   const useLiveRoster = indexerAvailability.liveChain || (roster.loaded && roster.operators.length > 0);
+  const clusterNameMap = useClusterNameMap(useLiveRoster ? roster.fetchedClusters : []);
   const liveHistoryClusterId = useLiveRoster
     ? (roster.fetchedClusters[0] ?? clusters.data?.[0]?.id ?? 0)
     : undefined;
   const liveHistoryClusterLabel = liveHistoryClusterId !== undefined
-    ? `C-${String(liveHistoryClusterId + 1).padStart(3, "0")}`
+    ? clusterDisplayName(liveHistoryClusterId, clusterNameMap)
     : "C-001";
   const membershipHistory = useClusterHistory(liveHistoryClusterId);
   const [operatorQuery, setOperatorQuery] = useState("");
@@ -2363,7 +2375,8 @@ const OperatorsPage = ({go}: any) => {
     setOperatorVisible(60);
   }, [operatorQuery, operatorStateFilter, operatorClusterFilter, useLiveRoster]);
   const liveOperatorRows = useMemo<OperatorCardRow[]>(() => roster.operators.map((op) => {
-    const cluster = `C-${String(op.clusterId + 1).padStart(3, "0")}`;
+    const canonicalCluster = cName(op.clusterId);
+    const cluster = clusterDisplayName(op.clusterId, clusterNameMap);
     const isLagging = op.state === "lagging" || op.state === "degraded";
     const stateKind = _operatorIsActive(op.state) ? "active" : _operatorIsStandby(op.state) ? "standby" : isLagging ? "lagging" : "issues";
     const role = operatorRoleMeta(op.state);
@@ -2372,8 +2385,9 @@ const OperatorsPage = ({go}: any) => {
       mode: "live",
       key: op.operatorId,
       operatorId: op.operatorId,
-      search: `${op.operatorId} ${op.consensusPubkey ?? ""} ${op.state ?? ""} ${cluster} cluster-${op.clusterId + 1}`.toLowerCase(),
-      clusterSearch: `${cluster} cluster-${op.clusterId + 1} ${op.clusterId + 1}`.toLowerCase(),
+      clusterId: op.clusterId,
+      search: `${op.operatorId} ${op.consensusPubkey ?? ""} ${op.state ?? ""} ${cluster} ${canonicalCluster} cluster-${op.clusterId + 1}`.toLowerCase(),
+      clusterSearch: `${cluster} ${canonicalCluster} cluster-${op.clusterId + 1} ${op.clusterId + 1}`.toLowerCase(),
       stateKind,
       href: `#/operator/${encodeURIComponent(op.operatorId)}`,
       tone,
@@ -2386,7 +2400,7 @@ const OperatorsPage = ({go}: any) => {
       kvLabel: "Consensus",
       kvValue: op.consensusPubkey ? fmtHashShort(op.consensusPubkey, 10, 0) : "not reported",
     };
-  }), [roster.operators]);
+  }), [clusterNameMap, roster.operators]);
   const registryOperatorRows = useMemo<OperatorCardRow[]>(() => {
     const seated = new Set(liveOperatorRows.map((row) => row.key.toLowerCase()));
     return (registeredOperators.data ?? [])
