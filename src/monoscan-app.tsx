@@ -2275,6 +2275,7 @@ type OperatorCardMetric = { label: string; value: string };
 type OperatorCardRow = {
   mode: "live" | "registry" | "fixture";
   key: string;
+  operatorId?: string;
   search: string;
   clusterSearch: string;
   stateKind: string;
@@ -2293,6 +2294,40 @@ type OperatorCardRow = {
 
 const operatorAvatarHue = (seed: string) =>
   Array.from(seed).reduce((sum, ch, idx) => sum + ch.charCodeAt(0) * (idx + 1), 0) % 360;
+
+const OperatorRosterCard = ({row, go}: {row: OperatorCardRow; go: (href: string) => void}) => {
+  const operatorInfo = useOperatorInfo(row.mode !== "fixture" ? row.operatorId : undefined);
+  const liveName = operatorInfo.data?.moniker ?? operatorInfo.data?.alias ?? null;
+  const displayName = liveName || row.name;
+  const hashFallback = row.mode !== "fixture" && !liveName;
+  return (
+    <button type="button" className={`op-card is-${row.tone}`} onClick={()=>go(row.href)}>
+      <span className="op-card__glow" aria-hidden="true"/>
+      <span className="op-card__head">
+        <span className="ms-avatar op-card__avatar" style={{background:`oklch(0.62 0.16 ${row.avatarHue})`}}/>
+        <span className="op-card__state" aria-hidden="true"/>
+      </span>
+      <span className={`op-card__name ${hashFallback ? "mono" : ""}`}>{displayName}</span>
+      <span className="op-card__id mono">{row.id}</span>
+      <span className="op-card__meta">
+        <span className={`pill ${row.pillTone === "neutral" ? "" : row.pillTone}`}>{row.pillLabel}</span>
+        <span className="op-card__cluster mono">{row.clusterLabel}</span>
+      </span>
+      {row.metrics ? (
+        <span className="op-card__metrics">
+          {row.metrics.map((metric) => (
+            <span key={metric.label}><small>{metric.label}</small><b className="mono">{metric.value}</b></span>
+          ))}
+        </span>
+      ) : (
+        <span className="op-card__kv mono">
+          <span>{row.kvLabel}</span>
+          <b>{row.kvValue}</b>
+        </span>
+      )}
+    </button>
+  );
+};
 
 const OperatorsPage = ({go}: any) => {
   const clusters = useClusterSet();
@@ -2336,6 +2371,7 @@ const OperatorsPage = ({go}: any) => {
     return {
       mode: "live",
       key: op.operatorId,
+      operatorId: op.operatorId,
       search: `${op.operatorId} ${op.consensusPubkey ?? ""} ${op.state ?? ""} ${cluster} cluster-${op.clusterId + 1}`.toLowerCase(),
       clusterSearch: `${cluster} cluster-${op.clusterId + 1} ${op.clusterId + 1}`.toLowerCase(),
       stateKind,
@@ -2358,6 +2394,7 @@ const OperatorsPage = ({go}: any) => {
       .map((op) => ({
         mode: "registry" as const,
         key: op.operatorId,
+        operatorId: op.operatorId,
         search: `${op.operatorId} ${op.endpoint} registered unclustered no cluster capability-${op.capabilities}`.toLowerCase(),
         clusterSearch: "registered unclustered no cluster".toLowerCase(),
         stateKind: "registered",
@@ -2501,31 +2538,7 @@ const OperatorsPage = ({go}: any) => {
         ) : (
           <div className="op-card-grid">
             {visibleOperatorRows.map((row) => (
-              <button key={row.key} type="button" className={`op-card is-${row.tone}`} onClick={()=>go(row.href)}>
-                <span className="op-card__glow" aria-hidden="true"/>
-                <span className="op-card__head">
-                  <span className="ms-avatar op-card__avatar" style={{background:`oklch(0.62 0.16 ${row.avatarHue})`}}/>
-                  <span className="op-card__state" aria-hidden="true"/>
-                </span>
-                <span className={`op-card__name ${row.mode === "live" ? "mono" : ""}`}>{row.name}</span>
-                <span className="op-card__id mono">{row.id}</span>
-                <span className="op-card__meta">
-                  <span className={`pill ${row.pillTone === "neutral" ? "" : row.pillTone}`}>{row.pillLabel}</span>
-                  <span className="op-card__cluster mono">{row.clusterLabel}</span>
-                </span>
-                {row.metrics ? (
-                  <span className="op-card__metrics">
-                    {row.metrics.map((metric) => (
-                      <span key={metric.label}><small>{metric.label}</small><b className="mono">{metric.value}</b></span>
-                    ))}
-                  </span>
-                ) : (
-                  <span className="op-card__kv mono">
-                    <span>{row.kvLabel}</span>
-                    <b>{row.kvValue}</b>
-                  </span>
-                )}
-              </button>
+              <OperatorRosterCard key={row.key} row={row} go={go}/>
             ))}
           </div>
         )}
@@ -2539,7 +2552,7 @@ const OperatorsPage = ({go}: any) => {
         )}
         {useLiveRoster && (
           <div className="mono op-roster-note">
-            Only live cluster-status fields are shown here. Reputation, uptime, bonded amount, and slash history are hidden until a real operator aggregate endpoint is indexed
+            Live rows combine cluster-status, registry, and operatorInfo fields. Reputation, uptime, and slash history are hidden until a real operator aggregate endpoint is indexed
             {indexerAvailability.disabled ? ` (${indexerAvailability.reason ?? "indexer disabled"})` : ""}.
           </div>
         )}
