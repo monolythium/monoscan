@@ -4066,7 +4066,7 @@ const RoundPage = ({ round, go }: any) => {
                     <tr key={i} onClick={()=>go(`#/cluster/${v.clusterSlot}`)} style={{cursor:"pointer"}}>
                       <td className="mono">C-{String(v.clusterSlot).padStart(3,"0")}</td>
                       <td className="mono">{v.txCount} settled</td>
-                      <td className="mono">{v.blsAggMs.toFixed(1)}ms</td>
+                      <td className="mono">{v.aggMs.toFixed(1)}ms</td>
                       <td><span className={`pill ${v.dac?"ok":"warn"}`}>{v.dac?"committed":"pending"}</span></td>
                       <td className="mono" style={{color:"var(--fg-500)"}}>→</td>
                     </tr>

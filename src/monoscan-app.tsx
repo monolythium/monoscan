@@ -1267,7 +1267,7 @@ const ClusterPage = ({ slot, go }: any) => {
                 <div key={i} className="ms-vrow">
                   <div className="mono" style={{color:"var(--gold)",fontSize:13,minWidth:90}}>r·{fmt(v.round)}</div>
                   <div className="mono" style={{flex:1,fontSize:11,color:"var(--fg-300)"}}>
-                    {v.txCount} txs · DAC {v.dac?"✓":"✗"} · agg {v.blsAggMs.toFixed(1)}ms
+                    {v.txCount} txs · DAC {v.dac?"✓":"✗"} · agg {v.aggMs.toFixed(1)}ms
                   </div>
                   <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>{fmtHashShort(v.hashShort)}</div>
                 </div>

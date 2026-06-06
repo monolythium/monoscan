@@ -116,7 +116,7 @@ const _makeClusters = () => {
         queuePos: b + 1,
         joinedStandby: `${2 + b * 3}d ago`,
       })),
-      aggKey: `bls1:agg:${((i + 1) * 9311).toString(16)}…${((i + 1) * 7919).toString(16).slice(-4)}`,
+      aggKey: `agg:${((i + 1) * 9311).toString(16)}…${((i + 1) * 7919).toString(16).slice(-4)}`,
       tvs,
       diversity: (Math.random() - 0.4) * 0.3,
       reward30d: i < 100 ? 12000 + Math.floor(Math.random() * 8000) : 0,
@@ -147,7 +147,7 @@ const _makeClusters = () => {
               txCount: 20 + Math.floor(Math.random() * 30),
               shards: 14000 + Math.floor(Math.random() * 400),
               dac: j !== 2,
-              blsAggMs: 7 + Math.random() * 3,
+              aggMs: 7 + Math.random() * 3,
               hashShort: _hash(2938441 - j * 7),
             }))
           : [],
@@ -178,7 +178,7 @@ export const MONOSCAN_DATA = {
     vertexInclude: 0.991,
     dacCoverage: 0.997,
     shards: 14200,
-    blsAggMs: 8.4,
+    aggMs: 8.4,
     mempool: 1284,
     tvs: "248",
     signers: { live: 100, total: 100 },
@@ -192,7 +192,7 @@ export const MONOSCAN_DATA = {
     txCount: 18 + Math.floor(Math.random() * 40),
     shards: 14000 + Math.floor(Math.random() * 500),
     dac: j !== 4,
-    blsAggMs: 7 + Math.random() * 3,
+    aggMs: 7 + Math.random() * 3,
     hashShort: _hash(2938441 - j),
   })),
   supply: { public: "182.4", publicPct: 73, privateTxs30d: 41822 },
@@ -677,7 +677,7 @@ const _lythoshi = (lyth: number): string =>
   (BigInt(Math.round(lyth * 1_000_000)) * (LYTHOSHI_PER_LYTH / 1_000_000n)).toString();
 const _opId = (n: number): string =>
   `0x${(n * 0x9e3779b1).toString(16).padStart(8, "0").slice(-8).repeat(8).slice(0, 64)}`;
-const _bls = (n: number): string =>
+const _consensusKey = (n: number): string =>
   `0x${(n * 0x517cc1b7).toString(16).padStart(8, "0").slice(-8).repeat(12).slice(0, 96)}`;
 const _feedId = (label: string): string => {
   let h = 0x811c9dc5;
@@ -840,7 +840,7 @@ export const CLUSTER_DIRECTORY: ClusterDirectory = (() => {
         clusterId: c.slot - 1,
         effectiveEpoch: 4_210 - i,
         anchorAddress: _typedAddress("cluster", 0x600001 + i),
-        roster: Array.from({ length: size }, (_, k) => _bls((c.slot - 1) * 17 + k + 1)),
+        roster: Array.from({ length: size }, (_, k) => _consensusKey((c.slot - 1) * 17 + k + 1)),
         liveMembers: c.members ?? size,
         size,
         threshold: 5,
