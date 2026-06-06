@@ -319,13 +319,26 @@ export const fmtClusterStake = (cl: any) =>
   cl?.stake !== null && cl?.stake !== undefined ? fmtLythAmount(cl.stake) : "not indexed";
 // One-based padded cluster label from a zero-based protocol cluster id.
 export const cName = (id: number | string) => `C-${String(Number(id) + 1).padStart(3, "0")}`;
-const clusterDisplayName = (id: number | string, names?: Record<number, string>) => {
+export const clusterDisplayName = (id: number | string, names?: Record<number, string>) => {
   const numericId = Number(id);
   if (Number.isFinite(numericId)) {
     const registered = names?.[numericId]?.trim();
     if (registered) return registered;
   }
   return cName(id);
+};
+
+// Filter registry operators down to those NOT already seated in a live
+// cluster. Seated operators surface through the live roster card; the
+// registry tab only shows operators that have bonded/registered but are
+// not yet sitting in a cluster, matched case-insensitively on operator id.
+// Pure so the dedup contract can be asserted without a React render env.
+export const filterUnseatedRegisteredOperators = <T extends { operatorId: string }>(
+  registered: ReadonlyArray<T>,
+  seatedOperatorIds: ReadonlyArray<string>,
+): T[] => {
+  const seated = new Set(seatedOperatorIds.map((id) => id.toLowerCase()));
+  return registered.filter((op) => !seated.has(op.operatorId.toLowerCase()));
 };
 const surfaceLabel = (method = "") =>
   method
@@ -2402,9 +2415,10 @@ const OperatorsPage = ({go}: any) => {
     };
   }), [clusterNameMap, roster.operators]);
   const registryOperatorRows = useMemo<OperatorCardRow[]>(() => {
-    const seated = new Set(liveOperatorRows.map((row) => row.key.toLowerCase()));
-    return (registeredOperators.data ?? [])
-      .filter((op) => !seated.has(op.operatorId.toLowerCase()))
+    return filterUnseatedRegisteredOperators(
+      registeredOperators.data ?? [],
+      liveOperatorRows.map((row) => row.key),
+    )
       .map((op) => ({
         mode: "registry" as const,
         key: op.operatorId,

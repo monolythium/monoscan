@@ -4544,7 +4544,7 @@ const CLUSTER_HISTORY_TOPICS = Object.fromEntries(
   ]),
 ) as Record<keyof typeof CLUSTER_HISTORY_EVENT_SIGS, string>;
 
-interface EthLogRow {
+export interface EthLogRow {
   address: string;
   topics: string[];
   data: string;
@@ -4621,7 +4621,7 @@ interface ClusterMembershipHistoryRpcResponse {
   rows?: ClusterMembershipHistoryRpcRow[];
 }
 
-function clusterHistoryTopic(sig: keyof typeof CLUSTER_HISTORY_EVENT_SIGS): string {
+export function clusterHistoryTopic(sig: keyof typeof CLUSTER_HISTORY_EVENT_SIGS): string {
   return CLUSTER_HISTORY_TOPICS[sig].toLowerCase();
 }
 
@@ -4803,7 +4803,7 @@ async function fetchClusterHistoryTimestamps(blocks: Iterable<number>): Promise<
   return new Map(entries);
 }
 
-function decodeClusterHistoryLogs(
+export function decodeClusterHistoryLogs(
   clusterId: number,
   logs: EthLogRow[],
   blockTimestamps: Map<number, number | null>,
@@ -5423,16 +5423,26 @@ export function useClusterName(clusterId: number | undefined) {
   });
 }
 
-export function useClusterNameMap(
+// Normalize a raw list of (possibly null/duplicate/fractional) cluster ids
+// into the deduped, truncated, non-negative integer set that backs the
+// per-id `lyth_getClusterName` fan-out. Pure so the dedup contract can be
+// asserted without a React render env.
+export function normalizeClusterNameMapIds(
   clusterIds: ReadonlyArray<number | null | undefined>,
-): Record<number, string> {
-  const ids = Array.from(
+): number[] {
+  return Array.from(
     new Set(
       clusterIds
         .filter((id): id is number => typeof id === "number" && Number.isFinite(id) && id >= 0)
         .map((id) => Math.trunc(id)),
     ),
   );
+}
+
+export function useClusterNameMap(
+  clusterIds: ReadonlyArray<number | null | undefined>,
+): Record<number, string> {
+  const ids = normalizeClusterNameMapIds(clusterIds);
   const results = useQueries({
     queries: ids.map((id) => ({
       queryKey: QK.clusterName(id),

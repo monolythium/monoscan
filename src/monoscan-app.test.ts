@@ -4,6 +4,8 @@ import {
   liveClusterRingMembers,
   liveClusterSeatSummary,
   cName,
+  clusterDisplayName,
+  filterUnseatedRegisteredOperators,
   fmtLythAmount,
   fmtClusterStake,
   fmtCountCompact,
@@ -207,5 +209,55 @@ describe("capabilityLabel — human labels for camelCase capability keys", () =>
 
   it("title-cases and de-camelCases unknown keys", () => {
     expect(capabilityLabel("fooBar")).toBe("Foo Bar");
+  });
+});
+
+describe("clusterDisplayName — registered name with cName fallback", () => {
+  it("prefers a registered name when one is present for the id", () => {
+    expect(clusterDisplayName(0, { 0: "Pioneer" })).toBe("Pioneer");
+    expect(clusterDisplayName("4", { 4: "Aurora" })).toBe("Aurora");
+  });
+
+  it("falls back to the cName label when no name is registered", () => {
+    expect(clusterDisplayName(0)).toBe(cName(0));
+    expect(clusterDisplayName(7, {})).toBe(cName(7));
+    expect(clusterDisplayName(2, { 9: "Other" })).toBe(cName(2));
+  });
+
+  it("ignores blank/whitespace registered names and falls back", () => {
+    expect(clusterDisplayName(3, { 3: "   " })).toBe(cName(3));
+    expect(clusterDisplayName(3, { 3: "" })).toBe(cName(3));
+  });
+
+  it("trims a registered name before display", () => {
+    expect(clusterDisplayName(5, { 5: "  Nebula  " })).toBe("Nebula");
+  });
+});
+
+describe("filterUnseatedRegisteredOperators — registry tab dedup", () => {
+  const registered = [
+    { operatorId: "0xAAA", bond: "1" },
+    { operatorId: "0xBBB", bond: "2" },
+    { operatorId: "0xCCC", bond: "3" },
+  ];
+
+  it("drops registered operators already seated in a live cluster", () => {
+    const rows = filterUnseatedRegisteredOperators(registered, ["0xbbb"]);
+    expect(rows.map((r) => r.operatorId)).toEqual(["0xAAA", "0xCCC"]);
+  });
+
+  it("matches seated operators case-insensitively", () => {
+    const rows = filterUnseatedRegisteredOperators(registered, ["0xaaa", "0XCCC"]);
+    expect(rows.map((r) => r.operatorId)).toEqual(["0xBBB"]);
+  });
+
+  it("returns every registered operator when none are seated", () => {
+    const rows = filterUnseatedRegisteredOperators(registered, []);
+    expect(rows).toHaveLength(3);
+  });
+
+  it("returns an empty list when every operator is seated", () => {
+    const rows = filterUnseatedRegisteredOperators(registered, ["0xaaa", "0xbbb", "0xccc"]);
+    expect(rows).toEqual([]);
   });
 });
