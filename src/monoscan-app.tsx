@@ -21,6 +21,8 @@ import {
   ClusterDirectoryPage,
   ProverMarketPage,
   BridgePage,
+  ChartersPage,
+  ClusterServiceScoreCard,
 } from "./monoscan-surfaces";
 import {
   useChainStats,
@@ -111,6 +113,7 @@ export const PRIMARY_NAV: ReadonlyArray<readonly [string, string]> = [
   ["#/stats", "Statistics"],
 ];
 export const NETWORK_NAV: ReadonlyArray<readonly [string, string]> = [
+  ["#/charters", "Charters"],
   ["#/oracle", "Oracle"],
   ["#/prover-market", "Provers"],
   ["#/bridge", "Bridge"],
@@ -131,6 +134,7 @@ export const navRouteMatches = (h: string, route: string): boolean =>
   (h === "#/clusters" && route.startsWith("#/cluster/")) ||
   (h === "#/operators" && route.startsWith("#/operator")) ||
   (h === "#/stats" && route.startsWith("#/burn")) ||
+  (h === "#/charters" && route.startsWith("#/charter")) ||
   (h === "#/oracle" && route.startsWith("#/oracle")) ||
   (h === "#/prover-market" && route.startsWith("#/prover")) ||
   (h === "#/bridge" && route.startsWith("#/bridge")) ||
@@ -1216,6 +1220,9 @@ const ClusterPage = ({ slot, go }: any) => {
             </div>
           </Card>
         )}
+
+        {/* Component A — the visual of the service-based reward model. */}
+        <ClusterServiceScoreCard clusterId={liveClusterId}/>
       </section>
 
       <section className="ms-grid-2 cl-detail-grid cl-history-grid">
@@ -2675,6 +2682,7 @@ const App = () => {
   else if (parts[0]==="oracle")     page = <OraclePage go={go}/>;
   else if (parts[0]==="policy")     page = <SpendingPolicyPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
   else if (parts[0]==="cluster-directory" || parts[0]==="clusters-directory") page = <ClusterDirectoryPage go={go}/>;
+  else if (parts[0]==="charters" || parts[0]==="charter") page = <ChartersPage go={go}/>;
   else if (parts[0]==="prover-market" || parts[0]==="prover") page = <ProverMarketPage go={go}/>;
   else if (parts[0]==="bridge" || parts[0]==="bridges") page = <BridgePage go={go}/>;
   else if (parts[0]==="transactions") page = <TransactionsPage go={go}/>;

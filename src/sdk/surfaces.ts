@@ -43,6 +43,9 @@ export type {
   OperatorNetworkMetadata,
   OperatorNetworkMetadataView,
   NodeHostingClass,
+  // Component A / H — service rewards + cluster charter
+  ActiveCharterView,
+  PendingCharterView,
   // MB-6
   OracleSignerRow,
   OracleSignersResponse,
@@ -78,7 +81,13 @@ export type {
   BridgeDrainCap,
 } from "@monolythium/core-sdk";
 
-export { DIVERSITY_SCORE_MAX, SERVES_GPU_PROVE } from "@monolythium/core-sdk";
+export {
+  DIVERSITY_SCORE_MAX,
+  SERVES_GPU_PROVE,
+  NODE_REGISTRY_CLUSTER_CHARTER_SHARE_DENOM_BPS,
+  NODE_REGISTRY_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS,
+  NODE_REGISTRY_CHARTER_COOLDOWN_EPOCHS,
+} from "@monolythium/core-sdk";
 
 import type {
   ClusterDiversityView as SdkClusterDiversityView,
@@ -436,4 +445,112 @@ export interface BridgeRouteHealth {
   resumeCooldownBlocks: number;
   /** Reason hash carried by the last `BridgePaused` event; `null` if armed. */
   pausedReason: string | null;
+}
+
+/* ========================================================================== */
+/* Component A — per-cluster service-reward score (service-based, NOT √stake)  */
+/* ========================================================================== */
+
+/**
+ * Service-reward score terms (Law §6.x / WP v5). The settled per-cluster
+ * ServiceScore the reward path reads each block is a single on-chain `u64`
+ * ({@link ClusterServiceScore.total}); the protocol composes it from these
+ * service contributions: a flat base for being a live committee cluster,
+ * archive-challenge passes, GPU-prover delivery, RPC + indexer availability
+ * probes, and the network-diversity bonus. This is a SERVICE-based model
+ * (operators are paid for the work their cluster performs), explicitly NOT a
+ * √stake / quadratic-stake reward curve.
+ *
+ * `kind` distinguishes a term whose magnitude the explorer can read live
+ * (`diversity`, resolved from `lyth_getClusterDiversity`) from a term that
+ * contributes to `total` but whose isolated magnitude is not exposed by a
+ * dedicated read on this node (`contributing`) — those are shown as on-chain
+ * facts (the term is part of the model) without a fabricated number.
+ */
+export type ServiceScoreTermKind = "diversity" | "contributing";
+
+/** One named contributor to a cluster's settled ServiceScore. */
+export interface ServiceScoreTerm {
+  /** Stable id of the term. */
+  id: "base" | "archive" | "prover" | "rpc" | "indexer" | "diversity";
+  /** Human label. */
+  label: string;
+  /** One-line description of what the term rewards. */
+  hint: string;
+  /** Live-readable magnitude in bps (`0..=10000`); `null` when not exposed. */
+  bps: number | null;
+  /** Whether the term is live-quantified or only known to contribute. */
+  kind: ServiceScoreTermKind;
+}
+
+/**
+ * Per-cluster ServiceScore view-model (Component A). Adapts the settled `u64`
+ * from `lyth_getClusterServiceScore` plus the live diversity term from
+ * `lyth_getClusterDiversity`.
+ */
+export interface ClusterServiceScore {
+  /** Cluster id the score was settled for. */
+  clusterId: number;
+  /** Settled per-cluster ServiceScore (`u64`, raw); `0n` ⇒ never scored. */
+  total: bigint;
+  /** Whether the cluster has ever been scored. */
+  scored: boolean;
+  /** The named service terms that compose the model. */
+  terms: ServiceScoreTerm[];
+}
+
+/* ========================================================================== */
+/* Component H — within-cluster economics charter (operator/delegator split)   */
+/* ========================================================================== */
+
+/**
+ * One operator's share of the cluster operator-pot, in basis points
+ * (member-declaration order: active 0..7, then standby 7..10).
+ */
+export interface CharterMemberShare {
+  /** Position in the member-declaration order. */
+  index: number;
+  /** Operator-pot share in bps. */
+  shareBps: number;
+}
+
+/**
+ * Within-cluster economics charter (Law §6.8) as rendered. Adapts the SDK
+ * `ActiveCharterView` (the currently-effective split) + `PendingCharterView`
+ * (a proposed amendment landing after the delegator-protective cooldown). The
+ * split is the operator/delegator division of the cluster reward pot:
+ * `delegatorShareBps` to delegators, the remainder divided among operators by
+ * `memberShares`.
+ */
+export interface ClusterCharter {
+  /** Cluster id the charter governs. */
+  clusterId: number;
+  /** Whether the cluster has an active on-chain charter record. */
+  present: boolean;
+  /** Delegator share of the cluster pot, bps; remainder is the operator pot. */
+  delegatorShareBps: number;
+  /** Per-operator operator-pot shares, member-declaration order. */
+  memberShares: CharterMemberShare[];
+  /** A posted amendment awaiting its cooldown; `null` when none is pending. */
+  pending: ClusterCharterPending | null;
+}
+
+/** A pending charter amendment (Component H), with its cooldown landing. */
+export interface ClusterCharterPending {
+  /** Proposed delegator share of the cluster pot, bps. */
+  delegatorShareBps: number;
+  /** Proposed per-operator operator-pot shares, member-declaration order. */
+  memberShares: CharterMemberShare[];
+  /** Epoch at/after which the amendment takes effect (the cooldown landing). */
+  effectiveEpoch: number;
+  /** Active signers that consented to the amendment. */
+  signerCount: number;
+}
+
+/** Aggregate charter directory view-model (Component H). */
+export interface CharterDirectory {
+  /** Per-cluster charters, lowest cluster id first. */
+  charters: ClusterCharter[];
+  /** Current epoch the directory was read at; `null` when unknown. */
+  currentEpoch: number | null;
 }

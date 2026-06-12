@@ -8136,12 +8136,18 @@ import {
 import {
   diversityScoreFromView,
   normalizeHostingClass,
+  NODE_REGISTRY_CLUSTER_CHARTER_SHARE_DENOM_BPS,
   type BridgeBreakerState,
   type BridgeRouteHealth,
+  type CharterDirectory,
+  type CharterMemberShare,
+  type ClusterCharter,
+  type ClusterCharterPending,
   type ClusterDirectory,
   type ClusterDirectoryEntry,
   type ClusterDiversityRollup,
   type ClusterFormationStatus,
+  type ClusterServiceScore,
   type OperatorNetworkMetadataRow,
   type OracleDashboard,
   type OracleFeed,
@@ -8149,13 +8155,16 @@ import {
   type ProofRequest,
   type ProverBid,
   type ProverMarket,
+  type ServiceScoreTerm,
   type SpendingPolicyDimensions,
 } from "../sdk/surfaces";
 import type {
+  ActiveCharterView,
   BridgeHealthRecord,
   OracleFeedConfig,
   OracleLatestPrice,
   OracleSignerRow,
+  PendingCharterView,
   ProofRequestRow,
   ProverBidView,
   SpendingPolicyView,
@@ -8688,6 +8697,170 @@ export function useBridgeRouteHealth() {
         });
       } catch {
         return MONOSCAN_LIVE_ONLY ? [] : BRIDGE_ROUTE_HEALTH;
+      }
+    },
+    staleTime: 30_000,
+  });
+}
+
+/* ------------------- Component A: per-cluster service score ---------------- */
+
+/**
+ * Build the named service-reward term breakdown for a cluster. The protocol
+ * settles the per-cluster ServiceScore (`lyth_getClusterServiceScore`, a single
+ * `u64`) from these service contributions — the SERVICE-based reward model
+ * (NOT √stake). The diversity term is resolved live from
+ * `lyth_getClusterDiversity`; the other terms are part of the model and
+ * contribute to the settled total, but this node exposes no isolated per-term
+ * magnitude read, so they render as on-chain facts without a fabricated number.
+ */
+function serviceScoreTerms(diversityBps: number | null): ServiceScoreTerm[] {
+  return [
+    { id: "base", label: "Base", hint: "flat reward for a live committee cluster", bps: null, kind: "contributing" },
+    { id: "archive", label: "Archive", hint: "passed archive-challenge proofs", bps: null, kind: "contributing" },
+    { id: "prover", label: "Prover", hint: "GPU proof-market deliveries", bps: null, kind: "contributing" },
+    { id: "rpc", label: "RPC", hint: "public RPC availability probes", bps: null, kind: "contributing" },
+    { id: "indexer", label: "Indexer", hint: "indexer availability probes", bps: null, kind: "contributing" },
+    { id: "diversity", label: "Diversity", hint: "ASN / geo / hosting spread bonus", bps: diversityBps, kind: "diversity" },
+  ];
+}
+
+async function readClusterServiceScore(clusterId: number): Promise<ClusterServiceScore | null> {
+  if (!isRpcConfigured()) {
+    return MONOSCAN_LIVE_ONLY ? null : { clusterId, total: 0n, scored: false, terms: serviceScoreTerms(null) };
+  }
+  try {
+    const rpc = getRpcClient();
+    const total = await rpc.lythGetClusterServiceScore(clusterId);
+    let diversityBps: number | null = null;
+    try {
+      const view = await rpc.lythGetClusterDiversity(clusterId);
+      diversityBps = view.score;
+    } catch {
+      diversityBps = null;
+    }
+    return {
+      clusterId,
+      total,
+      scored: total > 0n,
+      terms: serviceScoreTerms(diversityBps),
+    };
+  } catch {
+    return MONOSCAN_LIVE_ONLY ? null : { clusterId, total: 0n, scored: false, terms: serviceScoreTerms(null) };
+  }
+}
+
+/**
+ * Component A — a cluster's settled per-cluster ServiceScore + the named
+ * service-reward terms that compose the model. Live:
+ * `lyth_getClusterServiceScore` (the settled `u64`) + `lyth_getClusterDiversity`
+ * (the live diversity term).
+ */
+export function useClusterServiceScore(clusterId: number | undefined) {
+  return useQuery<ClusterServiceScore | null>({
+    queryKey: QK.clusterServiceScore(clusterId ?? ""),
+    enabled: clusterId !== undefined,
+    queryFn: () => readClusterServiceScore(clusterId as number),
+    staleTime: 60_000,
+  });
+}
+
+/* ----------------- Component H: within-cluster economics charter ----------- */
+
+function charterMemberShares(memberShareBps: readonly number[]): CharterMemberShare[] {
+  return memberShareBps.map((shareBps, index) => ({ index, shareBps }));
+}
+
+function charterPendingFromView(view: PendingCharterView): ClusterCharterPending | null {
+  if (!view.present) return null;
+  return {
+    delegatorShareBps: view.delegatorShareBps,
+    memberShares: charterMemberShares(view.memberShareBps),
+    effectiveEpoch: Number(view.effectiveEpoch),
+    signerCount: view.signerCount,
+  };
+}
+
+function charterFromViews(
+  clusterId: number,
+  active: ActiveCharterView,
+  pending: PendingCharterView | null,
+): ClusterCharter {
+  return {
+    clusterId,
+    present: active.present,
+    delegatorShareBps: active.delegatorShareBps,
+    memberShares: charterMemberShares(active.memberShareBps),
+    pending: pending ? charterPendingFromView(pending) : null,
+  };
+}
+
+async function readClusterCharter(clusterId: number): Promise<ClusterCharter | null> {
+  if (!isRpcConfigured()) return null;
+  try {
+    const rpc = getRpcClient();
+    const active = await rpc.lythGetClusterCharter(clusterId);
+    let pending: PendingCharterView | null = null;
+    try {
+      pending = await rpc.lythGetPendingCharter(clusterId);
+    } catch {
+      pending = null;
+    }
+    return charterFromViews(clusterId, active, pending);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Component H — a single cluster's within-cluster economics charter (the
+ * operator/delegator reward split) plus any pending amendment. Live:
+ * `lyth_getClusterCharter` (active) + `lyth_getPendingCharter` (amendment).
+ */
+export function useClusterCharter(clusterId: number | undefined) {
+  return useQuery<ClusterCharter | null>({
+    queryKey: QK.clusterCharter(clusterId ?? ""),
+    enabled: clusterId !== undefined,
+    queryFn: () => readClusterCharter(clusterId as number),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Component H — the charter directory: per-cluster operator/delegator splits and
+ * pending amendments across the active cluster set. Fans
+ * `lyth_getClusterCharter` + `lyth_getPendingCharter` out over the live
+ * `lyth_clusterDirectory` ids.
+ */
+export function useCharterDirectory() {
+  return useQuery<CharterDirectory | null>({
+    queryKey: QK.charterDirectory(),
+    queryFn: async () => {
+      if (!isRpcConfigured()) return { charters: [], currentEpoch: null };
+      try {
+        const rpc = getRpcClient();
+        const directory = await getApiClient()
+          .clusters(0, 100)
+          .then((r) => r.data.clusters)
+          .catch(() => rpc.lythClusterDirectory(0, 100));
+        const ids = (directory.clusters ?? [])
+          .map((c) => c.clusterId)
+          .filter((id): id is number => typeof id === "number")
+          .sort((a, b) => a - b)
+          .slice(0, 50);
+        // Live directory read succeeded but the chain has formed no clusters —
+        // render the real empty state.
+        if (ids.length === 0) return { charters: [], currentEpoch: null };
+        const charters = await Promise.all(ids.map((id) => readClusterCharter(id)));
+        const resolved = charters.filter((c): c is ClusterCharter => c !== null);
+        const currentEpoch =
+          resolved
+            .map((c) => c.pending?.effectiveEpoch ?? 0)
+            .filter((e) => e > 0)
+            .sort((a, b) => b - a)[0] ?? null;
+        return { charters: resolved, currentEpoch };
+      } catch {
+        return { charters: [], currentEpoch: null };
       }
     },
     staleTime: 30_000,

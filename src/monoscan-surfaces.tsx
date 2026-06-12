@@ -24,23 +24,31 @@ import { Card } from "./primitives";
 import { fmtAddr, fmtAddrShort, fmtHashShort } from "./sdk/format";
 import {
   useBridgeRouteHealth,
+  useCharterDirectory,
+  useClusterCharter,
   useClusterDirectory,
   useClusterDiversity,
   useClusterDiversitySet,
+  useClusterServiceScore,
   useOracleDashboard,
   useProverMarket,
   useSpendingPolicy,
 } from "./data/hooks";
 import {
   DIVERSITY_SCORE_MAX,
+  NODE_REGISTRY_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS,
+  NODE_REGISTRY_CLUSTER_CHARTER_SHARE_DENOM_BPS,
   PROVER_BOND_MIN_LYTH,
   PROVER_FEE_FLOOR_LYTH,
   type BridgeBreakerState,
   type BridgeRouteHealth,
+  type ClusterCharter,
   type ClusterFormationStatus,
+  type ClusterServiceScore,
   type HostingClass,
   type OracleFeed,
   type ProverMarketState,
+  type ServiceScoreTerm,
   type SpendingPolicyDimensions,
   type TimeOfDayWindow,
 } from "./sdk/surfaces";
@@ -632,6 +640,33 @@ function formationHaloTone(status: ClusterFormationStatus): "ok" | "warn" | "err
   return status === "active" ? "ok" : status === "forming" ? "gold" : status === "draining" ? "warn" : "neutral";
 }
 
+/**
+ * Compact per-cluster service-score cell for the directory table — the
+ * service-reward model surfaced inline. Reads the settled ServiceScore +
+ * live diversity term via `useClusterServiceScore` (React-Query dedupes the
+ * per-cluster reads). Shows the settled total with the diversity term as a
+ * meter; an unscored cluster renders a muted dash.
+ */
+const DirectoryServiceScoreCell = ({ clusterId }: { clusterId: number }) => {
+  const q = useClusterServiceScore(clusterId);
+  const score = q.data;
+  if (!score) {
+    return <span className="mono surface-muted">{q.isLoading ? "…" : "—"}</span>;
+  }
+  const diversityTerm = score.terms.find((t) => t.id === "diversity");
+  const diversityBps = diversityTerm?.bps ?? null;
+  return (
+    <div className="surface-score-cell">
+      <div className="mono num surface-live-cell__text">
+        {score.scored ? <b>{score.total.toLocaleString()}</b> : <span className="surface-muted">unscored</span>}
+      </div>
+      {diversityBps !== null && (
+        <SurfaceMeter frac={diversityBps / DIVERSITY_SCORE_MAX} tone={diversityTone(diversityBps)} value={`div ${bpsPct(diversityBps)}`}/>
+      )}
+    </div>
+  );
+};
+
 const ClusterDirectoryPage = ({ go }: any) => {
   const q = useClusterDirectory();
   const dir = q.data;
@@ -682,7 +717,7 @@ const ClusterDirectoryPage = ({ go }: any) => {
             <table className="ms-table surface-table">
               <thead>
                 <tr>
-                  <th>Cluster</th><th>Status</th><th>Anchor</th><th>Roster</th><th>Live quorum</th><th>Epoch</th><th>Formed</th>
+                  <th>Cluster</th><th>Status</th><th>Service score</th><th>Anchor</th><th>Roster</th><th>Live quorum</th><th>Epoch</th><th>Formed</th>
                 </tr>
               </thead>
               <tbody>
@@ -694,6 +729,7 @@ const ClusterDirectoryPage = ({ go }: any) => {
                     <tr key={c.clusterId} style={{ cursor: "pointer" }} onClick={() => go(`#/cluster/${c.clusterId + 1}`)}>
                       <td className="surface-strong">C-{String(c.clusterId + 1).padStart(3, "0")}</td>
                       <td><Halo tone={formationHaloTone(c.status)} label={c.status}/></td>
+                      <td className="surface-score-cell surface-score-cell--compact" onClick={(e) => e.stopPropagation()}><DirectoryServiceScoreCell clusterId={c.clusterId}/></td>
                       <td className="mono surface-code surface-muted">{c.anchorAddress ? fmtAddrShort(c.anchorAddress, "user", 12, 6) : "pending anchor"}</td>
                       <td className="mono num">{(c.roster.length || c.size).toLocaleString()} consensus keys</td>
                       <td className="surface-live-cell">
@@ -1000,6 +1036,215 @@ const BridgePage = ({ go: _go }: any) => {
   );
 };
 
+/* ========================================================================== */
+/* Component A — per-cluster service-reward score                             */
+/* ========================================================================== */
+
+const clusterLabel = (clusterId: number): string => `C-${String(clusterId + 1).padStart(3, "0")}`;
+
+function serviceTermTone(term: ServiceScoreTerm): SurfaceTone {
+  if (term.kind !== "diversity" || term.bps === null) return "neutral";
+  return diversityTone(term.bps);
+}
+
+/**
+ * Component A service-score card: the visual of the SERVICE-based reward model.
+ * Shows the settled per-cluster ServiceScore plus the named service terms
+ * (base / archive / prover / rpc / indexer / diversity). The diversity term is
+ * quantified live; the others are shown as on-chain contributors without a
+ * fabricated magnitude (this node exposes no isolated per-term read). This is a
+ * service-reward model — operators are paid for the work their cluster does,
+ * not a √stake curve. Reusable on the cluster detail page + directory.
+ */
+export const ServiceScoreCard = ({ score, loading }: { score: ClusterServiceScore | null; loading?: boolean }) => {
+  return (
+    <Card title="Service score" right={<span className="cap">Service reward · Component A</span>}>
+      {score ? (
+        <>
+          <div className="surface-score-readout">
+            <span className="mono num surface-score-readout__value">
+              {score.scored ? score.total.toLocaleString() : "—"}
+            </span>
+            <Halo
+              tone={score.scored ? "gold" : "neutral"}
+              label={score.scored ? "settled ServiceScore" : "not yet scored"}
+            />
+          </div>
+          <div className="mono surface-card-note">
+            Settled per-cluster ServiceScore (read each block by the reward path). Composed from the
+            service terms below — a service-reward model (base + archive + prover + rpc + indexer +
+            diversity), not a √stake curve.
+          </div>
+          <div className="surface-axis-list" style={{ marginTop: 12 }}>
+            {score.terms.map((term) => (
+              <div className="surface-axis" key={term.id}>
+                {term.kind === "diversity" && term.bps !== null ? (
+                  <SurfaceMeter frac={term.bps / DIVERSITY_SCORE_MAX} tone={serviceTermTone(term)} label={term.label} value={bpsPct(term.bps)}/>
+                ) : (
+                  <div className="surface-meter__meta" style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span>{term.label}</span>
+                    <Halo tone="neutral" label="contributing"/>
+                  </div>
+                )}
+                <div className="mono surface-axis__hint">{term.hint}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <SurfaceEmpty loading={Boolean(loading)} empty="No service score reported for this cluster."/>
+      )}
+    </Card>
+  );
+};
+
+/** Cluster-detail wrapper: reads `useClusterServiceScore` and renders the card. */
+export const ClusterServiceScoreCard = ({ clusterId }: { clusterId: number }) => {
+  const q = useClusterServiceScore(clusterId);
+  return <ServiceScoreCard score={q.data ?? null} loading={q.isLoading}/>;
+};
+
+/* ========================================================================== */
+/* Component H — within-cluster economics charter (operator/delegator split)  */
+/* ========================================================================== */
+
+const CHARTER_DENOM = NODE_REGISTRY_CLUSTER_CHARTER_SHARE_DENOM_BPS;
+
+/** Sum of operator member shares = operator pot bps. */
+function operatorPotBps(charter: { memberShares: { shareBps: number }[]; delegatorShareBps: number }): number {
+  const summed = charter.memberShares.reduce((s, m) => s + Math.max(0, m.shareBps), 0);
+  return summed > 0 ? summed : Math.max(0, CHARTER_DENOM - charter.delegatorShareBps);
+}
+
+/** Operator / delegator split bar — gold operator pot, muted delegator pot. */
+function CharterSplitBar({ delegatorShareBps }: { delegatorShareBps: number }) {
+  const delegFrac = clamp01(delegatorShareBps / CHARTER_DENOM);
+  return (
+    <div className="ms-bar" style={{ marginTop: 4, display: "flex" }} title={`operators ${bpsPct(CHARTER_DENOM - delegatorShareBps)} · delegators ${bpsPct(delegatorShareBps)}`}>
+      <div style={{ width: `${(1 - delegFrac) * 100}%`, background: "var(--gold)", boxShadow: "0 0 8px var(--gold)66" }}/>
+      <div style={{ width: `${delegFrac * 100}%`, background: "var(--fg-500)" }}/>
+    </div>
+  );
+}
+
+const EPOCH_SECONDS = 60; // testnet epoch cadence; countdown is approximate.
+
+function epochCountdown(effectiveEpoch: number, currentEpoch: number | null): string {
+  if (currentEpoch === null) return `effective epoch ${effectiveEpoch.toLocaleString()}`;
+  const delta = effectiveEpoch - currentEpoch;
+  if (delta <= 0) return "landing now";
+  const secs = delta * EPOCH_SECONDS;
+  if (secs < 3600) return `~${Math.round(secs / 60)} min`;
+  if (secs < 86400) return `~${(secs / 3600).toFixed(1)} h`;
+  return `~${(secs / 86400).toFixed(1)} d`;
+}
+
+/** One cluster's charter row: split bar + per-operator shares + pending amendment. */
+const CharterRow = ({ charter, currentEpoch }: { charter: ClusterCharter; currentEpoch: number | null }) => {
+  const opPot = operatorPotBps(charter);
+  return (
+    <tr>
+      <td className="surface-strong">{clusterLabel(charter.clusterId)}</td>
+      <td className="surface-cap-cell" style={{ minWidth: 180 }}>
+        <div className="mono surface-cap-cell__amount">
+          operators {bpsPct(CHARTER_DENOM - charter.delegatorShareBps)} · delegators {bpsPct(charter.delegatorShareBps)}
+        </div>
+        <CharterSplitBar delegatorShareBps={charter.delegatorShareBps}/>
+        <div className="mono surface-muted">
+          {charter.present ? "on-chain charter" : "default split (no charter adopted)"}
+        </div>
+      </td>
+      <td>
+        {charter.memberShares.length ? (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {charter.memberShares.map((m) => (
+              <span key={m.index} className="mono" style={{ fontSize: 10.5, color: "var(--fg-300)", padding: "1px 6px", borderRadius: 4, background: "var(--bg-700, rgba(255,255,255,0.04))" }} title={`operator #${m.index} · ${bpsPct(opPot)} operator pot`}>
+                #{m.index}: {bpsPct(m.shareBps)}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <span className="mono surface-muted">even split across operators</span>
+        )}
+      </td>
+      <td className="mono num surface-value-right">{bpsPct(charter.delegatorShareBps)}</td>
+      <td>
+        {charter.pending ? (
+          <div style={{ display: "grid", gap: 3 }}>
+            <Halo tone="warn" label={`amendment · epoch ${charter.pending.effectiveEpoch.toLocaleString()}`}/>
+            <span className="mono surface-muted">
+              delegators → {bpsPct(charter.pending.delegatorShareBps)} · {charter.pending.signerCount} signers · {epochCountdown(charter.pending.effectiveEpoch, currentEpoch)}
+            </span>
+          </div>
+        ) : (
+          <span className="mono surface-muted">none</span>
+        )}
+      </td>
+    </tr>
+  );
+};
+
+/** `#/charters` — within-cluster economics charters + pending amendments. */
+const ChartersPage = ({ go: _go }: any) => {
+  const q = useCharterDirectory();
+  const charters = q.data?.charters ?? [];
+  const currentEpoch = q.data?.currentEpoch ?? null;
+  const withCharter = charters.filter((c) => c.present).length;
+  const pending = charters.filter((c) => c.pending).length;
+  const avgDelegatorBps = charters.length
+    ? Math.round(charters.reduce((s, c) => s + c.delegatorShareBps, 0) / charters.length)
+    : 0;
+  const floorPct = bpsPct(NODE_REGISTRY_CLUSTER_CHARTER_DELEGATOR_FLOOR_BPS);
+  return (
+    <div className="ms-page ms-surface-page ms-charters-page">
+      <SurfaceHero
+        eyebrow="Component H · cluster governance"
+        title="Cluster charters"
+        body={`Each cluster's economics charter splits its reward pot between operators and delegators. Delegators are protected by a ${floorPct} minimum share. Amendments are operator-signed and only take effect after a cooldown, so delegators always see a change before it lands.`}
+      >
+        <SurfaceMetric
+          label="Delegator share"
+          value={charters.length ? bpsPct(avgDelegatorBps) : "—"}
+          sub={`average across ${charters.length} clusters · floor ${floorPct}`}
+          tone={charters.length ? "gold" : "neutral"}
+          meter={charters.length ? <SurfaceMeter frac={avgDelegatorBps / CHARTER_DENOM} tone="gold"/> : undefined}
+        />
+        <div className="surface-panel-list">
+          <SurfaceMeter frac={ratio(withCharter, Math.max(1, charters.length))} tone="ok" label="Adopted charters" value={`${withCharter}/${charters.length}`}/>
+          <SurfaceMeter frac={ratio(pending, Math.max(1, charters.length))} tone={pending ? "warn" : "neutral"} label="Pending amendments" value={`${pending}`}/>
+        </div>
+      </SurfaceHero>
+      <section className="surface-metrics">
+        <SurfaceMetric label="Clusters" value={`${charters.length}`} sub="charter directory" tone="neutral"/>
+        <SurfaceMetric label="Adopted" value={`${withCharter}`} sub="on-chain charter" tone="ok"/>
+        <SurfaceMetric label="Pending" value={`${pending}`} sub="awaiting cooldown" tone={pending ? "warn" : "neutral"}/>
+        <SurfaceMetric label="Delegator floor" value={floorPct} sub="protocol minimum" tone="neutral"/>
+      </section>
+      <Card title="Operator / delegator split" right={<span className="cap">Component H</span>}>
+        {charters.length ? (
+          <div className="surface-table-wrap">
+            <table className="ms-table surface-table">
+              <thead>
+                <tr>
+                  <th>Cluster</th><th>Split (operators · delegators)</th><th>Operator shares</th>
+                  <th style={{ textAlign: "right" }}>Delegator</th><th>Pending amendment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {charters.map((c) => (
+                  <CharterRow key={c.clusterId} charter={c} currentEpoch={currentEpoch}/>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <SurfaceEmpty loading={q.isLoading} empty="No cluster charters reported by this peer. Genesis clusters use the protocol-default operator/delegator split until they adopt a charter; this node may not yet expose the charter reads."/>
+        )}
+      </Card>
+    </div>
+  );
+};
+
 export {
   DiversityPage,
   ClusterDiversityPage,
@@ -1008,4 +1253,5 @@ export {
   ClusterDirectoryPage,
   ProverMarketPage,
   BridgePage,
+  ChartersPage,
 };

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BridgeHealthCard, SpendingPolicyCard } from "./monoscan-surfaces";
+import { BridgeHealthCard, ServiceScoreCard, SpendingPolicyCard } from "./monoscan-surfaces";
 import {
   BRIDGE_ROUTE_HEALTH,
   CLUSTER_DIRECTORY,
@@ -18,8 +18,19 @@ import {
   PROVER_BOND_MIN_LYTH,
   PROVER_FEE_FLOOR_LYTH,
   type BridgeRouteHealth,
+  type ClusterServiceScore,
+  type ServiceScoreTerm,
   type SpendingPolicyDimensions,
 } from "./sdk/surfaces";
+
+const SERVICE_TERMS: ServiceScoreTerm[] = [
+  { id: "base", label: "Base", hint: "flat", bps: null, kind: "contributing" },
+  { id: "archive", label: "Archive", hint: "challenge", bps: null, kind: "contributing" },
+  { id: "prover", label: "Prover", hint: "gpu", bps: null, kind: "contributing" },
+  { id: "rpc", label: "RPC", hint: "probe", bps: null, kind: "contributing" },
+  { id: "indexer", label: "Indexer", hint: "probe", bps: null, kind: "contributing" },
+  { id: "diversity", label: "Diversity", hint: "spread", bps: 6200, kind: "diversity" },
+];
 
 function render(element: ReactElement): string {
   // Cards take props directly, but wrap in a QueryClientProvider so any
@@ -181,6 +192,46 @@ describe("BridgeHealthCard (MB-2)", () => {
 
   it("renders nothing for an empty route list", () => {
     expect(render(<BridgeHealthCard routes={[] as BridgeRouteHealth[]} />)).toBe("");
+  });
+});
+
+describe("ServiceScoreCard (Component A — service-reward model)", () => {
+  const scored: ClusterServiceScore = {
+    clusterId: 0,
+    total: 2000n,
+    scored: true,
+    terms: SERVICE_TERMS,
+  };
+
+  it("renders the settled ServiceScore and all six named terms", () => {
+    const html = render(<ServiceScoreCard score={scored} />);
+    expect(html).toContain("Service score");
+    expect(html).toContain("2,000");
+    for (const label of ["Base", "Archive", "Prover", "RPC", "Indexer", "Diversity"]) {
+      expect(html).toContain(label);
+    }
+    // The live diversity term is quantified as a percent; the others are
+    // labelled as contributing without a fabricated magnitude.
+    expect(html).toContain("62.00%");
+    expect(html).toContain("contributing");
+  });
+
+  it("names the service-based model and disclaims a √stake curve", () => {
+    const html = render(<ServiceScoreCard score={scored} />);
+    expect(html).toContain("service-reward model");
+    expect(html).toContain("√stake");
+  });
+
+  it("renders the unscored state when the cluster has never been scored", () => {
+    const html = render(
+      <ServiceScoreCard score={{ ...scored, total: 0n, scored: false }} />,
+    );
+    expect(html).toContain("not yet scored");
+  });
+
+  it("renders the empty state when no score is available", () => {
+    const html = render(<ServiceScoreCard score={null} />);
+    expect(html).toContain("No service score reported");
   });
 });
 

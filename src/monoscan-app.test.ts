@@ -29,10 +29,16 @@ describe("primary navigation IA", () => {
     ]);
   });
 
-  it("groups exactly the 6 specialized surfaces under Network", () => {
+  it("groups exactly the 7 specialized surfaces under Network", () => {
     expect(networkLabels).toEqual([
-      "Oracle", "Provers", "Bridge", "Directory", "Diversity", "Protocol",
+      "Charters", "Oracle", "Provers", "Bridge", "Directory", "Diversity", "Protocol",
     ]);
+  });
+
+  it("surfaces the cluster-charter governance page under Network", () => {
+    expect(networkRoutes).toContain("#/charters");
+    expect(navRouteMatches("#/charters", "#/charters")).toBe(true);
+    expect(navRouteMatches("#/charters", "#/charter")).toBe(true);
   });
 
   it("never re-adds Governance (on-chain governance was removed)", () => {

@@ -415,4 +415,8 @@ export const QK = {
   clusterDirectory: () => ["mono", "clusters", "directory"] as const,
   proverMarket: () => ["mono", "prover-market"] as const,
   bridgeRouteHealth: () => ["mono", "bridge", "route-health"] as const,
+  // Component A (service-reward score) / Component H (cluster charter).
+  clusterServiceScore: (id: number | string) => ["mono", "cluster", id, "service-score"] as const,
+  clusterCharter: (id: number | string) => ["mono", "cluster", id, "charter"] as const,
+  charterDirectory: () => ["mono", "clusters", "charters"] as const,
 } as const;

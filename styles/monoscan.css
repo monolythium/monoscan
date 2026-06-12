@@ -8127,6 +8127,11 @@ html[data-theme="light"] .ms-theme__pop {
   --surface-accent-soft: color-mix(in oklch, var(--err) 10%, transparent);
   --surface-accent-line: color-mix(in oklch, var(--err) 30%, transparent);
 }
+.ms-charters-page {
+  --surface-accent: var(--gold);
+  --surface-accent-soft: rgba(var(--gold-glow),0.1);
+  --surface-accent-line: rgba(var(--gold-glow),0.3);
+}
 .ms-surface-page .surface-hero {
   position: relative;
   display: grid;
