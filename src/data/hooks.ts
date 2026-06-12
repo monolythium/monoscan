@@ -2530,9 +2530,14 @@ function noEvmFinalityMismatchReason(result: NoEvmBlsFinalityVerification): stri
 function finalityEvidenceForCurrentSdk(
   finalityEvidence: NoEvmReceiptFinalityEvidence,
 ): Parameters<typeof CoreSdk.verifyNoEvmFinalityEvidenceThreshold>[0] {
+  // core-sdk >= 0.4.x finished the BLS → round-certificate rename and only
+  // accepts `source: "roundCertificate"` (the legacy `"blsRoundCertificate"`
+  // string is rejected as unsupported). Our canonical source is already
+  // `NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE === "roundCertificate"`, so pass
+  // the evidence through unchanged.
   return {
     ...finalityEvidence,
-    source: NO_EVM_RECEIPT_LEGACY_FINALITY_EVIDENCE_SOURCE,
+    source: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE,
   } as Parameters<typeof CoreSdk.verifyNoEvmFinalityEvidenceThreshold>[0];
 }
 

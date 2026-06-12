@@ -929,14 +929,14 @@ const ClusterPage = ({ slot, go }: any) => {
       ? liveStatus.members.map((m) => ({
         handle: fmtHashShort(m.operatorId, 10, 6),
         addrShort: m.operatorId,
-        consensusPubkey: m.blsPubkey,
+        consensusPubkey: m.consensusPubkey,
         role: m.state,
         rep: null,
         vertexRate: null,
         state: m.state === "active" ? "live" : m.state === "lagging" ? "lag" : m.state,
       }))
     : showLiveHero ? [] : cl.opMembers;
-  const liveClusterKey = liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? null;
+  const liveClusterKey = liveStatus?.members?.[0]?.consensusPubkey ?? liveCluster?.pubkey ?? null;
   const [selectedMember, setSelectedMember] = useState<any | null>(null);
   useEffect(() => {
     if (!selectedMember) return;
@@ -1149,7 +1149,7 @@ const ClusterPage = ({ slot, go }: any) => {
             <div><span className="mono">Delegation cap</span><b>{delegationCap.data ? (delegationCap.data.capBps === 4294967295 ? "disabled" : `${delegationCap.data.capBps} bps`) : "—"}</b></div>
             <div><span className="mono">Entity</span><b className="mono">{clusterEntity.data?.entity ?? "—"}</b></div>
             <div><span className="mono">Entity ratchet</span><b className="mono">{entityRatchet.data ? `${entityRatchet.data.active}/${entityRatchet.data.threshold === 4294967295 ? "unset" : entityRatchet.data.threshold}` : "—"}</b></div>
-            <div><span className="mono">First consensus key</span><b className="mono" title={liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? undefined}>{fmtHashShort(liveStatus?.members?.[0]?.blsPubkey ?? liveCluster?.pubkey ?? "—")}</b></div>
+            <div><span className="mono">First consensus key</span><b className="mono" title={liveStatus?.members?.[0]?.consensusPubkey ?? liveCluster?.pubkey ?? undefined}>{fmtHashShort(liveStatus?.members?.[0]?.consensusPubkey ?? liveCluster?.pubkey ?? "—")}</b></div>
           </div>
           <div className="mono cl-protocol-note">
             Cluster status, quorum, and member consensus keys come from public RPC. Economic aggregates are hidden until live TVS, reward history, and vertex-inclusion endpoints exist.
@@ -1572,12 +1572,9 @@ const OperatorPage = ({ addr, go }: any) => {
     : op.handle;
   const displayId = useLiveProfile ? (liveOperatorId ?? addr) : op.addrShort;
   const consensusKey =
-    (authority.data as { consensusPubkey?: string } | null | undefined)?.consensusPubkey ||
-    authority.data?.blsPubkey ||
+    authority.data?.consensusPubkey ||
     liveMembership?.consensusPubkey ||
-    (liveMembership as { blsPubkey?: string } | null | undefined)?.blsPubkey ||
-    (operatorInfo.data as { consensusKeyFingerprint?: string | null } | null | undefined)?.consensusKeyFingerprint ||
-    operatorInfo.data?.blsKeyFingerprint ||
+    operatorInfo.data?.consensusKeyFingerprint ||
     "";
   const chainAddress = useLiveProfile
     ? operatorInfo.data?.chainAddress
