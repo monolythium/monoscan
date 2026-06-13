@@ -1058,35 +1058,67 @@ function serviceTermTone(term: ServiceScoreTerm): SurfaceTone {
  */
 export const ServiceScoreCard = ({ score, loading }: { score: ClusterServiceScore | null; loading?: boolean }) => {
   return (
-    <Card title="Service score" right={<span className="cap">Service reward · Component A</span>}>
+    <Card title="Service score" right={<span className="cap">Component A</span>} className="surface-service-score-card">
       {score ? (
         <>
-          <div className="surface-score-readout">
-            <span className="mono num surface-score-readout__value">
-              {score.scored ? score.total.toLocaleString() : "—"}
-            </span>
-            <Halo
-              tone={score.scored ? "gold" : "neutral"}
-              label={score.scored ? "settled ServiceScore" : "not yet scored"}
-            />
+          <div className="surface-service-score-card__summary">
+            <div className="surface-service-score-card__primary">
+              <div className="mono surface-service-score-card__cluster">{clusterLabel(score.clusterId)}</div>
+              <div className="surface-score-readout surface-service-score-card__readout">
+                <span className="mono num surface-score-readout__value">
+                  {score.scored ? score.total.toLocaleString() : "—"}
+                </span>
+                <Halo
+                  tone={score.scored ? "gold" : "neutral"}
+                  label={score.scored ? "settled ServiceScore" : "not yet scored"}
+                />
+              </div>
+            </div>
+            <div className="surface-service-score-card__facts">
+              <div>
+                <span>Reward model</span>
+                <b>service based</b>
+              </div>
+              <div>
+                <span>Settled by</span>
+                <b>reward path</b>
+              </div>
+              <div>
+                <span>Curve</span>
+                <b>not √stake</b>
+              </div>
+            </div>
           </div>
-          <div className="mono surface-card-note">
-            Settled per-cluster ServiceScore (read each block by the reward path). Composed from the
-            service terms below — a service-reward model (base + archive + prover + rpc + indexer +
-            diversity), not a √stake curve.
+          <div className="mono surface-card-note surface-service-score-card__note">
+            Settled per-cluster ServiceScore read each block by the reward path. The terms below compose
+            the service-reward model without fabricating isolated values for terms this peer does not expose.
           </div>
-          <div className="surface-axis-list" style={{ marginTop: 12 }}>
+          <div className="surface-service-score-card__terms">
             {score.terms.map((term) => (
-              <div className="surface-axis" key={term.id}>
+              <div
+                className={`surface-service-term surface-service-term--${
+                  term.kind === "diversity" && term.bps !== null ? serviceTermTone(term) : term.kind
+                }`}
+                key={term.id}
+              >
                 {term.kind === "diversity" && term.bps !== null ? (
-                  <SurfaceMeter frac={term.bps / DIVERSITY_SCORE_MAX} tone={serviceTermTone(term)} label={term.label} value={bpsPct(term.bps)}/>
+                  <>
+                    <div className="surface-service-term__head">
+                      <span className="mono surface-service-term__label">{term.label}</span>
+                      <b className="mono num">{bpsPct(term.bps)}</b>
+                    </div>
+                    <SurfaceMeter frac={term.bps / DIVERSITY_SCORE_MAX} tone={serviceTermTone(term)}/>
+                  </>
                 ) : (
-                  <div className="surface-meter__meta" style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span>{term.label}</span>
-                    <Halo tone="neutral" label="contributing"/>
-                  </div>
+                  <>
+                    <div className="surface-service-term__head">
+                      <span className="mono surface-service-term__label">{term.label}</span>
+                      <Halo tone="neutral" label="contributing"/>
+                    </div>
+                    <div className="surface-service-term__track" aria-hidden="true"/>
+                  </>
                 )}
-                <div className="mono surface-axis__hint">{term.hint}</div>
+                <div className="mono surface-service-term__hint">{term.hint}</div>
               </div>
             ))}
           </div>
