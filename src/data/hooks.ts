@@ -104,7 +104,15 @@ import {
   type TokenBalanceRecord,
   type VerticesAtRoundResponse,
 } from "@monolythium/core-sdk";
-import { getApiClient, getRpcClient, isRpcConfigured, isWebSocketEnabled, QK } from "../sdk/client";
+import {
+  ethAddressArg,
+  getApiClient,
+  getOracleFeedIds,
+  getRpcClient,
+  isRpcConfigured,
+  isWebSocketEnabled,
+  QK,
+} from "../sdk/client";
 
 /** Singleton React-Query client. */
 export const queryClient = new QueryClient({
@@ -588,6 +596,74 @@ export function apiBlockToRpcHeader(block: ApiBlockHeader): BlockHeader {
     executionUnitsUsed: numToBig(readRequiredNumberField(block, ["executionUnitsUsed"])),
     executionUnitLimit: numToBig(readRequiredNumberField(block, ["executionUnitLimit"])),
   };
+}
+
+/**
+ * Block header with the DAG round surfaced alongside the chain height.
+ *
+ * A Monolythium block carries TWO distinct ordinals: the chain `height`
+ * (sequential block number, exposed by the SDK `BlockHeader` as `number`) and
+ * the consensus `round` (the LythiumDAG-BFT DAG round the block committed in).
+ * The eth-compat block response carries both (`number` + `round`), but the SDK
+ * `BlockHeader` and the indexer block both drop `round`, so consumers that want
+ * to show them distinctly had no round to read. This shape preserves the full
+ * `BlockHeader` and adds:
+ *   - `height` — alias of `number` (the block height, bigint).
+ *   - `round`  — the DAG round (bigint), or `null` when the source did not
+ *                carry one (honest unknown, never fabricated).
+ */
+export type BlockHeaderWithRound = BlockHeader & {
+  /** Chain height (alias of {@link BlockHeader.number}). */
+  height: bigint;
+  /** Consensus DAG round; `null` when the source response omits it. */
+  round: bigint | null;
+};
+
+/** Read a DAG `round` field off a raw eth_* block response, if present. */
+function readBlockRound(raw: unknown): bigint | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = (raw as Record<string, unknown>)["round"];
+  if (value === null || value === undefined) return null;
+  try {
+    if (typeof value === "bigint") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return BigInt(Math.trunc(value));
+    if (typeof value === "string" && value.trim().length > 0) {
+      return BigInt(value.startsWith("0x") ? value : Math.trunc(Number(value)));
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/**
+ * Attach `height` + `round` to a `BlockHeader`. The round is fetched from the
+ * raw `eth_getBlockByNumber` / `eth_getBlockByHash` response (the only surface
+ * that carries it); the SDK's normalized `BlockHeader` drops it. Best-effort —
+ * a failed/absent round read yields `round: null`, never a fabricated value.
+ */
+async function withDagRound(
+  header: BlockHeader | null,
+  rawBlockSelector: number | "latest" | { hash: string },
+): Promise<BlockHeaderWithRound | null> {
+  if (header === null) return null;
+  let round: bigint | null = null;
+  try {
+    const rpc = getRpcClient();
+    const raw =
+      typeof rawBlockSelector === "object"
+        ? await rpc.call<unknown>("eth_getBlockByHash", [rawBlockSelector.hash, false])
+        : await rpc.call<unknown>("eth_getBlockByNumber", [
+            rawBlockSelector === "latest"
+              ? "latest"
+              : `0x${Math.trunc(rawBlockSelector).toString(16)}`,
+            false,
+          ]);
+    round = readBlockRound(raw);
+  } catch {
+    round = null;
+  }
+  return { ...header, height: header.number, round };
 }
 
 export function apiTxToRpcTx(tx: ApiTransactionView, chainId: number): TransactionView {
@@ -3604,17 +3680,21 @@ export function useChainStrip() {
 /* -------------------------------------------------------------------------- */
 
 export function useBlockByHash(hash: string | undefined) {
-  return useQuery<BlockHeader | null>({
+  return useQuery<BlockHeaderWithRound | null>({
     queryKey: QK.blockByHash(hash ?? ""),
     enabled: Boolean(hash) && isRpcConfigured(),
     queryFn: async () => {
       const api = getApiClient();
+      let header: BlockHeader | null;
       try {
         const response = await api.block(hash as string);
-        return apiBlockToRpcHeader(response.data.block);
+        header = apiBlockToRpcHeader(response.data.block);
       } catch {
-        return getRpcClient().ethGetBlockByHash(hash as string);
+        header = await getRpcClient().ethGetBlockByHash(hash as string);
       }
+      // The indexer block + normalized eth header both drop the DAG round, so
+      // join it from the raw eth_getBlockByHash response.
+      return withDagRound(header, { hash: hash as string });
     },
   });
 }
@@ -3652,17 +3732,22 @@ export function useBlockTransactions(
 }
 
 export function useBlockByNumber(n: number | "latest" | undefined) {
-  return useQuery<BlockHeader | null>({
+  return useQuery<BlockHeaderWithRound | null>({
     queryKey: QK.blockByNumber(n ?? "latest"),
     enabled: n !== undefined && isRpcConfigured(),
     queryFn: async () => {
       const api = getApiClient();
+      let header: BlockHeader | null;
       try {
         const response = await api.block(n as number | "latest");
-        return apiBlockToRpcHeader(response.data.block);
+        header = apiBlockToRpcHeader(response.data.block);
       } catch {
-        return getRpcClient().ethGetBlockByNumber(n as number | "latest");
+        header = await getRpcClient().ethGetBlockByNumber(n as number | "latest");
       }
+      // The indexer block + normalized eth header both drop the DAG round, so
+      // join it from the raw eth_getBlockByNumber response. `height` is the
+      // chain block number; `round` is the consensus DAG round (or null).
+      return withDagRound(header, n as number | "latest");
     },
     // For the chain tip we want the head poll cadence; for fixed heights
     // headers are immutable so default 30s staleTime is fine.
@@ -5314,13 +5399,115 @@ export function useLiveOperatorRoster(maxClusters = 50): LiveOperatorRoster {
   };
 }
 
+/**
+ * Derive an operator's consensus authority index from the live cluster roster,
+ * without calling `lyth_resolveOperatorAuthority`.
+ *
+ * `lyth_resolveOperatorAuthority` is broken / disabled on the current fleet (it
+ * returns `-32603 internal error: provider returned malformed BLS pubkey`), so
+ * the page can no longer trust it. Under the DVT seat model each ACTIVE cluster
+ * occupies exactly one consensus authority seat (one round-cert seal per
+ * cluster); the active operator set the chain signs with is therefore indexed by
+ * cluster, not by individual operator. The authority index for an operator is
+ * the position of its cluster within the ascending-by-`clusterId` ordering of
+ * the clusters that are currently active (verified against the live node:
+ * `lyth_signingActivity` reports an active set size equal to the active-cluster
+ * count, and indices `0..activeCount-1` are valid).
+ *
+ * @param operatorId  32-byte hex operator id.
+ * @param clusters    Per-cluster status rows (e.g. from `useLiveOperatorRoster`
+ *                    or `useClusterStatus`). Inactive / empty rows are ignored.
+ * @returns the authority index, or `null` when the operator is not a member of
+ *          any active cluster (e.g. standby-only, jailed-out, or unknown).
+ */
+export function resolveAuthorityIndex(
+  operatorId: string | undefined,
+  clusters: ReadonlyArray<{
+    clusterId: number;
+    active?: boolean;
+    members?: ReadonlyArray<{ operatorId?: string | null }> | null;
+  } | null | undefined>,
+): number | null {
+  if (!operatorId || !OPERATOR_ID_RE.test(operatorId)) return null;
+  const target = operatorId.toLowerCase();
+  // Active clusters only, in ascending clusterId order — the canonical seat
+  // ordering the consensus committee uses.
+  const activeClusters = clusters
+    .filter(
+      (c): c is { clusterId: number; active?: boolean; members?: ReadonlyArray<{ operatorId?: string | null }> | null } =>
+        c != null && Number.isFinite(c.clusterId) && c.active !== false,
+    )
+    .slice()
+    .sort((a, b) => a.clusterId - b.clusterId);
+  for (let i = 0; i < activeClusters.length; i++) {
+    const members = activeClusters[i].members ?? [];
+    const isMember = members.some(
+      (m) => typeof m?.operatorId === "string" && m.operatorId.toLowerCase() === target,
+    );
+    if (isMember) return i;
+  }
+  return null;
+}
+
 export function useOperatorAuthority(operatorId: string | undefined) {
   return useQuery<OperatorAuthorityResponse | null>({
     queryKey: QK.operatorAuthority(operatorId ?? ""),
     enabled: Boolean(operatorId && OPERATOR_ID_RE.test(operatorId)) && isRpcConfigured(),
     queryFn: async () => {
+      // Primary path: ask the node directly. This RPC is currently broken on the
+      // fleet (`-32603 malformed BLS pubkey`), so fall through to a roster-based
+      // derivation when it errors or returns nothing.
       try {
-        return await getRpcClient().lythResolveOperatorAuthority(operatorId as string);
+        const direct = await getRpcClient().lythResolveOperatorAuthority(operatorId as string);
+        if (direct) return direct;
+      } catch {
+        // fall through to the roster-derived fallback
+      }
+      // Fallback: derive the authority index from the live cluster roster. We
+      // read the cluster directory + per-cluster status, then resolve the seat
+      // index with `resolveAuthorityIndex`. Returns `null` when the operator is
+      // not in any active cluster (no fabricated index).
+      try {
+        const id = operatorId as string;
+        const directory = await readClusterSet();
+        const clusterIds = (directory ?? [])
+          .map((c) => c.id)
+          .filter((cid): cid is number => typeof cid === "number")
+          .slice(0, 50);
+        const statuses = await Promise.all(
+          clusterIds.map((cid) =>
+            getApiClient()
+              .cluster(cid)
+              .then((response) => apiClusterStatusToRpcStatus(response.data.cluster))
+              .catch(() =>
+                getRpcClient().lythClusterStatus(cid).then(normalizeClusterStatusResponse),
+              )
+              .catch(() => null),
+          ),
+        );
+        const rows = statuses
+          .filter((s): s is ClusterStatusResponse => s !== null)
+          .map((s) => ({ clusterId: s.clusterId, active: true, members: s.members }));
+        const authorityIndex = resolveAuthorityIndex(id, rows);
+        if (authorityIndex === null) return null;
+        const member = rows
+          .flatMap((r) => r.members ?? [])
+          .find((m) => typeof m.operatorId === "string" && m.operatorId.toLowerCase() === id.toLowerCase());
+        const active = rows.some((r) =>
+          (r.members ?? []).some(
+            (m) =>
+              typeof m.operatorId === "string" &&
+              m.operatorId.toLowerCase() === id.toLowerCase() &&
+              (m as { state?: string }).state === "active",
+          ),
+        );
+        return {
+          schemaVersion: 0,
+          operatorId: id,
+          authorityIndex,
+          consensusPubkey: member ? consensusPubkeyFromMember(member) : "",
+          active,
+        };
       } catch {
         return null;
       }
@@ -5471,9 +5658,13 @@ export function useClusterNameMap(
 }
 
 // Resolve MRC token metadata (symbol/decimals/name) for a set of raw token ids
-// via lyth_resolveTokenMetadata (core-sdk 0.3.14+). Returns a map keyed by token
-// id; a null entry means the token has no on-chain MRC metadata. List-safe — one
-// query per distinct id through useQueries (no hooks-in-loop violation).
+// via lyth_resolveTokenMetadata. Returns a map keyed by token id; a null entry
+// means EITHER the token has no on-chain MRC metadata OR the method is
+// unavailable on this node. NOTE: `lyth_resolveTokenMetadata` is currently
+// DISABLED on the fleet (returns `-32045 method disabled`), so every entry
+// degrades to `null` until a node profile enables it — the guard below makes
+// that an honest empty rather than a thrown error. List-safe — one query per
+// distinct id through useQueries (no hooks-in-loop violation).
 export function useTokenMetadataMap(
   tokenIds: ReadonlyArray<string | null | undefined>,
 ): Record<string, MrcMetadataRecord | null> {
@@ -5486,6 +5677,7 @@ export function useTokenMetadataMap(
         try {
           return await getRpcClient().lythResolveTokenMetadata(id);
         } catch {
+          // method disabled (-32045) or token has no metadata — honest null
           return null;
         }
       },
@@ -7133,16 +7325,59 @@ export function useAddressActivityKind(addr: string | undefined) {
   });
 }
 
+/**
+ * Normalize the `account` block of an address profile so callers always read a
+ * populated `nativeBalance`.
+ *
+ * The indexer / RPC at schema version 6+ emits the native balance under
+ * `account.nativeBalanceLythoshi` (raw lythoshi string). The SDK
+ * `AddressProfileResponse` type still declares the older `account.nativeBalance`
+ * key, so consumers that read `account.nativeBalance` get `undefined` and render
+ * a blank balance. This mirrors the live `nativeBalanceLythoshi` value onto
+ * `nativeBalance` (and keeps `nativeBalanceLythoshi` present), leaving every
+ * other field untouched. The mirrored value is the canonical raw lythoshi
+ * string — `1 LYTH = 1e18 lythoshi`.
+ */
+function normalizeAddressProfile(
+  profile: AddressProfileResponse | null,
+): AddressProfileResponse | null {
+  if (profile === null || profile === undefined) return profile;
+  const account = profile.account as
+    | (AddressProfileResponse["account"] & { nativeBalanceLythoshi?: string })
+    | null
+    | undefined;
+  if (!account) return profile;
+  const lythoshi =
+    typeof account.nativeBalanceLythoshi === "string" ? account.nativeBalanceLythoshi : undefined;
+  const existing = typeof account.nativeBalance === "string" ? account.nativeBalance : undefined;
+  // Prefer an already-present `nativeBalance`; otherwise mirror the
+  // schema-v6 `nativeBalanceLythoshi`. Default to "0" only when neither is
+  // present so the field is always a usable raw-lythoshi string.
+  const nativeBalance = existing ?? lythoshi ?? "0";
+  return {
+    ...profile,
+    account: {
+      ...account,
+      nativeBalance,
+      // Keep the schema-v6 raw field available alongside the mirrored one. The
+      // SDK type does not declare it, so widen with a cast.
+      nativeBalanceLythoshi: lythoshi ?? existing ?? nativeBalance,
+    } as AddressProfileResponse["account"],
+  };
+}
+
 export function useAddressProfile(addr: string | undefined) {
   return useQuery<AddressProfileResponse | null>({
     queryKey: QK.addressProfile(addr ?? ""),
     enabled: Boolean(addr) && isRpcConfigured(),
     queryFn: async () => {
       try {
-        return await getApiClient()
-          .addressProfile(addr as string)
-          .then((response) => response.data)
-          .catch(() => getRpcClient().lythAddressProfile(addr as string));
+        return normalizeAddressProfile(
+          await getApiClient()
+            .addressProfile(addr as string)
+            .then((response) => response.data)
+            .catch(() => getRpcClient().lythAddressProfile(addr as string)),
+        );
       } catch {
         return null;
       }
@@ -7160,10 +7395,12 @@ export function useAddressProfiles(addrs: readonly string[], limit = 30) {
       enabled: Boolean(addr) && isRpcConfigured(),
       queryFn: async (): Promise<AddressProfileResponse | null> => {
         try {
-          return await getApiClient()
-            .addressProfile(addr)
-            .then((response) => response.data)
-            .catch(() => getRpcClient().lythAddressProfile(addr));
+          return normalizeAddressProfile(
+            await getApiClient()
+              .addressProfile(addr)
+              .then((response) => response.data)
+              .catch(() => getRpcClient().lythAddressProfile(addr)),
+          );
         } catch {
           return null;
         }
@@ -7219,8 +7456,11 @@ export function useAccountCode(addr: string | undefined) {
     queryKey: QK.accountCode(addr ?? ""),
     enabled: Boolean(addr) && isRpcConfigured(),
     queryFn: async () => {
+      // `eth_getCode` rejects bech32m — convert to the 0x-hex form first.
+      const hexAddr = ethAddressArg(addr);
+      if (hexAddr === null) return null;
       try {
-        return await getRpcClient().ethGetCode(addr as string, "latest");
+        return await getRpcClient().ethGetCode(hexAddr, "latest");
       } catch {
         return null;
       }
@@ -7239,9 +7479,12 @@ export function useAccountBalance(addr: string | undefined) {
     queryKey: QK.accountBalance(addr ?? ""),
     enabled: Boolean(addr) && isRpcConfigured(),
     queryFn: async () => {
+      // `eth_getBalance` rejects bech32m — convert to the 0x-hex form first.
+      const hexAddr = ethAddressArg(addr);
+      if (hexAddr === null) return null;
       const rpc = getRpcClient();
       try {
-        const env = await rpc.ethGetBalance(addr as string, "latest");
+        const env = await rpc.ethGetBalance(hexAddr, "latest");
         return parseQuantityBig(env.value);
       } catch {
         return null;
@@ -7257,9 +7500,12 @@ export function useAccountBalanceProof(addr: string | undefined) {
     queryKey: [...QK.accountBalance(addr ?? ""), "proof"] as const,
     enabled: Boolean(addr) && isRpcConfigured(),
     queryFn: async () => {
+      // `eth_getBalance` rejects bech32m — convert to the 0x-hex form first.
+      const hexAddr = ethAddressArg(addr);
+      if (hexAddr === null) return null;
       const rpc = getRpcClient();
       try {
-        return await rpc.ethGetBalance(addr as string, "latest");
+        return await rpc.ethGetBalance(hexAddr, "latest");
       } catch {
         return null;
       }
@@ -7322,10 +7568,13 @@ export function useAccountHistory(addr: string | undefined) {
           return null;
         }
       };
+      // `eth_getBalance` / `eth_getTransactionCount` reject bech32m — convert to
+      // the 0x-hex form first. The `lyth_*` and indexer reads accept bech32m.
+      const hexAddr = ethAddressArg(addr);
       try {
         const [balanceEnv, nonce, policy, activity] = await Promise.all([
-          settle(rpc.ethGetBalance(addr as string, "latest")),
-          settle(rpc.ethGetTransactionCount(addr as string, "latest")),
+          hexAddr === null ? Promise.resolve(null) : settle(rpc.ethGetBalance(hexAddr, "latest")),
+          hexAddr === null ? Promise.resolve(null) : settle(rpc.ethGetTransactionCount(hexAddr, "latest")),
           settle(rpc.lythGetAccountPolicy(addr as string)),
           settle(
             getApiClient()
@@ -8329,6 +8578,11 @@ export function useClusterDiversitySet() {
 /* ------------------------------- MB-6 oracle ------------------------------ */
 
 function oracleSignerFromRow(row: OracleSignerRow): OracleSigner {
+  // `lyth_oracleSigners` only carries the GLOBAL writer roster (writer + admin +
+  // updatedAtBlock). It does NOT expose which feeds a writer is allowed to write
+  // or the writer's bond, and the chain has no per-writer enumeration RPC. So
+  // `feeds: []` and `bond: null` are honest "not available on this surface"
+  // empties, not placeholders to be filled in later.
   return {
     address: row.writer,
     servesOracleWriter: true,
@@ -8359,12 +8613,15 @@ function oracleFeedFromConfig(
 /**
  * MB-6 — oracle dashboard: signer roster + configured feeds + latest medians.
  *
- * Live: `lyth_oracleSigners` (global writer roster). The fixture supplies the
- * feed catalogue (the chain has no "list every feed" method — feeds are read
- * per-id via `lyth_oracleFeedConfig` + `lyth_oracleLatestPrice`), so monoscan
- * enriches each known feed id with the live config/price and otherwise falls
-   * back. When the signer projection is unavailable, the signer roster renders
-   * empty instead of using preview rows.
+ * Live: `lyth_oracleSigners` (global writer roster). Feeds are NOT enumerable —
+ * the chain exposes no "list every feed" RPC; feeds are read per-id via
+ * `lyth_oracleFeedConfig` + `lyth_oracleLatestPrice`. To surface feeds honestly
+ * we probe ONLY the feed ids a deployment explicitly publishes through
+ * `VITE_MONOSCAN_ORACLE_FEED_IDS` ({@link getOracleFeedIds}) — never the fixture
+ * FNV-1a placeholder ids, which are not registered on any live node. When no
+ * feed ids are configured, the feed list renders empty (an honest "feeds are
+ * not enumerable on this node"), not a fabricated catalogue. The signer roster
+ * likewise renders empty when the projection is unavailable.
  */
 export function useOracleDashboard() {
   return useQuery<OracleDashboard | null>({
@@ -8385,22 +8642,23 @@ export function useOracleDashboard() {
         } catch {
           // projection unavailable — leave the live roster empty, not fixtures
         }
-        // The chain has no "list every feed" method, so we probe the known feed
-        // ids with the live per-feed config read. A feed id with no live config
-        // (read throws) is dropped — it is not seeded from the fixture. The
-        // fixture only contributes the human label for ids that DO resolve live.
+        // Feeds are not enumerable on-chain. Discover ONLY the feed ids the
+        // deployment explicitly configured (real, node-registered ids). Each is
+        // confirmed by a live per-feed config read; an id the node does not have
+        // registered (config read throws / not_found) is dropped. With no
+        // configured ids this resolves to [] — an honest "not enumerable" empty,
+        // never the fixture catalogue.
+        const configuredFeedIds = getOracleFeedIds();
         const feedProbes: Array<OracleFeed | null> = await Promise.all(
-          ORACLE_DASHBOARD.feeds.map(async (fixtureFeed) => {
+          configuredFeedIds.map(async (feedId) => {
             try {
               const [cfg, price] = await Promise.all([
-                rpc.lythOracleFeedConfig(fixtureFeed.feedId),
-                rpc.lythOracleLatestPrice(fixtureFeed.feedId).catch(() => null),
+                rpc.lythOracleFeedConfig(feedId),
+                rpc.lythOracleLatestPrice(feedId).catch(() => null),
               ]);
-              const feed = oracleFeedFromConfig(cfg, price);
-              // Preserve the human label the fixture knows for the feed id.
-              feed.label = fixtureFeed.label;
-              feed.observationsLen = price ? fixtureFeed.observationsLen : null;
-              return feed;
+              // Label comes from the indexer/config when present; we no longer
+              // borrow a human label from the fixture.
+              return oracleFeedFromConfig(cfg, price);
             } catch {
               return null;
             }
@@ -8495,6 +8753,12 @@ function directoryEntryToView(
   const size = status?.size ?? entry.size;
   const threshold = status?.threshold ?? entry.threshold;
   const roster = (status?.members ?? []).map(consensusPubkeyFromMember).filter(Boolean);
+  // The live cluster status returns `epoch: null` on this chain (the node does
+  // not retain an effective epoch per cluster). `effectiveEpoch` is a
+  // non-nullable `number` in the view-model, so `0` is the "not retained"
+  // sentinel here — it is NOT a fabricated on-chain epoch value. The directory
+  // consumer treats a null `currentEpoch` as "epoch tracking unavailable", so
+  // the countdown stays honest.
   const epoch = status?.epoch != null ? Number(status.epoch) : 0;
   return {
     clusterId: entry.clusterId,

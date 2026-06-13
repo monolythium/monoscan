@@ -125,13 +125,30 @@ export function matchQuery(q: string): Match | null {
 /* Per-template builders                                                      */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Decide whether a tool result is "empty" — i.e. it carries no live rows the
+ * reader can act on. The renderer styles empty invocations with `is-empty` so
+ * a no-data answer reads as honest rather than as a populated result. We mark
+ * empty when a list-shaped result reports `count === 0` (tokens, gap records,
+ * address activity), or when a single-record result resolved with no live
+ * identity (operator lookups that could not resolve an `operator_id`).
+ */
+function isEmptyToolResult(name: ToolName, result: unknown): boolean {
+  if (result === null || result === undefined) return true;
+  if (typeof result !== "object") return false;
+  const r = result as Record<string, unknown>;
+  if (typeof r.count === "number") return r.count === 0;
+  if (name === "get_operator") return r.operator_id === null || r.operator_id === undefined;
+  return false;
+}
+
 /** Fmt a tool invocation: call the tool, wrap with name/input/result. */
 async function call<TIn extends Record<string, unknown>>(
   name: ToolName,
   input: TIn,
 ): Promise<ToolInvocation> {
   const result = await invokeTool(name, input);
-  return { name, input, result };
+  return { name, input, result, empty: isEmptyToolResult(name, result) };
 }
 
 function fmtUsd(n: number): string {
@@ -142,17 +159,31 @@ function fmtUsd(n: number): string {
 }
 
 function explainBlock(r: GetBlockResult): string {
-  return [
-    `**Block ${r.number}** committed in round \`${r.round}\` by cluster **${r.proposer_cluster}**.`,
+  // The public block RPC retains height, hash, timestamp, and execution-unit
+  // usage; the DAG round is read from the raw eth response when present. Fields
+  // the node does not expose (tx-count, proposer cluster, round-cert latency,
+  // DAC coverage) come back `null` — render them as "not retained" rather than
+  // inventing a value.
+  const roundText = r.round !== null ? `round \`${r.round}\`` : "an unretained round";
+  const clusterText = r.proposer_cluster !== null ? ` by cluster **${r.proposer_cluster}**` : "";
+  const lines = [
+    `**Block ${r.number}** committed in ${roundText}${clusterText}.`,
     "",
-    `- **${r.tx_count}** transactions included`,
-    `- Execution units: \`${r.gas_used.toLocaleString()}\` of \`${r.gas_limit.toLocaleString()}\` (${((r.gas_used / r.gas_limit) * 100).toFixed(1)}%)`,
-    `- round-certificate latency: **${r.bls_agg_ms.toFixed(2)}ms**`,
-    `- DAC coverage: **${(r.dac_coverage * 100).toFixed(2)}%** of expected shards`,
+    r.tx_count !== null
+      ? `- **${r.tx_count}** transactions included`
+      : "- Transaction count: _not retained on this RPC_",
+    `- Execution units: \`${r.gas_used.toLocaleString()}\` of \`${r.gas_limit.toLocaleString()}\` (${r.gas_limit > 0 ? ((r.gas_used / r.gas_limit) * 100).toFixed(1) : "0.0"}%)`,
+    r.bls_agg_ms !== null
+      ? `- round-certificate latency: **${r.bls_agg_ms.toFixed(2)}ms**`
+      : "- round-certificate latency: _not retained on this RPC_",
+    r.dac_coverage !== null
+      ? `- DAC coverage: **${(r.dac_coverage * 100).toFixed(2)}%** of expected shards`
+      : "- DAC coverage: _not retained on this RPC_",
     `- Status: \`${r.status}\` — finalized at ${r.timestamp_iso}`,
     "",
     `Hash: \`${r.hash}\` (parent \`${r.parent_hash}\`).`,
-  ].join("\n");
+  ];
+  return lines.join("\n");
 }
 
 function explainAddress(r: GetAddressActivityResult): string {

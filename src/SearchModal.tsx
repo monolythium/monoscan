@@ -6,8 +6,13 @@
 //   - Cmd/Ctrl + K anywhere → modal opens.
 //   - Escape or backdrop click → close without navigating.
 //   - Enter on the input → routes the same way the inline form did
-//     (number → round, bech32m account mono1… → wallet, 0x… → search,
-//     c-N → cluster, anything else → search) and closes the modal.
+//     (bare integer → block at that HEIGHT, bech32m account mono1… → wallet,
+//     0x… → search, c-N → cluster, anything else → search) and closes the
+//     modal. A bare integer is a block height, not a DAG round: it resolves
+//     through `#/round/{height}` — the app's block-height detail view, which
+//     reads its route param as a chain height (see RoundPage in
+//     monoscan-extras.tsx). `#/round` is the only block-height route the app
+//     dispatches; there is no separate `#/block` route.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -75,6 +80,11 @@ export function SearchModal({ open, onClose, go }: SearchModalProps) {
       };
       if (surfaceRoute[lower]) go(surfaceRoute[lower]);
       else if (BECH32M_ACCOUNT_RE.test(v)) go(`#/wallet/${encodeURIComponent(v)}`);
+      // A bare integer is a block HEIGHT. The block-height detail view is the
+      // `#/round/{height}` route (RoundPage reads its param as a chain height,
+      // not a DAG round) — this matches how every other nav site in the app
+      // links to a block (overview movers, tx rows, the transactions page). No
+      // `#/block` route exists, so routing there would 404.
       else if (/^\d+$/.test(v)) go(`#/round/${v}`);
       else if (v.startsWith("0x")) go(`#/search/${encodeURIComponent(v)}`);
       else if (/^c-\d+/i.test(v)) go(`#/cluster/${v.slice(2)}`);
@@ -103,7 +113,7 @@ export function SearchModal({ open, onClose, go }: SearchModalProps) {
             ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Round · C-0 · mono1… · tx hash · oracle · prover · bridge · diversity"
+            placeholder="Block height · C-0 · mono1… · tx hash · oracle · prover · bridge · diversity"
             className="ms-searchmodal__input"
             autoComplete="off"
             spellCheck={false}

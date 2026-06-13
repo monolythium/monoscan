@@ -438,7 +438,10 @@ const Landing = ({ go }: any) => {
   const liveInitialSupply = liveSupply?.initialSupplyLythoshi ?? NATIVE_INITIAL_SUPPLY_LYTHOSHI;
   const liveCurrentSupply = liveSupply?.circulatingSupplyLythoshi ?? liveInitialSupply;
   const liveBurnedSupply = liveSupply?.totalBurnedLythoshi ?? "0";
-  const displayedRound = liveStats?.latestHeight ?? (liveMode ? null : round);
+  // Block height (chain tip), NOT the consensus DAG round — kept distinct so no
+  // surface mislabels height as "round". The real round comes from per-block
+  // eth_getBlockByNumber/Hash (BlockHeaderWithRound.round), not from stats.
+  const displayedHeight = liveStats?.latestHeight ?? (liveMode ? null : round);
   const liveClusterCount = liveStats?.clusters.total ?? liveClusters.data?.length ?? null;
   const livePeerCount = liveStats?.peerCount ?? null;
   const liveMempoolDepth = liveStats
@@ -503,7 +506,7 @@ const Landing = ({ go }: any) => {
             <span className="ov-livedot"/>
             <span className="mono" style={{fontSize:11,letterSpacing:"0.14em",textTransform:"uppercase",color:"var(--fg-300)"}}>
               {hasLiveStats
-                ? `Monolythium · round ${fmt(liveStats.latestHeight)} · ${liveStats.peerCount} peers`
+                ? `Monolythium · block #${fmt(liveStats.latestHeight)} · ${liveStats.peerCount} peers`
                 : liveMode
                   ? "Monolythium · connecting to live node"
                 : `Monolythium · demo feed · ${c.ratePerSec.toFixed(1)} rounds/s`}
@@ -723,7 +726,9 @@ const HeroTelemetryStrip = ({ mempoolDepth, attestationPct, latencyMs }: any) =>
         </div>
         <div>
           <span className="mono">Commit latency</span>
-          <b className="mono num">{latency === null ? "—" : `${latency.toFixed(0)}ms`}</b>
+          {/* "—" is honest: it means this node retains no proposer_latency
+              metric series (lyth_metricsRange empty), NOT that latency is 0. */}
+          <b className="mono num" title={latency === null ? "Not reported by this node (no proposer_latency series)" : undefined}>{latency === null ? "—" : `${latency.toFixed(0)}ms`}</b>
           <i><em style={{ width: `${latency === null ? 0 : Math.max(6, Math.min(100, latency / 6))}%` }}/></i>
         </div>
     </div>
@@ -1523,6 +1528,19 @@ const OperatorPage = ({ addr, go }: any) => {
   const operatorInfo = useOperatorInfo(liveOperatorId);
   const authority = useOperatorAuthority(liveOperatorId);
   const authorityIndex = authority.data?.authorityIndex;
+  // Distinguish *why* the consensus authority index is absent so the empty
+  // states read honestly. useOperatorAuthority self-heals (broken
+  // lyth_resolveOperatorAuthority RPC -> roster-derived resolveAuthorityIndex)
+  // and swallows failures to null, so a null `data` is ambiguous. We
+  // disambiguate with the live roster: if the operator IS in the roster but
+  // still has no index, the resolver/RPC is unavailable on this node; if it is
+  // not in the roster at all, it genuinely holds no active authority seat.
+  const authoritySettled = useLiveProfile && !authority.isLoading;
+  const authorityResolved = authorityIndex !== undefined;
+  const authorityUnavailable =
+    authoritySettled && !authorityResolved && liveMembership !== null;
+  const authorityAbsent =
+    authoritySettled && !authorityResolved && liveMembership === null;
   const signing = useOperatorSigningActivity(authorityIndex, 25);
   const duties = useOperatorDuties(authorityIndex, 100);
   const risk = useOperatorRisk(authorityIndex, 250);
@@ -1652,7 +1670,7 @@ const OperatorPage = ({ addr, go }: any) => {
         <div className="op-profile-hero__stats">
           <OperatorProfileStat label="State" value={profileRole.label} sub={useLiveProfile ? "cluster status" : "preview health"} tone={profileTone}/>
           <OperatorProfileStat label="Cluster" value={primaryClusterLabel} sub={useLiveProfile ? `${roster.clusterCount ?? "—"} clusters scanned` : `${op.memberships.length} memberships`} tone="info"/>
-          <OperatorProfileStat label="Authority" value={authorityIndex !== undefined && authorityIndex !== null ? `#${authorityIndex}` : "—"} sub={authority.data?.active ? "active authority" : authority.data ? "inactive authority" : "not resolved"} tone={authority.data?.active ? "ok" : authority.data ? "warn" : "info"}/>
+          <OperatorProfileStat label="Authority" value={authorityIndex !== undefined && authorityIndex !== null ? `#${authorityIndex}` : "—"} sub={authority.data?.active ? "active authority" : authority.data ? "inactive authority" : authorityUnavailable ? "resolver unavailable" : authorityAbsent ? "no authority seat" : "not resolved"} tone={authority.data?.active ? "ok" : authority.data ? "warn" : "info"}/>
           <OperatorProfileStat
             label="Miss rate"
             value={risk.data ? `${(risk.data.missRateBps / 100).toFixed(2)}%` : useLiveProfile ? "—" : op.slashes === 0 ? "0.00%" : "watch"}
@@ -1820,7 +1838,11 @@ const OperatorPage = ({ addr, go }: any) => {
               </div>
             ) : (
               <div className="op-empty-state mono">
-                Recent signing activity appears after the operator authority index resolves.
+                {authorityUnavailable
+                  ? "Authority resolver unavailable on this node — signing history can't be loaded until the operator's consensus authority index resolves."
+                  : authorityAbsent
+                    ? "This operator id holds no active consensus authority seat, so it has no recent signing history."
+                    : "Recent signing activity appears after the operator authority index resolves."}
               </div>
             )}
           </div>
@@ -2324,6 +2346,12 @@ const operatorAvatarHue = (seed: string) =>
   Array.from(seed).reduce((sum, ch, idx) => sum + ch.charCodeAt(0) * (idx + 1), 0) % 360;
 
 const OperatorRosterCard = ({row, go}: {row: OperatorCardRow; go: (href: string) => void}) => {
+  // NOTE: per-row fan-out — each rendered card issues its own lyth_operatorInfo
+  // lookup to resolve the live moniker. This is intentionally bounded by the
+  // caller's pagination (OperatorsPage slices to `operatorVisible` rows before
+  // rendering), so the request count tracks the visible page, not the full
+  // roster. If the page size grows large, batch this into a single roster-wide
+  // moniker read in the data layer rather than fanning out N requests here.
   const operatorInfo = useOperatorInfo(row.mode !== "fixture" ? row.operatorId : undefined);
   const liveName = operatorInfo.data?.moniker ?? operatorInfo.data?.alias ?? null;
   const displayName = liveName || row.name;
@@ -2672,9 +2700,25 @@ const App = () => {
   else if (parts[0]==="stats")      page = <StatsPage go={go}/>;
   else if (parts[0]==="burn")       page = <BurnPage go={go}/>;
   else if (parts[0]==="get-monolythium" || parts[0]==="get-lyth") {
-    // Genesis sale moved to monolythium.com. Redirect for deep links.
-    if (typeof window !== "undefined") window.location.replace("https://monolythium.com/get-lyth");
-    page = <div style={{padding: 40, textAlign: "center", color: "var(--fg-300)"}}>Redirecting to monolythium.com/get-lyth …</div>;
+    // Acquiring LYTH moved to monolythium.com. Rather than a side-effecting
+    // hard redirect during render (which yanks the user off monoscan with no
+    // agency), show an in-app interstitial that explains where the link now
+    // lives and lets the user choose to continue or stay on the explorer.
+    page = (
+      <div className="ms-page" style={{padding: 40, maxWidth: 560, margin: "0 auto", textAlign: "center", color: "var(--fg-300)"}}>
+        <h1 className="ms-h1" style={{marginBottom: 12}}>Get <span style={{color:"var(--gold)"}}>LYTH</span></h1>
+        <p style={{lineHeight: 1.6, marginBottom: 24}}>
+          Acquiring LYTH now happens on <b>monolythium.com</b>. Monoscan stays focused on
+          exploring the live chain.
+        </p>
+        <div style={{display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap"}}>
+          <a href="https://monolythium.com/get-lyth" className="ov-cta ov-cta--primary" target="_blank" rel="noopener noreferrer">
+            Continue to monolythium.com ↗
+          </a>
+          <button type="button" className="ov-cta" onClick={()=>go("#/")}>Back to explorer</button>
+        </div>
+      </div>
+    );
   }
   else if (parts[0]==="protocol")   page = <ProtocolPage go={go}/>;
   else if (parts[0]==="diversity" && parts[1]) page = <ClusterDiversityPage id={parts[1]} go={go}/>;

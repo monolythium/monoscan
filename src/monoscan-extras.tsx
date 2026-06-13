@@ -2022,7 +2022,14 @@ const WalletPage = ({ addr, go }: any) => {
   const spendingPolicy = useSpendingPolicy(addr);
   const fallbackWallet = indexerAvailability.liveChain ? undefined : WALLETS.find(w => w.addr === addr);
   const profileAccount = profile.data?.account ?? null;
-  const profileBalance = profileAccount?.nativeBalance ?? null;
+  // The live indexer (schemaVersion 6) emits `account.nativeBalanceLythoshi`; the
+  // data layer mirrors it onto `account.nativeBalance`. Read the normalized field,
+  // and fall back to the raw lythoshi key for any unnormalized/legacy response so
+  // the balance is never blank when the chain actually has it.
+  const profileBalance =
+    profileAccount?.nativeBalance
+    ?? (profileAccount as { nativeBalanceLythoshi?: string } | null)?.nativeBalanceLythoshi
+    ?? null;
   const liveBalanceNumber = profileBalance
     ? _rawToLythNumber(profileBalance)
     : live.data?.balance
@@ -2176,7 +2183,9 @@ const WalletPage = ({ addr, go }: any) => {
               />
               <KV
                 label="Redemption queue"
-                value={liveRedemptionQueue ? `${liveRedemptionTickets.length}/${liveRedemptionQueue.count} tickets${liveCooldownCompleteRedemptions ? ` · ${liveCooldownCompleteRedemptions} cooldown complete` : ""}` : "—"}
+                value={liveRedemptionQueue && (liveRedemptionTickets.length > 0 || liveRedemptionQueue.count > 0)
+                  ? `${liveRedemptionTickets.length}/${liveRedemptionQueue.count} tickets${liveCooldownCompleteRedemptions ? ` · ${liveCooldownCompleteRedemptions} cooldown complete` : ""}`
+                  : "instant (non-custodial)"}
                 mono
               />
               <KV label="Activity index" value={liveActivityKind ? `${liveActivityKind.kind}${earliestRetained ? ` · retained from block ${Number(earliestRetained).toLocaleString()}` : ""}` : "—"}/>
@@ -2271,7 +2280,12 @@ const WalletPage = ({ addr, go }: any) => {
               )}
             </Card>
           )}
-          {liveRedemptionQueue && (
+          {/* Non-custodial delegation makes undelegate instant — the redemption
+              queue is deprecated and always empty on the live chain
+              (lyth_redemptionQueue reports `deprecated:true, count:0`). Only render
+              this card when a node actually still reports queued tickets, so a live
+              wallet never shows a meaningless "0/0" redemption queue. */}
+          {liveRedemptionQueue && (liveRedemptionTickets.length > 0 || liveRedemptionQueue.count > 0) && (
             <Card title="Redemption queue" right={<span className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>redemption-queue</span>}>
               <div className="tx-kv">
                 <KV label="Tickets" value={`${liveRedemptionTickets.length}/${liveRedemptionQueue.count}`} mono/>
@@ -2746,13 +2760,18 @@ const TransactionsPage = ({ go }: any) => {
     const isContractCreation = (tx.to ?? null) === null;
     return {
       hash: tx.hash,
+      // `LatestTransactionRow.blockNumber` is the block HEIGHT (sourced from the
+      // indexer's `blockHeight`), not the consensus DAG round — label it as a block.
       blockNumber: tx.blockNumber,
-        blockLabel: `round ${Number(tx.blockNumber).toLocaleString()}`,
+        blockLabel: `block ${Number(tx.blockNumber).toLocaleString()}`,
       when: _ageFromTs(tx.blockTimestamp),
       from: tx.from,
       to: tx.to ?? null,
       isContractCreation,
-      valueLabel: `${_fmtRawToken(tx.value)} LYTH`,
+      // The latest-transactions feed carries only the native LYTH `value`
+      // (no per-token denom field), so the denom is always LYTH here. Use the
+      // shared raw→LYTH formatter so a missing value renders "0 LYTH", not "— LYTH".
+      valueLabel: _fmtLythRaw(tx.value) ?? "0 LYTH",
       feeLabel: transactionFeeValueLabel(tx.feeDisplay ?? null, null),
       executionLabel: used !== null
         ? `${_fmt(used)} / ${_fmt(limit)}`
@@ -2835,7 +2854,7 @@ const TransactionsPage = ({ go }: any) => {
             <small>{rows.length.toLocaleString()} loaded</small>
           </div>
           <div className="tx-feed-stat">
-            <span className="mono">Latest round</span>
+            <span className="mono">Latest block</span>
             <b className="mono num">{hasLiveDigest ? _fmtI(live.data?.latestBlock ?? 0) : "—"}</b>
             <small>{liveStateLabel}</small>
           </div>
@@ -2881,7 +2900,11 @@ const TransactionsPage = ({ go }: any) => {
         {filtered.length === 0 ? (
           <p className="tx-feed-empty mono">
             {hasLiveDigest
-              ? "No transactions found in the scanned round window."
+              ? q
+                ? "No transactions match the current filter on this page."
+                : usingCursorFeed
+                  ? "No transactions on this page of the live feed."
+                  : "No transactions found in the scanned block window."
               : indexerAvailability.liveChain
                 ? live.isLoading
                   ? "Checking the live transaction feed."
@@ -2927,7 +2950,7 @@ const TransactionsPage = ({ go }: any) => {
                   <span><small className="mono">Fee</small><b className="mono num">{tx.feeLabel}</b></span>
                   <span><small className="mono">Units</small><b className="mono num">{tx.executionLabel}</b></span>
                   <span>
-                    <small className="mono">Round</small>
+                    <small className="mono">Block</small>
                     <b className="mono num" onClick={(e)=>{ e.stopPropagation(); go(`#/round/${tx.blockNumber}`); }}>{tx.blockLabel}</b>
                   </span>
                 </span>
@@ -2984,7 +3007,7 @@ const TransactionsPage = ({ go }: any) => {
                 className="tx-feed-tool"
                 disabled={!heightJumpValid}
               >
-                Open round
+                Open block
               </button>
             </form>
           </div>
@@ -3802,6 +3825,14 @@ const RoundPage = ({ round, go }: any) => {
   const blockTxCount = blockTransactions.data?.totalTransactions ?? blockTransactions.data?.transactions?.length ?? null;
   const parentCount = liveParents?.length ?? null;
   const vertexCount = liveVertices.length || verts.length;
+  // The `#/round/<n>` route is entered with a block HEIGHT (every nav site passes
+  // a block height / blockNumber), so `r` is the chain height, not the DAG round.
+  // The DAG round is a distinct value joined from the raw header by the data layer
+  // ({@link BlockHeaderWithRound}); show both honestly. `round` is null when the
+  // source omits it — never fabricated.
+  const liveDagRound = liveHeader?.round !== undefined && liveHeader?.round !== null
+    ? Number(liveHeader.round)
+    : null;
   const liveHeaderTimestamp = (() => {
     const raw = liveHeader?.timestamp;
     if (raw === null || raw === undefined) return null;
@@ -3825,18 +3856,21 @@ const RoundPage = ({ round, go }: any) => {
         <div className="round-hero__copy">
           <button className="ov-cta ov-cta--ghost" onClick={()=>go("#/")}>← Overview</button>
           <div className="round-hero__tag mono"><span className="ov-livedot"/> {liveHeader ? "live header" : curIsLive ? "live head" : "local preview"}</div>
-          <h1>Round <span>#{isNaN(r)?round:r.toLocaleString()}</span></h1>
+          <h1>Block <span>#{isNaN(r)?round:r.toLocaleString()}</span></h1>
           <p className="mono">
-            {found
-              ? liveHeaderTimestampDisplay ?? (curIsLive && r > 0 ? `${Math.max(0, cur - r).toLocaleString()} rounds behind head` : "retained round data")
-              : liveBlock.isLoading || chainStats.isLoading
-                ? "Checking live block..."
-                : curIsLive
-                  ? `Round not found. Current head is ${cur.toLocaleString()}.`
-                  : "Round not found and no live head available."}
+            {liveDagRound !== null
+              ? `DAG round ${liveDagRound.toLocaleString()}${liveHeaderTimestampDisplay ? ` · ${liveHeaderTimestampDisplay}` : ""}`
+              : found
+                ? liveHeaderTimestampDisplay ?? (curIsLive && r > 0 ? `${Math.max(0, cur - r).toLocaleString()} blocks behind head` : "retained block data")
+                : liveBlock.isLoading || chainStats.isLoading
+                  ? "Checking live block..."
+                  : curIsLive
+                    ? `Block not found. Current head is ${cur.toLocaleString()}.`
+                    : "Block not found and no live head available."}
           </p>
         </div>
         <div className="round-hero__stats">
+          <div><span className="mono">DAG round</span><b className="mono num">{liveDagRound !== null ? liveDagRound.toLocaleString() : "—"}</b></div>
           <div><span className="mono">Transactions</span><b className="mono num">{blockTxCount !== null ? blockTxCount.toLocaleString() : "—"}</b></div>
           <div><span className="mono">Certificate</span><b className="mono num">{liveCert ? `${signerCount}` : roundCert.isLoading ? "..." : "—"}</b></div>
           <div><span className="mono">Parents</span><b className="mono num">{parentCount !== null ? parentCount.toLocaleString() : "—"}</b></div>
@@ -3848,9 +3882,9 @@ const RoundPage = ({ round, go }: any) => {
           <div className="round-packet__head">
             <div>
               <span className="mono">Starfish DAG packet</span>
-              <h3>Round #{isNaN(r) ? round : r.toLocaleString()}</h3>
+              <h3>Block #{isNaN(r) ? round : r.toLocaleString()}{liveDagRound !== null ? ` · DAG round ${liveDagRound.toLocaleString()}` : ""}</h3>
             </div>
-            <b className="mono">{curIsLive ? `${roundLag.toLocaleString()} rounds behind head` : "local preview"}</b>
+            <b className="mono">{curIsLive ? `${roundLag.toLocaleString()} blocks behind head` : "local preview"}</b>
           </div>
           <div className="round-packet__lane">
             <div className="round-packet__side">
@@ -3864,7 +3898,7 @@ const RoundPage = ({ round, go }: any) => {
             </div>
             <div className="round-packet__core">
               <div className="round-packet__pulse" aria-hidden="true"/>
-              <span className="mono">current round</span>
+              <span className="mono">{liveDagRound !== null ? `block · DAG round ${liveDagRound.toLocaleString()}` : "block height"}</span>
               <b className="mono">#{isNaN(r) ? round : r.toLocaleString()}</b>
               <small className="mono">{liveHeader?.hash ? fmtHashShort(liveHeader.hash, 18, 6) : liveHeaderTimestampDisplay ?? "retained state"}</small>
             </div>
@@ -3891,7 +3925,7 @@ const RoundPage = ({ round, go }: any) => {
       ) : (
         <>
           {liveHeader ? (
-            <Card title="Live round · header API" style={{marginBottom:14}}>
+            <Card title={liveDagRound !== null ? `Live block · header API · DAG round ${liveDagRound.toLocaleString()}` : "Live block · header API"} style={{marginBottom:14}}>
               <div className="tx-kv">
                 <div className="tx-kv__row">
                   <span className="mono tx-kv__k">Hash</span>
@@ -3924,7 +3958,10 @@ const RoundPage = ({ round, go }: any) => {
                 <div className="tx-kv__row">
                   <span className="mono tx-kv__k">Timestamp</span>
                   <span className="mono tx-kv__v">
-                    {liveHeaderTimestampDisplay ?? (liveHeader.timestamp ?? "—")}
+                    {/* `liveHeaderTimestamp` already nulls out a 0 / missing value,
+                        so a falsy display means the header carries no real timestamp
+                        (genesis-style headers report 0) — show "—", never raw 0. */}
+                    {liveHeaderTimestampDisplay ?? "—"}
                   </span>
                 </div>
               </div>
@@ -3932,17 +3969,19 @@ const RoundPage = ({ round, go }: any) => {
           ) : (
             <p className="mono" style={{color:"var(--fg-400)",marginBottom:20}}>
               {verts.length > 0
-                ? `${verts.length} cluster vertex${verts.length===1?"":"es"} committed at this round.`
+                ? `${verts.length} cluster vertex${verts.length===1?"":"es"} committed at this block.`
                 : curIsLive && r > 0 && r <= cur
-                  ? `Round committed ~${Math.max(0, cur - r).toLocaleString()} rounds ago.`
-                  : "Round retained but no live header is exposed for it."}
+                  ? `Block #${r.toLocaleString()} is committed (~${Math.max(0, cur - r).toLocaleString()} blocks behind head) but this node retains no header for it — likely outside the indexer retention window.`
+                  : curIsLive && r > cur
+                    ? `Block #${r.toLocaleString()} has not been produced yet — current head is #${cur.toLocaleString()}.`
+                    : "Block retained but no live header is exposed for it."}
             </p>
           )}
           {(liveCert || roundCert.isLoading || roundCert.isFetched) && (
             <Card title="Round certificate" right={<span className="cap">round certificate</span>} style={{marginBottom:14}}>
               {liveCert ? (
                 <div className="tx-kv">
-                  <KV label="Round" value={Number(liveCert.round ?? r).toLocaleString()} mono/>
+                  <KV label="DAG round" value={liveCert.round !== undefined && liveCert.round !== null ? Number(liveCert.round).toLocaleString() : liveDagRound !== null ? liveDagRound.toLocaleString() : "—"} mono/>
                   <KV label="Operators signed" value={`${signerCount}${signerIndices.length ? ` · [${signerIndices.join(", ")}]` : ""}`} mono/>
                   <KV label="Operator bitmap" value={_short(liveCert.signers_bitmap ?? liveCert.signersBitmap ?? "—", 28)} mono/>
                   <KV label="Aggregate signature" value={_short(liveCert.signature ?? "—", 28)} mono/>

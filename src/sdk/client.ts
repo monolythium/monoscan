@@ -11,6 +11,7 @@ import {
   RpcClient,
   addressToTypedBech32,
   apiEndpointFromRpcEndpoint,
+  normalizeAddressHex,
   typedBech32ToAddress,
   type ApiClientOptions,
   type CapabilitiesResponse,
@@ -103,6 +104,55 @@ export function normalizeNativeForwarderContractAddress(
   } catch {
     return null;
   }
+}
+
+/**
+ * Coerce any address shape (`mono1…` bech32m or `0x…` 20-byte hex) into the
+ * `0x`-hex form the chain's `eth_*` compatibility methods accept.
+ *
+ * The native `lyth_*` reads wrap addresses through `sdkTypedAddress`, so they
+ * accept bech32m directly. The legacy `eth_getBalance` / `eth_getCode` /
+ * `eth_getTransactionCount` surface does NOT — it rejects bech32m with
+ * `-32602 invalid params`. Call sites that hit those methods must pass the hex
+ * form. Returns `null` for input that is neither a valid bech32m address nor a
+ * 20-byte hex address (callers should skip the eth_* call in that case rather
+ * than forward a malformed argument).
+ */
+export function ethAddressArg(address: string | null | undefined): string | null {
+  const trimmed = address?.trim();
+  if (!trimmed) return null;
+  try {
+    return normalizeAddressHex(trimmed);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Optional oracle feed-id allowlist for live feed discovery.
+ *
+ * The chain exposes NO "enumerate every feed" RPC — feeds are read per-id via
+ * `lyth_oracleFeedConfig` + `lyth_oracleLatestPrice`. To surface live feeds
+ * without fabricating ids, a deployment that knows its registered feed ids can
+ * publish them here as a comma/semicolon-separated list of 32-byte hex ids:
+ *   `VITE_MONOSCAN_ORACLE_FEED_IDS=0x….,0x…`
+ * When unset, the oracle dashboard renders an honest empty feed list rather
+ * than probing made-up fixture ids.
+ */
+let _oracleFeedIds: string[] | null = null;
+
+export function getOracleFeedIds(): string[] {
+  if (_oracleFeedIds !== null) return _oracleFeedIds;
+  const raw = import.meta.env.VITE_MONOSCAN_ORACLE_FEED_IDS as string | undefined;
+  const out: string[] = [];
+  if (raw) {
+    for (const entry of raw.split(/[;,]/)) {
+      const id = entry.trim();
+      if (HASH32_RE.test(id) && !out.includes(id)) out.push(id);
+    }
+  }
+  _oracleFeedIds = out;
+  return out;
 }
 
 export function getNativeMarketForwarderAddress(
@@ -205,6 +255,7 @@ export function resetRpcClient(): void {
   _api = null;
   _indexer = null;
   _marketIds = null;
+  _oracleFeedIds = null;
 }
 
 /**

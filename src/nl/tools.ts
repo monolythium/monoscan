@@ -10,7 +10,7 @@
 
 import { LYTHOSHI_PER_LYTH, NATIVE_LYTH_DECIMALS } from "@monolythium/core-sdk";
 import { MARKETS, MONOSCAN_DATA } from "../data/fallback";
-import { getRpcClient, isRpcConfigured } from "../sdk/client";
+import { ethAddressArg, getRpcClient, isRpcConfigured } from "../sdk/client";
 import type { ToolName } from "./types";
 
 /* -------------------------------------------------------------------------- */
@@ -62,14 +62,19 @@ export interface GetBlockResult {
   number: number;
   hash: string;
   parent_hash: string;
-  proposer_cluster: string;
-  round: number;
+  /** Proposer cluster — `null` when the public RPC does not retain it. */
+  proposer_cluster: string | null;
+  /** Consensus DAG round — `null` when the source response omits it. */
+  round: number | null;
   timestamp_iso: string;
-  tx_count: number;
+  /** Transaction count — `null` when not exposed by the public block RPC. */
+  tx_count: number | null;
   gas_used: number;
   gas_limit: number;
-  bls_agg_ms: number;
-  dac_coverage: number;
+  /** round-certificate aggregation latency (ms) — `null` when not retained. */
+  bls_agg_ms: number | null;
+  /** DAC coverage fraction — `null` when not retained. */
+  dac_coverage: number | null;
   status: "committed" | "pending";
 }
 
@@ -108,19 +113,47 @@ export async function get_block(input: GetBlockInput): Promise<GetBlockResult> {
   if (!isRpcConfigured()) return fallback;
   try {
     const rpc = getRpcClient();
-    const live = raw.startsWith("0x") && raw.length > 20
+    const byHash = raw.startsWith("0x") && raw.length > 20;
+    const live = byHash
       ? await rpc.ethGetBlockByHash(String(input.number_or_hash))
       : await rpc.ethGetBlockByNumber(n);
     if (!live) return fallback;
+    // The SDK's normalized `BlockHeader` drops the DAG `round`; only the raw
+    // `eth_getBlockBy*` response carries it. Read it best-effort — a missing
+    // round surfaces as `null`, never a fabricated value.
+    let round: number | null = null;
+    try {
+      const rawBlock = byHash
+        ? await rpc.call<unknown>("eth_getBlockByHash", [String(input.number_or_hash), false])
+        : await rpc.call<unknown>("eth_getBlockByNumber", [`0x${Math.trunc(n).toString(16)}`, false]);
+      const rawRound = rawBlock && typeof rawBlock === "object"
+        ? (rawBlock as Record<string, unknown>)["round"]
+        : undefined;
+      if (typeof rawRound === "number" && Number.isFinite(rawRound)) round = rawRound;
+      else if (typeof rawRound === "string" && rawRound.trim() !== "") {
+        const parsed = rawRound.startsWith("0x") ? Number(rawRound) : Number(rawRound);
+        if (Number.isFinite(parsed)) round = parsed;
+      }
+    } catch {
+      round = null;
+    }
+    // Only `number`, `hash`, `parent_hash`, `timestamp`, and execution-unit
+    // usage are live on the public block RPC. tx-count, proposer cluster,
+    // round-cert latency, and DAC coverage are not retained here — report them
+    // honestly as `null` rather than carrying the fixture rows into a live
+    // result.
     return {
-      ...fallback,
       number: Number(live.number),
       hash: live.hash,
       parent_hash: live.parent_hash,
-      round: Number(live.number),
+      proposer_cluster: null,
+      round,
       timestamp_iso: new Date(Number(live.timestamp) * 1000).toISOString().replace(/\.\d{3}Z$/, "Z"),
+      tx_count: null,
       gas_used: Number(live.executionUnitsUsed),
       gas_limit: Number(live.executionUnitLimit),
+      bls_agg_ms: null,
+      dac_coverage: null,
       status: "committed",
     };
   } catch {
@@ -226,45 +259,133 @@ export interface GetOperatorInput {
 
 export interface GetOperatorResult {
   address: string;
+  /** Operator id (32-byte hex) when resolved live; fixture short-addr offline. */
+  operator_id: string | null;
   handle: string;
-  region: string;
-  reputation: number;
-  uptime_90d: number;
-  bonded: number;
+  /** Hosting class / region — `null` when not exposed by the live RPC. */
+  region: string | null;
+  /** Reputation score — `null`; not retained on the public operator RPC. */
+  reputation: number | null;
+  /** 90-day uptime — `null`; not retained on the public operator RPC. */
+  uptime_90d: number | null;
+  /** Bonded LYTH amount (whole-LYTH string) when live; fixture number offline. */
+  bonded: string | number;
   active_clusters: string[];
   standby_clusters: string[];
-  slashes: number;
-  active_since_round: number;
+  /** Slash count — `null`; not retained on the public operator RPC. */
+  slashes: number | null;
+  /** Active-since round — `null`; not retained on the public operator RPC. */
+  active_since_round: number | null;
+  /** Lifecycle state (active/standby/…) when resolved live; else `null`. */
+  lifecycle_state: string | null;
 }
 
 /**
- * Look up an operator by address.
+ * Look up an operator by id (32-byte hex) or address substring.
  *
- * Uses local operator rows until the retained operator index is available.
+ * Live-first: resolves the operator via `lyth_operatorInfo` and joins active /
+ * standby cluster membership from the live cluster directory + per-cluster
+ * status — the same RPCs the operator surface in `hooks.ts` consumes. Fields the
+ * public operator RPC does not retain (reputation, uptime, slashes,
+ * active-since round) are reported honestly as `null` instead of fabricated.
+ * Falls back to deterministic fixture rows only when no RPC is configured.
  */
-export function get_operator(input: GetOperatorInput): GetOperatorResult {
-  const D: any = MONOSCAN_DATA;
-  const ops: any[] = D.operators || [];
-  const found = ops.find((o) =>
-    o.addrShort.toLowerCase().includes(input.address.toLowerCase()),
-  );
-  const op = found || ops[0];
-  return {
-    address: op.addrShort,
-    handle: op.handle,
-    region: op.region,
-    reputation: Number(op.reputation.toFixed(3)),
-    uptime_90d: Number(op.uptime.toFixed(4)),
-    bonded: op.bonded,
-    active_clusters: op.memberships
-      .filter((m: any) => m.role === "active")
-      .map((m: any) => `C-${String(m.slot).padStart(3, "0")}`),
-    standby_clusters: op.memberships
-      .filter((m: any) => m.role === "standby")
-      .map((m: any) => `C-${String(m.slot).padStart(3, "0")}`),
-    slashes: op.slashes,
-    active_since_round: 2_800_000 + (op.handle.charCodeAt(0) % 200_000),
+export async function get_operator(input: GetOperatorInput): Promise<GetOperatorResult> {
+  const buildFallback = (): GetOperatorResult => {
+    const D: any = MONOSCAN_DATA;
+    const ops: any[] = D.operators || [];
+    const found = ops.find((o) =>
+      o.addrShort.toLowerCase().includes(input.address.toLowerCase()),
+    );
+    const op = found || ops[0];
+    return {
+      address: op.addrShort,
+      operator_id: null,
+      handle: op.handle,
+      region: op.region,
+      reputation: Number(op.reputation.toFixed(3)),
+      uptime_90d: Number(op.uptime.toFixed(4)),
+      bonded: op.bonded,
+      active_clusters: op.memberships
+        .filter((m: any) => m.role === "active")
+        .map((m: any) => `C-${String(m.slot).padStart(3, "0")}`),
+      standby_clusters: op.memberships
+        .filter((m: any) => m.role === "standby")
+        .map((m: any) => `C-${String(m.slot).padStart(3, "0")}`),
+      slashes: op.slashes,
+      active_since_round: 2_800_000 + (op.handle.charCodeAt(0) % 200_000),
+      lifecycle_state: null,
+    };
   };
+  if (!isRpcConfigured()) return buildFallback();
+  try {
+    const rpc = getRpcClient();
+    const query = input.address.trim();
+    // Resolve the canonical operator id. A full 32-byte hex id is used as-is;
+    // otherwise scan the live cluster roster for an operator whose id or chain
+    // address contains the query substring.
+    let operatorId: string | null = /^0x[0-9a-f]{64}$/i.test(query) ? query : null;
+    const directory = await rpc.lythClusterDirectory(0, 100).catch(() => null);
+    const clusterRows = directory?.clusters ?? [];
+    const statuses = await Promise.all(
+      clusterRows.map((row) =>
+        rpc.lythClusterStatus(row.clusterId)
+          .then((status) => ({ clusterId: row.clusterId, active: row.active, status }))
+          .catch(() => ({ clusterId: row.clusterId, active: row.active, status: null as Awaited<ReturnType<typeof rpc.lythClusterStatus>> | null })),
+      ),
+    );
+    if (!operatorId) {
+      const ql = query.toLowerCase();
+      for (const s of statuses) {
+        const hit = (s.status?.members ?? []).find(
+          (m) => typeof m.operatorId === "string" && m.operatorId.toLowerCase().includes(ql),
+        );
+        if (hit?.operatorId) { operatorId = hit.operatorId; break; }
+      }
+    }
+    if (!operatorId) return buildFallback();
+    const info = await rpc.lythOperatorInfo(operatorId).catch(() => null);
+    const target = operatorId.toLowerCase();
+    const active_clusters: string[] = [];
+    const standby_clusters: string[] = [];
+    for (const s of statuses) {
+      const member = (s.status?.members ?? []).find(
+        (m) => typeof m.operatorId === "string" && m.operatorId.toLowerCase() === target,
+      );
+      if (!member) continue;
+      const label = `C-${String(s.clusterId).padStart(3, "0")}`;
+      if (member.state === "active") active_clusters.push(label);
+      else standby_clusters.push(label);
+    }
+    // Bonded amount is raw lythoshi; surface whole-LYTH for readability.
+    const bonded = info?.bondedAmount
+      ? _formatLyth(_toBig(info.bondedAmount))
+      : info?.bonded
+        ? "bonded"
+        : "0";
+    // `hostingClass` (e.g. "cloud") is on the live operator JSON but not on the
+    // SDK's typed `OperatorInfoResponse`; read it defensively as the best
+    // available region/placement signal, else `null`.
+    const hostingClass = info
+      ? (info as unknown as Record<string, unknown>)["hostingClass"]
+      : undefined;
+    return {
+      address: info?.chainAddress ?? operatorId,
+      operator_id: operatorId,
+      handle: info?.moniker ?? info?.alias ?? `${operatorId.slice(0, 10)}…${operatorId.slice(-6)}`,
+      region: typeof hostingClass === "string" ? hostingClass : null,
+      reputation: null,
+      uptime_90d: null,
+      bonded,
+      active_clusters,
+      standby_clusters,
+      slashes: null,
+      active_since_round: null,
+      lifecycle_state: info?.lifecycleState ?? null,
+    };
+  } catch {
+    return buildFallback();
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -388,8 +509,13 @@ export async function get_gap_records(input: GetGapRecordsInput): Promise<GetGap
     try {
       const rpc = getRpcClient();
       const latest = Number(await rpc.ethBlockNumber());
+      // `span` is the maximum INCLUSIVE width the node accepts (30d → 1024).
+      // The retained range is `[from, latest]` inclusive, so `from` must be
+      // `latest - (span - 1)` to keep the width at exactly `span` blocks —
+      // `latest - span` would request `span + 1` blocks and the node rejects
+      // it with `-32602 'block range exceeds max 1024'`.
       const span = range === "30d" ? 1024 : range === "7d" ? 512 : 128;
-      const from = Math.max(0, latest - span);
+      const from = Math.max(0, latest - (span - 1));
       const live = await rpc.lythGapRecords(from, latest);
       return {
         range: `${Number(live.range.fromBlock).toLocaleString()}-${Number(live.range.toBlock).toLocaleString()}`,
@@ -471,6 +597,11 @@ export interface SearchTokensResult {
 export async function search_tokens(input: SearchTokensInput): Promise<SearchTokensResult> {
   const q = input.query.toLowerCase().trim();
   if (isRpcConfigured()) {
+    // On a reachable chain the live CLOB market/search index is authoritative.
+    // When it returns no match we report an HONEST empty result — we never fall
+    // back to the fixture `MARKETS` (wBTC/USDC/…), which would fabricate
+    // listings that do not exist on this chain. The fixture rows below are only
+    // reached when no RPC endpoint is configured (offline mockup mode).
     try {
       const rpc = getRpcClient();
       const [search, clob] = await Promise.all([
@@ -495,15 +626,15 @@ export async function search_tokens(input: SearchTokensInput): Promise<SearchTok
             ),
           };
         });
-      if (live.length > 0) {
-        return {
-          query: input.query,
-          count: live.length,
-          tokens: live,
-        };
-      }
+      return {
+        query: input.query,
+        count: live.length,
+        tokens: live,
+      };
     } catch {
-      // Fall through to local market rows.
+      // The chain is configured but the search/CLOB read threw. Return an
+      // honest empty result rather than fabricating fixture markets.
+      return { query: input.query, count: 0, tokens: [] };
     }
   }
   const matched = (MARKETS as any[])
@@ -596,10 +727,15 @@ export async function get_address_activity(
   if (!isRpcConfigured()) return fallback;
   try {
     const rpc = getRpcClient();
+    // `eth_getBalance` rejects bech32m (`mono1…`) with `-32602`; coerce the
+    // address to its 0x-hex form first (the `lyth_*` reads accept bech32m
+    // natively). Skip the eth_* balance read entirely when the address is
+    // neither valid bech32m nor 20-byte hex.
+    const balanceArg = ethAddressArg(input.address);
     const [profile, flow, balance, policy, activity] = await Promise.all([
       rpc.lythAddressProfile(input.address).catch(() => null),
       rpc.lythAddressFlow(input.address, Math.max(limit, 25)).catch(() => null),
-      rpc.ethGetBalance(input.address, "latest").catch(() => null),
+      balanceArg ? rpc.ethGetBalance(balanceArg, "latest").catch(() => null) : Promise.resolve(null),
       rpc.lythGetAccountPolicy(input.address).catch(() => null),
       rpc.lythGetAddressActivity(input.address, limit).catch(() => []),
     ]);
