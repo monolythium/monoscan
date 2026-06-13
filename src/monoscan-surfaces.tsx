@@ -1042,9 +1042,9 @@ const BridgePage = ({ go: _go }: any) => {
 
 const clusterLabel = (clusterId: number): string => `C-${String(clusterId + 1).padStart(3, "0")}`;
 
-function serviceTermTone(term: ServiceScoreTerm): SurfaceTone {
-  if (term.kind !== "diversity" || term.bps === null) return "neutral";
-  return diversityTone(term.bps);
+function serviceTermValue(term: ServiceScoreTerm): string {
+  if (term.kind === "diversity") return term.bps !== null ? bpsPct(term.bps) : "not reported";
+  return "contributing";
 }
 
 /**
@@ -1057,70 +1057,51 @@ function serviceTermTone(term: ServiceScoreTerm): SurfaceTone {
  * not a √stake curve. Reusable on the cluster detail page + directory.
  */
 export const ServiceScoreCard = ({ score, loading }: { score: ClusterServiceScore | null; loading?: boolean }) => {
+  const diversityTerm = score?.terms.find((term) => term.kind === "diversity") ?? null;
+  const quantifiedTerms = score?.terms.filter((term) => term.bps !== null).length ?? 0;
+  const contributingTerms = score?.terms.filter((term) => term.bps === null).length ?? 0;
   return (
-    <Card title="Service score" right={<span className="cap">Component A</span>} className="surface-service-score-card">
+    <Card title="Service score" right={<span className="cap">Component A</span>}>
       {score ? (
         <>
-          <div className="surface-service-score-card__summary">
-            <div className="surface-service-score-card__primary">
-              <div className="mono surface-service-score-card__cluster">{clusterLabel(score.clusterId)}</div>
-              <div className="surface-score-readout surface-service-score-card__readout">
-                <span className="mono num surface-score-readout__value">
-                  {score.scored ? score.total.toLocaleString() : "—"}
-                </span>
-                <Halo
-                  tone={score.scored ? "gold" : "neutral"}
-                  label={score.scored ? "settled ServiceScore" : "not yet scored"}
-                />
+          <div className="cl-protocol-summary">
+            <div className="cl-protocol-summary__status">
+              <span className={`cl-protocol-summary__dot ${score.scored ? "is-ok" : "is-muted"}`}/>
+              <div>
+                <span className="mono">cluster</span>
+                <b>{clusterLabel(score.clusterId)}</b>
               </div>
             </div>
-            <div className="surface-service-score-card__facts">
-              <div>
-                <span>Reward model</span>
-                <b>service based</b>
-              </div>
-              <div>
-                <span>Settled by</span>
-                <b>reward path</b>
-              </div>
-              <div>
-                <span>Curve</span>
-                <b>not √stake</b>
-              </div>
+            <div className="cl-protocol-summary__metric">
+              <span className="mono">score</span>
+              <b className="mono">{score.scored ? score.total.toLocaleString() : "not yet scored"}</b>
+            </div>
+            <div className="cl-protocol-summary__metric">
+              <span className="mono">diversity</span>
+              <b className="mono">{diversityTerm ? serviceTermValue(diversityTerm) : "not reported"}</b>
+            </div>
+            <div className="cl-protocol-summary__metric">
+              <span className="mono">model</span>
+              <b className="mono">service based</b>
             </div>
           </div>
-          <div className="mono surface-card-note surface-service-score-card__note">
-            Settled per-cluster ServiceScore read each block by the reward path. The terms below compose
-            the service-reward model without fabricating isolated values for terms this peer does not expose.
-          </div>
-          <div className="surface-service-score-card__terms">
+          <div className="cl-protocol-facts">
+            <div><span className="mono">RPC source</span><b className="mono">lyth_getClusterServiceScore</b></div>
+            <div><span className="mono">Reward path</span><b className="mono">settled each block</b></div>
+            <div><span className="mono">Quantified terms</span><b className="mono">{quantifiedTerms}/{score.terms.length}</b></div>
+            <div><span className="mono">Unsplit contributors</span><b className="mono">{contributingTerms}/{score.terms.length}</b></div>
             {score.terms.map((term) => (
-              <div
-                className={`surface-service-term surface-service-term--${
-                  term.kind === "diversity" && term.bps !== null ? serviceTermTone(term) : term.kind
-                }`}
-                key={term.id}
-              >
-                {term.kind === "diversity" && term.bps !== null ? (
-                  <>
-                    <div className="surface-service-term__head">
-                      <span className="mono surface-service-term__label">{term.label}</span>
-                      <b className="mono num">{bpsPct(term.bps)}</b>
-                    </div>
-                    <SurfaceMeter frac={term.bps / DIVERSITY_SCORE_MAX} tone={serviceTermTone(term)}/>
-                  </>
-                ) : (
-                  <>
-                    <div className="surface-service-term__head">
-                      <span className="mono surface-service-term__label">{term.label}</span>
-                      <Halo tone="neutral" label="contributing"/>
-                    </div>
-                    <div className="surface-service-term__track" aria-hidden="true"/>
-                  </>
-                )}
-                <div className="mono surface-service-term__hint">{term.hint}</div>
+              <div key={term.id}>
+                <span className="mono">{term.label}</span>
+                <b className="mono" title={term.hint}>{serviceTermValue(term)}</b>
               </div>
             ))}
+          </div>
+          <div className="mono cl-protocol-note">
+            ServiceScore is the live settled total for this cluster's service-reward model.
+            This node exposes Diversity as a separate bps read when available; Base, Archive,
+            Prover, RPC, and Indexer contribute to the total but are not split out by the
+            current public read. This is not a √stake curve.
           </div>
         </>
       ) : (
