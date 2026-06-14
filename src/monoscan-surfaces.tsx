@@ -1061,7 +1061,7 @@ export const ServiceScoreCard = ({ score, loading }: { score: ClusterServiceScor
   const quantifiedTerms = score?.terms.filter((term) => term.bps !== null).length ?? 0;
   const contributingTerms = score?.terms.filter((term) => term.bps === null).length ?? 0;
   return (
-    <Card title="Service score" right={<span className="cap">Component A</span>}>
+    <Card title="Service score" right={<span className="cap">live cluster score</span>}>
       {score ? (
         <>
           <div className="cl-protocol-summary">
@@ -1086,7 +1086,7 @@ export const ServiceScoreCard = ({ score, loading }: { score: ClusterServiceScor
             </div>
           </div>
           <div className="cl-protocol-facts">
-            <div><span className="mono">RPC source</span><b className="mono">lyth_getClusterServiceScore</b></div>
+            <div><span className="mono">Source</span><b className="mono">connected node</b></div>
             <div><span className="mono">Reward path</span><b className="mono">settled each block</b></div>
             <div><span className="mono">Quantified terms</span><b className="mono">{quantifiedTerms}/{score.terms.length}</b></div>
             <div><span className="mono">Unsplit contributors</span><b className="mono">{contributingTerms}/{score.terms.length}</b></div>
