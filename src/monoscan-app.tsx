@@ -13,6 +13,7 @@ import {
 import { MONOSCAN_DATA, MARKETS } from "./data/fallback";
 import { StatsPage, BurnPage, WalletsPage, WalletPage, TransactionsPage, TxPage, RoundPage, SearchPage, ProtocolPage } from "./monoscan-extras";
 import { MarketsPage, MarketPage, liveMarketRowsFromNativeState } from "./monoscan-markets";
+import { DappsPage } from "./monoscan-dapps";
 import {
   DiversityPage,
   ClusterDiversityPage,
@@ -99,7 +100,7 @@ const openWalletStakeIntent = (cluster: any) => {
 };
 
 /* ============== HEADER NAV ============== */
-// Primary surfaces render inline (7 tabs). The specialized network surfaces
+// Primary surfaces render inline. The specialized network surfaces
 // live under a single "Network" dropdown so the header stays one calm row and
 // never wraps. Every route is still reachable as a deep-link; Burn folds into
 // Statistics (#/burn deep-links to its supply-&-burn section).
@@ -107,6 +108,7 @@ export const PRIMARY_NAV: ReadonlyArray<readonly [string, string]> = [
   ["#/", "Overview"],
   ["#/transactions", "Transactions"],
   ["#/markets", "Markets"],
+  ["#/dapps", "dApps"],
   ["#/clusters", "Clusters"],
   ["#/operators", "Operators"],
   ["#/wallets", "Wallets"],
@@ -128,6 +130,7 @@ export const navRouteMatches = (h: string, route: string): boolean =>
   route === h ||
   (h === "#/transactions" && route.startsWith("#/tx")) ||
   (h === "#/markets" && route.startsWith("#/market")) ||
+  (h === "#/dapps" && route.startsWith("#/dapp")) ||
   (h === "#/wallets" && route.startsWith("#/wallet")) ||
   // Clusters stays active for /cluster/:slot; the cluster-directory route lives
   // in the Network group and owns its own item there.
@@ -2693,6 +2696,7 @@ const App = () => {
   if (parts[0]==="" || parts[0]==="overview") page = <Landing go={go}/>;
   else if (parts[0]==="markets")   page = <MarketsPage go={go}/>;
   else if (parts[0]==="market")    page = <MarketPage sym={decodeURIComponent(parts[1]||"LYTH")} go={go}/>;
+  else if (parts[0]==="dapps" || parts[0]==="dapp") page = <DappsPage/>;
   else if (parts[0]==="cluster")    page = <ClusterPage slot={parts[1]} go={go}/>;
   else if (parts[0]==="clusters")   page = <ClustersPage go={go}/>;
   else if (parts[0]==="operator")   page = <OperatorPage addr={decodeURIComponent(parts[1]||"")} go={go}/>;
