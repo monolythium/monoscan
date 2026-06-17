@@ -54,6 +54,7 @@ export const DAPP_DIRECTORY_ENTRIES: DappDirectoryEntry[] = [
     listingStatus: "foundation-maintained",
     tagline: "A tactical co-op game showing how a browser game can use Monolythium wallet identity and app-layer receipts.",
     description: "Anchorfall is a separate game and dApp showcase, not blockchain core logic. The listing demonstrates wallet-based identity, server-issued run receipts, and the path toward deployable app contracts for rankings and rewards.",
+    websiteUrl: "https://anchorfall.monoplay.xyz",
     sourceUrl: "https://github.com/monoplay-xyz/anchorfall-ts-game",
     docsUrl: "https://github.com/monoplay-xyz/anchorfall-ts-game/blob/main/docs/WEB3-GOAL.md",
     lastReviewedAt: "2026-06-17",
