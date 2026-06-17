@@ -23,9 +23,9 @@ describe("primary navigation IA", () => {
   const networkRoutes = NETWORK_NAV.map(([h]) => h);
   const networkLabels = NETWORK_NAV.map(([, l]) => l);
 
-  it("surfaces exactly the 7 primary tabs (incl. Transactions)", () => {
+  it("surfaces the primary tabs (incl. dApps)", () => {
     expect(primaryLabels).toEqual([
-      "Overview", "Transactions", "Markets", "Clusters", "Operators", "Wallets", "Statistics",
+      "Overview", "Transactions", "Markets", "dApps", "Clusters", "Operators", "Wallets", "Statistics",
     ]);
   });
 
@@ -65,6 +65,8 @@ describe("navRouteMatches — active-state wiring", () => {
 
   it("lights a parent tab on its child detail routes", () => {
     expect(navRouteMatches("#/markets", "#/market/LYTH")).toBe(true);
+    expect(navRouteMatches("#/dapps", "#/dapps")).toBe(true);
+    expect(navRouteMatches("#/dapps", "#/dapp/anchorfall")).toBe(true);
     expect(navRouteMatches("#/transactions", "#/tx/0xabc")).toBe(true);
     expect(navRouteMatches("#/operators", "#/operator/mono1abc")).toBe(true);
     expect(navRouteMatches("#/clusters", "#/cluster/5")).toBe(true);
