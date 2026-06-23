@@ -29,7 +29,6 @@ import {
   useChainStats,
   useClusterResignations,
   useDagParents,
-  useEncryptionKey,
   useFeeStats,
   useIndexerAvailability,
   useGapRecords,
@@ -1023,7 +1022,6 @@ export const rpcDisplayLabel = (source: string | null | undefined, suffix = "RPC
     lyth_getClusterResignations: "cluster resignations",
     lyth_gapRecords: "gap records",
     lyth_indexerStatus: "indexer status",
-    lyth_getEncryptionKey: "encryption key",
     lyth_executionUnitPrice: "execution-unit quote",
     "/api/v1 transactions": "transaction API",
   };
@@ -4545,7 +4543,6 @@ const ProtocolPage = ({ go }: any) => {
   const checkpoint = useLatestCheckpoint();
   const resignations = useClusterResignations(null, "all");
   const feeStats = useFeeStats();
-  const encryptionKey = useEncryptionKey();
   const network = useNetworkStatus();
   const operatorCapabilities = useOperatorCapabilities();
   const upgradeStatus = useUpgradeStatus();
@@ -4579,7 +4576,6 @@ const ProtocolPage = ({ go }: any) => {
     ? "derived from fee history"
     : "live fee endpoint";
   const indexerHeight = network.data?.indexerHeight ?? null;
-  const key = encryptionKey.data;
   return (
     <div className="ms-page ms-protocol-page">
       <section className="protocol-hero">
@@ -4622,7 +4618,7 @@ const ProtocolPage = ({ go }: any) => {
       <section className="protocol-data-panel">
         <div className="protocol-data-panel__head">
           <h3 className="ov-section-title">Protocol surfaces</h3>
-          <p className="ov-section-desc">Grouped RPC and indexer health counters for fees, capabilities, checkpoints, gaps, exits, and encryption.</p>
+          <p className="ov-section-desc">Grouped RPC and indexer health counters for fees, capabilities, checkpoints, gaps, and exits.</p>
         </div>
         <div className="stats-counters protocol-counter-grid">
         <StatCounter label="Execution price" value={executionUnitPrice ?? "—"} sub={feePriceSub} tone="neutral"/>
@@ -4670,18 +4666,8 @@ const ProtocolPage = ({ go }: any) => {
           sub={indexerHeight !== null ? "reported height" : "disabled or not reporting"}
           tone="neutral"
         />
-        <StatCounter label="Encryption epoch" value={key ? `${Number(key.epoch).toLocaleString()}` : "—"} sub={key?.algo ?? "encryption key unavailable"} tone="neutral"/>
         </div>
       </section>
-      {key && (
-        <Card title="Live encryption key">
-          <div className="tx-kv">
-            <KV label="Algorithm" value={key.algo}/>
-            <KV label="Epoch" value={Number(key.epoch).toLocaleString()} mono/>
-            <KV label="Encapsulation key" value={fmtHashShort(key.encapsulationKey, 28, 6)} mono/>
-          </div>
-        </Card>
-      )}
       <NativeAgentActionsCard capabilities={capabilities.data}/>
       <section className="tx-split">
         <Card title="Operator surfaces">

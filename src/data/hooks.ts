@@ -65,7 +65,6 @@ import {
   type DelegationCapResponse,
   type DelegationsResponse,
   type EntityRatchetResponse,
-  type EncryptionKeyResponse,
   type FeeHistoryResponse,
   type GapRecordsResponse,
   type IndexerStatus,
@@ -6129,21 +6128,6 @@ export function useGapRecords(fromBlock: number | undefined, toBlock: number | u
       }
     },
     staleTime: 30_000,
-  });
-}
-
-export function useEncryptionKey() {
-  return useQuery<EncryptionKeyResponse | null>({
-    queryKey: QK.encryptionKey(),
-    queryFn: async () => {
-      if (!isRpcConfigured()) return null;
-      try {
-        return await getRpcClient().lythGetEncryptionKey();
-      } catch {
-        return null;
-      }
-    },
-    staleTime: 60_000,
   });
 }
 
