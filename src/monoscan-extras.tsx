@@ -2844,7 +2844,7 @@ const TransactionsPage = ({ go }: any) => {
           </div>
           <h1 className="tx-feed-hero__title">Latest transactions</h1>
           <p className="tx-feed-hero__desc">
-            Public rows newest-first from the live feed. Filter by hash, address, method, or block. Private transfer amounts remain hidden by protocol rules.
+            Public rows newest-first from the live feed. Filter by hash, address, method, or block. Transfer amounts are public; recipient privacy uses stealth addresses.
           </p>
         </div>
         <div className="tx-feed-hero__stats">
