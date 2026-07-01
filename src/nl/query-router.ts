@@ -193,7 +193,7 @@ function explainAddress(r: GetAddressActivityResult): string {
   ];
   if (r.is_private_denomination) {
     lines.push(
-      "_Private-denomination address — amounts withheld by protocol privacy rules._",
+      "_Private-denomination address — recipient privacy uses stealth addresses; transfer amounts are public on-chain (confidential amounts are not yet activated)._",
       "",
     );
   } else {
