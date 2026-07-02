@@ -650,13 +650,14 @@ const Landing = ({ go }: any) => {
             "—" until the split endpoint exists. */}
         <Card
           title="Two denominations"
-          sub="Transparent LYTH and shielded LYTH-p share one supply model with different privacy guarantees."
+          sub="One native supply. Amounts are transparent on-chain today; the confidential LYTH-p denomination is specified but not yet activated."
           right={<span className="cap">irreversible · by design</span>}
         >
           <p className="mono" style={{fontSize:12,color:"var(--fg-400)",lineHeight:1.55,margin:"0 0 14px"}}>
-            Public LYTH is fully transparent. Private LYTH‑p hides amounts at the protocol layer —
-            no mixers, no opt-in. You choose per transaction.
-            {liveMode ? " The live node reports total supply but not yet the public/private split." : ""}
+            Transfer amounts are public on every transaction; recipient privacy is provided by
+            post-quantum stealth addresses. Confidential LYTH‑p amounts are part of the protocol
+            design but are not yet live on this network.
+            {liveMode ? " The live node reports total supply but not a public/private split." : ""}
           </p>
           <div className="ms-denoms">
             <div className="ms-denom ms-denom--total">
@@ -692,13 +693,13 @@ const Landing = ({ go }: any) => {
             <div className="ms-denom ms-denom--private">
               <div className="cap">Private · LYTH-p</div>
               <div className="mono" style={{fontSize:22,color:"var(--fg-200)",marginTop:6}}>
-                — <span style={{fontSize:11,color:"var(--fg-500)"}}>opaque</span>
+                — <span style={{fontSize:11,color:"var(--fg-500)"}}>not activated</span>
               </div>
               <div className="mono" style={{fontSize:10.5,color:"var(--fg-400)",marginTop:3}}>
-                {liveMode ? "private-tx aggregate requires indexer" : `${fmt(SCAN.supply.privateTxs30d)} private txs · 30d`}
+                confidential denomination
               </div>
               <div className="ms-bar"><div style={{width:"100%",background:"repeating-linear-gradient(135deg, rgba(255,255,255,0.18) 0 4px, transparent 4px 8px)"}}/></div>
-              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>amounts protocol-hidden</div>
+              <div className="mono" style={{fontSize:10,color:"var(--fg-500)"}}>not yet live on this network</div>
             </div>
           </div>
         </Card>
