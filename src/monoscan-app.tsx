@@ -1043,15 +1043,20 @@ const ClusterPage = ({ slot, go }: any) => {
               <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
                 <div className="cl-notice__icon">●</div>
                 <div style={{flex:1}}>
-                  <div className="mono" style={{fontSize:12,color:"var(--gold)",letterSpacing:"0.06em",fontWeight:600}}>
-                    CLUSTER OPEN · {cl.recruitSeats} seat{cl.recruitSeats>1?"s":""} available
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    <div className="mono" style={{fontSize:12,color:"var(--gold)",letterSpacing:"0.06em",fontWeight:600}}>
+                      CLUSTER OPEN · {cl.recruitSeats} seat{cl.recruitSeats>1?"s":""} available
+                    </div>
+                    <span className="cap" style={{fontSize:9,color:"var(--fg-500)",border:"1px solid var(--fg-700, rgba(255,255,255,0.14))",borderRadius:4,padding:"1px 6px",letterSpacing:"0.08em"}}>
+                      sample data
+                    </span>
                   </div>
                   <p className="mono" style={{fontSize:11.5,color:"var(--fg-300)",margin:"4px 0 0",lineHeight:1.5}}>
-                    Looking for operators — {cl.recruitReason}. Use MonarchOS to review requirements and submit your application.
+                    Illustrative preview — not a live opening. Advertised seats from the on-chain marketplace appear here only when connected to a live node.
                   </p>
                 </div>
-                <button className="ov-cta ov-cta--primary" style={{padding:"8px 14px",fontSize:11}} onClick={()=>window.__msToast?.("Opens in MonarchOS — not part of this preview")}>
-                  Apply via MonarchOS →
+                <button className="ov-cta" style={{padding:"8px 14px",fontSize:11}} disabled title="Sample data — no live opening to apply to">
+                  Sample opening
                 </button>
               </div>
             </div>
