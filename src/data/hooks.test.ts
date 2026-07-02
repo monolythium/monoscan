@@ -19,11 +19,17 @@ import { keccak256Hex as keccak256 } from "../hash";
 import {
   ApiClient,
   CHAIN_REGISTRY,
+  NODE_REGISTRY_SELECTORS,
   RpcClient,
+  SEAT_ADVERTISED_EVENT_SIG,
+  SEAT_APPLIED_EVENT_SIG,
+  SEAT_CLOSED_EVENT_SIG,
+  SEAT_FILLED_EVENT_SIG,
   type AgentReputationResponse,
   type ClusterDirectoryEntryResponse,
   type NativeReceiptResponse,
   type ReceiptProofTrustPolicy,
+  type RoundCertificateResponse,
 } from "@monolythium/core-sdk";
 import { MlDsa65Backend, bytesToHex as sdkBytesToHex } from "@monolythium/core-sdk/crypto";
 import {
@@ -89,13 +95,14 @@ import {
   nativeReceiptMarketEventRows,
   normalizeNativeSupplyResponse,
   queryClient,
+  seatMarketplaceActionLabel,
+  seatMarketplaceEventLabel,
   structuredNativeReceiptFee,
   txFeedToRows,
   verifyNoEvmReceiptArchiveProofSignatures,
   verifyNoEvmReceiptFinalityEvidence,
   verifyNoEvmReceiptProofConsistency,
   type NoEvmArchiveVerificationTrustOptions,
-  type NoEvmFinalityVerificationTrustOptions,
   type NoEvmArchiveCoveringSnapshot,
   type NoEvmCompactReceiptProofTranscript,
   type NoEvmReceiptFinalityEvidence,
@@ -242,16 +249,8 @@ function blsFinalityEvidence(round = 57): NoEvmReceiptFinalityEvidence {
   };
 }
 
-const verifiedBlsClusterPublicKey =
-  "0xb77f27a88bfe18988cfcf68ba7462d188a0e655bdd68318c706a3b51887a61fa7d7a9c8843e26f91c91446819925db97";
-const verifiedBlsFinalitySignature =
+const verifiedRoundCertSignature =
   "0xb52a7567f736afbda5e09d5af4bd8da36cff89c3e8d09ca4c98f8bffe5fbdca7af2437f1fbf92e4f52df8a54ed1c2de71954d1134637a675734db73acb4c0c545f4b3cd39577b4985e8a26b767a68d825c48f0a90e606d8ccbbd8885ef27fcd7";
-const verifiedBlsTrustOptions: NoEvmFinalityVerificationTrustOptions = {
-  chainId: 69_420,
-  clusterPublicKey: verifiedBlsClusterPublicKey,
-  committeeSize: 7,
-  threshold: 1,
-};
 
 function verifiedBlsFinalityEvidence(): NoEvmReceiptFinalityEvidence {
   return {
@@ -260,11 +259,26 @@ function verifiedBlsFinalityEvidence(): NoEvmReceiptFinalityEvidence {
     round: 58,
     certificate: {
       round: 58,
-      signature: verifiedBlsFinalitySignature,
+      signature: verifiedRoundCertSignature,
       signersBitmap: "0x08",
       signerIndices: [3],
       signerCount: 1,
     },
+  };
+}
+
+// Authoritative ML-DSA-65 round certificate (lyth_getRoundCertificate) that
+// matches verifiedBlsFinalityEvidence() for the finality cross-check.
+function verifiedAuthoritativeRoundCertificate(
+  overrides: Partial<RoundCertificateResponse> = {},
+): RoundCertificateResponse {
+  return {
+    round: 58n,
+    signature: verifiedRoundCertSignature,
+    signers_bitmap: "0x08",
+    signer_indices: [3],
+    signer_count: 1,
+    ...overrides,
   };
 }
 
@@ -352,11 +366,8 @@ function registryReceiptProofTrustPolicy(
   overrides: {
     archiveSigner?: MlDsa65Backend;
     archiveThreshold?: number;
-    finalityChainId?: number;
-    finalityMode?: "cluster" | "multisig";
   } = {},
 ): ReceiptProofTrustPolicy {
-  const finalityMode = overrides.finalityMode ?? "cluster";
   return {
     archive: {
       signature_threshold: overrides.archiveThreshold ?? 1,
@@ -365,20 +376,6 @@ function registryReceiptProofTrustPolicy(
         signer_id: (overrides.archiveSigner ?? verifiedArchiveSigner).getAddress(),
       }],
     },
-    finality: finalityMode === "cluster"
-      ? {
-          mode: "cluster",
-          chain_id: overrides.finalityChainId ?? 69_420,
-          cluster_public_key: verifiedBlsClusterPublicKey,
-          committee_size: 7,
-          threshold: 1,
-        }
-      : {
-          mode: "multisig",
-          chain_id: overrides.finalityChainId ?? 69_420,
-          threshold: 1,
-          signers: [],
-        },
   };
 }
 
@@ -3535,7 +3532,7 @@ describe("API execution-unit transformations", () => {
     );
   });
 
-  it("uses bundled registry archive and cluster finality trust when env and options are absent", () => {
+  it("uses bundled registry archive trust when env and options are absent", () => {
     setTestnetReceiptProofTrust(registryReceiptProofTrustPolicy());
     const noEvmProof = compactVerifiedTrustProof();
 
@@ -3548,18 +3545,16 @@ describe("API execution-unit transformations", () => {
         validSigners: [verifiedArchiveSigner.getAddress()],
       },
     });
+    // With no authoritative round certificate supplied the embedded evidence is
+    // parsed only — never asserted as verified finality.
     expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof)).toMatchObject({
-      state: "verified",
-      reason: null,
-      result: {
-        verified: true,
-        acceptedSignatureCount: 1,
-        requiredSignatureCount: 1,
-      },
+      state: "unverified",
+      result: null,
+      reason: "authoritative round certificate not available for cross-check",
     });
   });
 
-  it("keeps no-EVM proof trust unconfigured when the bundled registry policy is null", () => {
+  it("keeps no-EVM archive trust unconfigured when the bundled registry policy is null", () => {
     setTestnetReceiptProofTrust(null);
     const noEvmProof = compactVerifiedTrustProof();
 
@@ -3571,14 +3566,13 @@ describe("API execution-unit transformations", () => {
     expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof)).toMatchObject({
       state: "unverified",
       result: null,
-      reason: "trusted round-finality key not configured",
+      reason: "authoritative round certificate not available for cross-check",
     });
   });
 
-  it("lets explicit no-EVM trust options override the bundled registry policy", () => {
+  it("lets explicit archive trust options override the bundled registry policy", () => {
     setTestnetReceiptProofTrust(registryReceiptProofTrustPolicy({
       archiveSigner: untrustedArchiveSigner,
-      finalityChainId: 69_421,
     }));
     const noEvmProof = compactVerifiedTrustProof();
 
@@ -3587,19 +3581,16 @@ describe("API execution-unit transformations", () => {
         state: "verified",
         reason: null,
       });
-    expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof, verifiedBlsTrustOptions))
+    // Cross-check the embedded evidence against the authoritative round cert.
+    expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof, verifiedAuthoritativeRoundCertificate()))
       .toMatchObject({
         state: "verified",
         reason: null,
       });
   });
 
-  it("lets env no-EVM trust config override the bundled registry policy", () => {
+  it("lets env archive trust config override the bundled registry policy", () => {
     setTestnetReceiptProofTrust(registryReceiptProofTrustPolicy());
-    vi.stubEnv("VITE_MONOSCAN_CHAIN_ID", "69421");
-    vi.stubEnv("VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_CLUSTER_PUBKEY", verifiedBlsClusterPublicKey);
-    vi.stubEnv("VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_COMMITTEE_SIZE", "7");
-    vi.stubEnv("VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_THRESHOLD", "1");
     vi.stubEnv("VITE_MONOSCAN_TRUSTED_ARCHIVE_PUBKEYS", sdkBytesToHex(untrustedArchiveSigner.publicKey()));
     vi.stubEnv("VITE_MONOSCAN_TRUSTED_ARCHIVE_THRESHOLD", "1");
     const noEvmProof = compactVerifiedTrustProof();
@@ -3612,24 +3603,20 @@ describe("API execution-unit transformations", () => {
         validSigners: [],
       },
     });
-    expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof)).toMatchObject({
-      state: "mismatch",
-      result: {
-        verified: false,
-        signatureValid: false,
-      },
-      reason: "round-certificate signature invalid",
-    });
   });
 
-  it("fails closed when the bundled registry finality policy uses multisig mode", () => {
-    setTestnetReceiptProofTrust(registryReceiptProofTrustPolicy({ finalityMode: "multisig" }));
+  it("marks round-certificate evidence mismatched when the authoritative digest differs", () => {
     const noEvmProof = compactVerifiedTrustProof();
 
-    expect(verifyNoEvmReceiptFinalityEvidence(noEvmProof)).toMatchObject({
+    expect(verifyNoEvmReceiptFinalityEvidence(
+      noEvmProof,
+      verifiedAuthoritativeRoundCertificate({ signature: `0x${"ff".repeat(48)}` }),
+    )).toMatchObject({
       state: "mismatch",
-      result: null,
-      reason: "registry round-finality trust policy mode multisig is not supported by Monoscan threshold-cluster verification",
+      result: {
+        signatureMatches: false,
+      },
+      reason: "round-certificate digest mismatch",
     });
   });
 
@@ -3680,14 +3667,14 @@ describe("API execution-unit transformations", () => {
     expect(evidence?.proof?.finalityVerification).toMatchObject({
       state: "unverified",
       result: null,
-      reason: "trusted round-finality key not configured",
+      reason: "authoritative round certificate not available for cross-check",
     });
     expect(evidence?.blockers).not.toContain(
       "native-receipt.noEvmProof must return a bounded receipts transcript or compact receipt inclusion proof before Monoscan can render no-EVM receipt proof evidence.",
     );
   });
 
-  it("verifies round-finality evidence when a trusted cluster key policy is supplied", () => {
+  it("verifies round-certificate evidence against the authoritative round certificate", () => {
     const finalityEvidence = verifiedBlsFinalityEvidence();
     const noEvmProof = compactNoEvmReceiptProofTranscript({
       txHash: `0x${"7f".repeat(32)}`,
@@ -3696,15 +3683,19 @@ describe("API execution-unit transformations", () => {
       finalityEvidence,
     });
 
-    const verification = verifyNoEvmReceiptFinalityEvidence(noEvmProof, verifiedBlsTrustOptions);
+    const verification = verifyNoEvmReceiptFinalityEvidence(noEvmProof, verifiedAuthoritativeRoundCertificate());
     expect(verification).toMatchObject({
       state: "verified",
       reason: null,
       result: {
-        verified: true,
-        signatureValid: true,
-        acceptedSignatureCount: 1,
-        requiredSignatureCount: 1,
+        evidenceRound: 58,
+        authoritativeRound: 58,
+        authoritativeSignerCount: 1,
+        roundMatches: true,
+        signatureMatches: true,
+        signerCountMatches: true,
+        signerBitmapMatches: true,
+        signerIndicesMatch: true,
       },
     });
 
@@ -3727,23 +3718,22 @@ describe("API execution-unit transformations", () => {
         txType: MRV_NATIVE_RECEIPT_TX_TYPE,
         noEvmProof,
       }),
-    } as any, verifiedBlsTrustOptions);
+    } as any, verifiedAuthoritativeRoundCertificate());
 
     expect(evidence?.proof?.finalityVerification).toMatchObject({
       state: "verified",
       reason: null,
       result: {
-        verified: true,
+        roundMatches: true,
+        signatureMatches: true,
         signerCountMatches: true,
-        signerBitmapMatchesIndices: true,
-        signerIndicesInRange: true,
-        thresholdMet: true,
-        signatureValid: true,
+        signerBitmapMatches: true,
+        signerIndicesMatch: true,
       },
     });
   });
 
-  it("marks configured round-finality evidence mismatched for the wrong chain id", () => {
+  it("marks round-certificate evidence mismatched for the wrong round", () => {
     const noEvmProof = compactNoEvmReceiptProofTranscript({
       txHash: `0x${"70".repeat(32)}`,
       blockHash: `0x${"3a".repeat(32)}`,
@@ -3751,22 +3741,21 @@ describe("API execution-unit transformations", () => {
       finalityEvidence: verifiedBlsFinalityEvidence(),
     });
 
-    const verification = verifyNoEvmReceiptFinalityEvidence(noEvmProof, {
-      ...verifiedBlsTrustOptions,
-      chainId: 69_421,
-    });
+    const verification = verifyNoEvmReceiptFinalityEvidence(
+      noEvmProof,
+      verifiedAuthoritativeRoundCertificate({ round: 59n }),
+    );
 
     expect(verification).toMatchObject({
       state: "mismatch",
       result: {
-        verified: false,
-        signatureValid: false,
+        roundMatches: false,
       },
-      reason: "round-certificate signature invalid",
+      reason: "round mismatch",
     });
   });
 
-  it("fails closed when configured round-finality trust policy is malformed", () => {
+  it("marks round-certificate evidence mismatched when the signer set differs", () => {
     const noEvmProof = compactNoEvmReceiptProofTranscript({
       txHash: `0x${"71".repeat(32)}`,
       blockHash: `0x${"3b".repeat(32)}`,
@@ -3774,16 +3763,24 @@ describe("API execution-unit transformations", () => {
       finalityEvidence: verifiedBlsFinalityEvidence(),
     });
 
-    const verification = verifyNoEvmReceiptFinalityEvidence(noEvmProof, {
-      ...verifiedBlsTrustOptions,
-      clusterPublicKey: "0x12",
-    });
+    const verification = verifyNoEvmReceiptFinalityEvidence(
+      noEvmProof,
+      verifiedAuthoritativeRoundCertificate({
+        signers_bitmap: "0x0c",
+        signer_indices: [2, 3],
+        signer_count: 2,
+      }),
+    );
 
     expect(verification).toMatchObject({
       state: "mismatch",
-      result: null,
-      reason: "trusted round-finality config invalid: trusted round-finality cluster public key must be 48 bytes",
+      result: {
+        signerCountMatches: false,
+        signerBitmapMatches: false,
+        signerIndicesMatch: false,
+      },
     });
+    expect(verification?.reason).toContain("signer count mismatch");
   });
 
   it("recomputes no-EVM receipt transcript hashes with the runtime receipts root algorithm", () => {
@@ -4305,5 +4302,37 @@ describe("directoryEntryToCluster", () => {
     expect(cluster.active).toBe(false);
     expect(cluster.stake).toBeNull();
     expect(cluster.stakeIndexed).toBe(false);
+  });
+});
+
+describe("open-seat marketplace labels", () => {
+  it("labels the five seat calldata selectors as named actions", () => {
+    expect(seatMarketplaceActionLabel(NODE_REGISTRY_SELECTORS.advertiseSeat)).toBe("advertise seat");
+    expect(seatMarketplaceActionLabel(NODE_REGISTRY_SELECTORS.applyForSeat)).toBe("apply for seat");
+    expect(seatMarketplaceActionLabel(NODE_REGISTRY_SELECTORS.voteSeatAdmit)).toBe("vote seat admit");
+    expect(seatMarketplaceActionLabel(NODE_REGISTRY_SELECTORS.withdrawSeatApplication)).toBe("withdraw seat application");
+    expect(seatMarketplaceActionLabel(NODE_REGISTRY_SELECTORS.closeSeat)).toBe("close seat");
+  });
+
+  it("labels seat selectors embedded at the head of full calldata", () => {
+    const calldata = `${NODE_REGISTRY_SELECTORS.advertiseSeat}${"00".repeat(64)}`;
+    expect(seatMarketplaceActionLabel(calldata)).toBe("advertise seat");
+  });
+
+  it("is case-insensitive and returns null for non-seat selectors", () => {
+    expect(seatMarketplaceActionLabel(NODE_REGISTRY_SELECTORS.closeSeat.toUpperCase())).toBe("close seat");
+    expect(seatMarketplaceActionLabel("0xdeadbeef")).toBeNull();
+    expect(seatMarketplaceActionLabel(null)).toBeNull();
+    expect(seatMarketplaceActionLabel("0x")).toBeNull();
+  });
+
+  it("labels seat event log topics from their topic0 hash", () => {
+    const topic = (sig: string) => keccak256(new TextEncoder().encode(sig));
+    expect(seatMarketplaceEventLabel(topic(SEAT_ADVERTISED_EVENT_SIG))).toBe("seat advertised");
+    expect(seatMarketplaceEventLabel(topic(SEAT_APPLIED_EVENT_SIG))).toBe("seat applied");
+    expect(seatMarketplaceEventLabel(topic(SEAT_FILLED_EVENT_SIG))).toBe("seat filled");
+    expect(seatMarketplaceEventLabel(topic(SEAT_CLOSED_EVENT_SIG))).toBe("seat closed");
+    expect(seatMarketplaceEventLabel(`0x${"11".repeat(32)}`)).toBeNull();
+    expect(seatMarketplaceEventLabel(null)).toBeNull();
   });
 });
