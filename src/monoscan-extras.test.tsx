@@ -24,7 +24,7 @@ import {
   transactionFeeValueLabel,
   type IndexedTokenBalanceRow,
 } from "./monoscan-extras";
-import type { AgentReputationResponse } from "@monolythium/core-sdk";
+import type { AgentReputationResponse, RoundCertificateResponse } from "@monolythium/core-sdk";
 import { MlDsa65Backend, bytesToHex as sdkBytesToHex } from "@monolythium/core-sdk/crypto";
 import {
   bridgeTrustDisclosuresFromAddressData,
@@ -50,7 +50,6 @@ import {
   type MrcMetadataResponse,
   type NativeAgentStateDisplayRows,
   type NativeAgentStateDisplayRow,
-  type NoEvmFinalityVerificationTrustOptions,
   type NoEvmArchiveCoveringSnapshot,
   type NoEvmCompactReceiptProofTranscript,
   type NoEvmReceiptFinalityEvidence,
@@ -163,29 +162,33 @@ function blsFinalityEvidence(round = 57): NoEvmReceiptFinalityEvidence {
   };
 }
 
-const verifiedBlsClusterPublicKey =
-  "0xb77f27a88bfe18988cfcf68ba7462d188a0e655bdd68318c706a3b51887a61fa7d7a9c8843e26f91c91446819925db97";
-const verifiedBlsFinalitySignature =
+const verifiedRoundCertSignature =
   "0xb52a7567f736afbda5e09d5af4bd8da36cff89c3e8d09ca4c98f8bffe5fbdca7af2437f1fbf92e4f52df8a54ed1c2de71954d1134637a675734db73acb4c0c545f4b3cd39577b4985e8a26b767a68d825c48f0a90e606d8ccbbd8885ef27fcd7";
-const verifiedBlsTrustOptions: NoEvmFinalityVerificationTrustOptions = {
-  chainId: 69_420,
-  clusterPublicKey: verifiedBlsClusterPublicKey,
-  committeeSize: 7,
-  threshold: 1,
-};
 
-function verifiedBlsFinalityEvidence(): NoEvmReceiptFinalityEvidence {
+function verifiedRoundCertificateEvidence(): NoEvmReceiptFinalityEvidence {
   return {
     schema: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA,
     source: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE,
     round: 58,
     certificate: {
       round: 58,
-      signature: verifiedBlsFinalitySignature,
+      signature: verifiedRoundCertSignature,
       signersBitmap: "0x08",
       signerIndices: [3],
       signerCount: 1,
     },
+  };
+}
+
+// Authoritative ML-DSA-65 round certificate (lyth_getRoundCertificate) that
+// matches verifiedRoundCertificateEvidence() for the finality cross-check.
+function verifiedAuthoritativeRoundCertificate(): RoundCertificateResponse {
+  return {
+    round: 58n,
+    signature: verifiedRoundCertSignature,
+    signers_bitmap: "0x08",
+    signer_indices: [3],
+    signer_count: 1,
   };
 }
 
@@ -1170,15 +1173,15 @@ describe("MrvNativeEvidenceCard", () => {
     expect(html).toContain("present · round certificate material · round 57 · cert round 57 · signers 2");
     expect(html).toContain("signature 0x1234");
     expect(html).toContain("bitmap 0xabcd");
-    expect(html).toContain("unverified · trusted round-finality key not configured");
+    expect(html).toContain("unverified · authoritative round certificate not available for cross-check");
     expect(html).toContain("Archive signatures");
     expect(html).toContain("absent · validator finality not asserted");
     expect(html).not.toContain("Finality proof");
   });
 
-  it("renders verified round-certificate finality evidence only with configured trust", () => {
+  it("renders verified round-certificate finality evidence only when it matches the authoritative round certificate", () => {
     const noEvmProof = compactNoEvmReceiptProofTranscript({
-      finalityEvidence: verifiedBlsFinalityEvidence(),
+      finalityEvidence: verifiedRoundCertificateEvidence(),
     });
     const evidence = mrvNativeTransactionEvidence({
       txHash: `0x${"ae".repeat(32)}`,
@@ -1219,13 +1222,15 @@ describe("MrvNativeEvidenceCard", () => {
         indexerProvider: "native_events",
         metadataLogIndex: 0xffff_ffff,
       },
-    } as any, verifiedBlsTrustOptions);
+    } as any);
 
-    const html = renderToStaticMarkup(<MrvNativeEvidenceCard evidence={evidence}/>);
+    const html = renderToStaticMarkup(
+      <MrvNativeEvidenceCard evidence={evidence} roundCertificate={verifiedAuthoritativeRoundCertificate()}/>,
+    );
 
     expect(html).toContain("present · round certificate material · round 58 · cert round 58 · signers 1");
-    expect(html).toContain("verified · configured trusted round-finality key · accepted 1/1 signatures");
-    expect(html).not.toContain("trusted round-finality key not configured");
+    expect(html).toContain("verified · matches lyth_getRoundCertificate · round 58 · 1 signers");
+    expect(html).not.toContain("authoritative round certificate not available");
   });
 
   it("renders compact mismatch details for a well-formed no-EVM receipt transcript", () => {

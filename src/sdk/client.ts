@@ -360,7 +360,6 @@ export const QK = {
     ["mono", "protocol", "cluster-resignations", operator ?? "all", status ?? "all"] as const,
   roundCert: (round: number | string) => ["mono", "round", round, "round-cert"] as const,
   feeStats: () => ["mono", "protocol", "fees"] as const,
-  encryptionKey: () => ["mono", "protocol", "encryption-key"] as const,
   clusterDelegators: (id: string | number) => ["mono", "cluster", id, "delegators"] as const,
   walletDelegations: (addr: string) => ["mono", "address", addr, "delegations"] as const,
   walletDelegationHistory: (addr: string) => ["mono", "address", addr, "delegation-history"] as const,

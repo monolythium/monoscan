@@ -29,7 +29,6 @@ import {
   useChainStats,
   useClusterResignations,
   useDagParents,
-  useEncryptionKey,
   useFeeStats,
   useIndexerAvailability,
   useGapRecords,
@@ -81,7 +80,10 @@ import {
   nativeReceiptEventRows,
   nativeReceiptMarketEventRows,
   noEvmReceiptProofMaterialLabel,
+  seatMarketplaceActionLabel,
+  seatMarketplaceEventLabel,
   structuredNativeReceiptFee,
+  verifyNoEvmReceiptFinalityEvidence,
 } from "./data/hooks";
 import { getLythTokenId } from "./sdk/client";
 import { getNativeAgentForwarderAddress } from "./sdk/client";
@@ -97,7 +99,7 @@ import {
   type NativeAgentActionField,
   type NativeAgentActionKind,
 } from "./monoscan-agent-actions";
-import type { AgentReputationRecord, AgentReputationResponse, CapabilitiesResponse, NativeReceiptFeeDisplay } from "@monolythium/core-sdk";
+import type { AgentReputationRecord, AgentReputationResponse, CapabilitiesResponse, NativeReceiptFeeDisplay, RoundCertificateResponse } from "@monolythium/core-sdk";
 import { LYTHOSHI_PER_LYTH, NATIVE_LYTH_DECIMALS } from "@monolythium/core-sdk";
 
 /* Light helpers — keep local so this file is self-contained */
@@ -1012,7 +1014,6 @@ export const rpcDisplayLabel = (source: string | null | undefined, suffix = "RPC
     lyth_txFeed: "transaction feed",
     lyth_mrcAccount: "MRC account",
     lyth_getRoundCertificate: "round certificate",
-    lyth_getBlsRoundCertificate: "round certificate",
     lyth_dagParents: "DAG parents",
     lyth_verticesAtRound: "vertices by round",
     lyth_search: "search",
@@ -1023,7 +1024,6 @@ export const rpcDisplayLabel = (source: string | null | undefined, suffix = "RPC
     lyth_getClusterResignations: "cluster resignations",
     lyth_gapRecords: "gap records",
     lyth_indexerStatus: "indexer status",
-    lyth_getEncryptionKey: "encryption key",
     lyth_executionUnitPrice: "execution-unit quote",
     "/api/v1 transactions": "transaction API",
   };
@@ -2755,8 +2755,10 @@ const TransactionsPage = ({ go }: any) => {
     const hasCalldata = Boolean(input && input !== "0x");
     // No decoded method name is available on the feed row, so we never print the
     // raw 4-byte selector as if it were a method name. We say "contract call" and
-    // keep the selector as a muted secondary line / tooltip.
+    // keep the selector as a muted secondary line / tooltip — except for known
+    // open-seat marketplace selectors, which we render as named actions.
     const selector = hasCalldata ? input.slice(0, 10) : null;
+    const seatAction = seatMarketplaceActionLabel(selector);
     const isContractCreation = (tx.to ?? null) === null;
     return {
       hash: tx.hash,
@@ -2776,7 +2778,7 @@ const TransactionsPage = ({ go }: any) => {
       executionLabel: used !== null
         ? `${_fmt(used)} / ${_fmt(limit)}`
         : _fmt(limit),
-      methodLabel: hasCalldata ? "contract call" : "transfer",
+      methodLabel: seatAction ?? (hasCalldata ? "contract call" : "transfer"),
       methodSelector: selector,
       status,
       source: "live",
@@ -3086,12 +3088,18 @@ const TxPage = ({ hash, go }: any) => {
   const nativeEventRows = nativeReceiptEventRows(liveNativeReceipt);
   const nativeMarketEventRows = nativeReceiptMarketEventRows(liveNativeReceipt);
   const mrvEvidence = mrvNativeTransactionEvidence(liveDecoded, liveNativeReceipt);
+  // Authoritative round certificate for the MRV receipt's finality-evidence
+  // round, used to cross-check the embedded round-certificate evidence.
+  const mrvRoundCert = useRoundCertificate(mrvEvidence?.proof?.transcript?.finalityEvidence?.round);
   const indexedStatus = txStatus.data ?? null;
   const fallback = indexerAvailability.liveChain ? undefined : TXS[hash];
   const decodedCalldata = liveDecoded?.decodedCalldata && typeof liveDecoded.decodedCalldata === "object"
     ? liveDecoded.decodedCalldata as Record<string, any>
     : null;
   const decodedMethod = decodedCalldata?.method ?? decodedCalldata?.methodName ?? decodedCalldata?.signature ?? null;
+  // Named action for open-seat marketplace calls when the node returns no
+  // decoded method — derived from the raw calldata selector.
+  const seatActionLabel = seatMarketplaceActionLabel(typeof liveTx?.input === "string" ? liveTx.input : null);
   const decodedInputText = decodedCalldata
     ? JSON.stringify(decodedCalldata, null, 2)
     : liveDecoded?.memo
@@ -3162,7 +3170,7 @@ const TxPage = ({ hash, go }: any) => {
         feeDetailTexts: liveNativeFee?.display.detailTexts ?? [],
         gasLimit: liveTx?.gas ? Number(BigInt(liveTx.gas)) : (fallback?.gasLimit ?? 0),
         nonce: liveTx?.nonce ? Number(BigInt(liveTx.nonce)) : (fallback?.nonce ?? 0),
-        kindLabel: decodedMethod ?? fallback?.kindLabel ?? "Transfer",
+        kindLabel: decodedMethod ?? seatActionLabel ?? fallback?.kindLabel ?? "Transfer",
         inputNote: liveDecoded?.memo ?? fallback?.inputNote ?? "",
         contractInput: decodedInputText ?? (liveTx?.input && liveTx.input !== "0x" ? liveTx.input : (fallback?.contractInput ?? null)),
         logs: liveLogs.length ? liveLogs : (fallback?.logs ?? []),
@@ -3382,7 +3390,7 @@ const TxPage = ({ hash, go }: any) => {
         <section className="tx-split">
           <Card title="Decoded transaction">
             <div className="tx-kv">
-              <KV label="Method" value={decodedMethod ?? "raw transfer / memo"} mono/>
+              <KV label="Method" value={decodedMethod ?? seatActionLabel ?? "raw transfer / memo"} mono/>
               <KV label="Memo" value={liveDecoded.memo ?? "—"}/>
               <KV label="Round" value={liveDecoded.round !== null ? Number(liveDecoded.round).toLocaleString() : "—"} mono/>
               <KV label="Cluster" value={liveDecoded.clusterId !== null ? `C-${String(Number(liveDecoded.clusterId)+1).padStart(3,"0")}` : "—"} mono/>
@@ -3433,7 +3441,7 @@ const TxPage = ({ hash, go }: any) => {
 
       {mrvEvidence && (
         <section>
-          <MrvNativeEvidenceCard evidence={mrvEvidence}/>
+          <MrvNativeEvidenceCard evidence={mrvEvidence} roundCertificate={mrvRoundCert.data}/>
         </section>
       )}
 
@@ -3500,21 +3508,33 @@ const TxPage = ({ hash, go }: any) => {
                 </div>
               ) : (
                 // Raw input hex: show an abridged head…tail with the full value
-                // available on hover, never the full untruncated blob.
-                <div className="tx-input mono" title={typeof tx.contractInput === "string" ? tx.contractInput : undefined}>
-                  {typeof tx.contractInput === "string" && tx.contractInput.startsWith("0x")
-                    ? fmtHashShort(tx.contractInput, 26, 8)
-                    : tx.contractInput}
-                </div>
+                // available on hover, never the full untruncated blob. Surface a
+                // named action for known open-seat marketplace selectors.
+                <>
+                  {seatActionLabel && (
+                    <div className="tx-kv" style={{marginBottom:8}}>
+                      <KV label="Method" value={seatActionLabel} mono/>
+                    </div>
+                  )}
+                  <div className="tx-input mono" title={typeof tx.contractInput === "string" ? tx.contractInput : undefined}>
+                    {typeof tx.contractInput === "string" && tx.contractInput.startsWith("0x")
+                      ? fmtHashShort(tx.contractInput, 26, 8)
+                      : tx.contractInput}
+                  </div>
+                </>
               )}
             </Card>
           )}
           {tx.logs.length > 0 && (
             <Card title="Events">
-              {tx.logs.map((log,i)=>(
+              {tx.logs.map((log,i)=>{
+                const seatEvent = typeof log.topic === "string" ? seatMarketplaceEventLabel(log.topic) : null;
+                return (
                 <div key={i} className="tx-log">
                   <div className="mono tx-log__topic" title={typeof log.topic === "string" ? log.topic : undefined}>
-                    {typeof log.topic === "string" && log.topic.startsWith("0x") ? fmtHashShort(log.topic, 18, 6) : log.topic}
+                    {seatEvent
+                      ? `${seatEvent} · ${typeof log.topic === "string" && log.topic.startsWith("0x") ? fmtHashShort(log.topic, 18, 6) : log.topic}`
+                      : typeof log.topic === "string" && log.topic.startsWith("0x") ? fmtHashShort(log.topic, 18, 6) : log.topic}
                   </div>
                   <div className="tx-kv" style={{marginTop:8}}>
                     {Object.entries(log.args).map(([k,v])=>(
@@ -3522,7 +3542,8 @@ const TxPage = ({ hash, go }: any) => {
                     ))}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </Card>
           )}
         </section>
@@ -3600,7 +3621,15 @@ const archiveSignatureSourceLabel = (source: "exactHeight" | "coveringSnapshot" 
   }
 };
 
-export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransactionEvidence | null }) => {
+export const MrvNativeEvidenceCard = (
+  { evidence, roundCertificate }: {
+    evidence: MrvNativeTransactionEvidence | null;
+    // Authoritative ML-DSA-65 round certificate (from lyth_getRoundCertificate)
+    // for the finality-evidence round, used to cross-check the receipt's
+    // embedded round-certificate evidence (the post-BLS finality model).
+    roundCertificate?: RoundCertificateResponse | null;
+  },
+) => {
   if (!evidence) return null;
 
   const extension = evidence.extension;
@@ -3711,15 +3740,19 @@ export const MrvNativeEvidenceCard = ({ evidence }: { evidence: MrvNativeTransac
     ? `parsed · ${archiveCoveringSnapshot.signatures.length.toLocaleString()} covering snapshot signature${archiveCoveringSnapshot.signatures.length === 1 ? "" : "s"} · not validator finality or availability proof`
     : null;
   const finalityEvidence = proofTranscript?.finalityEvidence ?? null;
-  const finalityVerification = evidence.proof?.finalityVerification ?? null;
+  // Prefer the live cross-check (embedded evidence vs. lyth_getRoundCertificate)
+  // over the parsed-only verification carried on the evidence object.
+  const finalityVerification = proofTranscript && finalityEvidence
+    ? verifyNoEvmReceiptFinalityEvidence(proofTranscript, roundCertificate)
+    : evidence.proof?.finalityVerification ?? null;
   const finalityVerificationValue = finalityVerification
     ? finalityVerification.state === "verified"
-      ? `verified · configured trusted round-finality key · accepted ${finalityVerification.result?.acceptedSignatureCount.toLocaleString() ?? "—"}/${finalityVerification.result?.requiredSignatureCount.toLocaleString() ?? "—"} signatures`
-      : `${finalityVerification.state} · ${finalityVerification.reason ?? "trusted round-finality verification unavailable"}`
+      ? `verified · matches lyth_getRoundCertificate · round ${finalityVerification.result?.authoritativeRound.toLocaleString() ?? "—"} · ${finalityVerification.result?.authoritativeSignerCount.toLocaleString() ?? "—"} signers`
+      : `${finalityVerification.state} · ${finalityVerification.reason ?? "authoritative round certificate unavailable"}`
     : null;
   const finalityEvidenceValue = proofTranscript
     ? finalityEvidence
-      ? `present · round certificate material · round ${finalityEvidence.round.toLocaleString()} · cert round ${finalityEvidence.certificate.round.toLocaleString()} · signers ${finalityEvidence.certificate.signerCount.toLocaleString()} · signature ${_short(finalityEvidence.certificate.signature, 18)} · bitmap ${_short(finalityEvidence.certificate.signersBitmap, 18)}${finalityVerificationValue ? ` · ${finalityVerificationValue}` : " · trusted round-finality key not configured"}`
+      ? `present · round certificate material · round ${finalityEvidence.round.toLocaleString()} · cert round ${finalityEvidence.certificate.round.toLocaleString()} · signers ${finalityEvidence.certificate.signerCount.toLocaleString()} · signature ${_short(finalityEvidence.certificate.signature, 18)} · bitmap ${_short(finalityEvidence.certificate.signersBitmap, 18)}${finalityVerificationValue ? ` · ${finalityVerificationValue}` : " · authoritative round certificate not available"}`
       : "absent · round certificate not returned; no live finality proof asserted"
     : null;
   const missingProofMaterial = proofTranscript?.missingProofMaterial ?? [];
@@ -4545,7 +4578,6 @@ const ProtocolPage = ({ go }: any) => {
   const checkpoint = useLatestCheckpoint();
   const resignations = useClusterResignations(null, "all");
   const feeStats = useFeeStats();
-  const encryptionKey = useEncryptionKey();
   const network = useNetworkStatus();
   const operatorCapabilities = useOperatorCapabilities();
   const upgradeStatus = useUpgradeStatus();
@@ -4579,7 +4611,6 @@ const ProtocolPage = ({ go }: any) => {
     ? "derived from fee history"
     : "live fee endpoint";
   const indexerHeight = network.data?.indexerHeight ?? null;
-  const key = encryptionKey.data;
   return (
     <div className="ms-page ms-protocol-page">
       <section className="protocol-hero">
@@ -4622,7 +4653,7 @@ const ProtocolPage = ({ go }: any) => {
       <section className="protocol-data-panel">
         <div className="protocol-data-panel__head">
           <h3 className="ov-section-title">Protocol surfaces</h3>
-          <p className="ov-section-desc">Grouped RPC and indexer health counters for fees, capabilities, checkpoints, gaps, exits, and encryption.</p>
+          <p className="ov-section-desc">Grouped RPC and indexer health counters for fees, capabilities, checkpoints, gaps, and exits.</p>
         </div>
         <div className="stats-counters protocol-counter-grid">
         <StatCounter label="Execution price" value={executionUnitPrice ?? "—"} sub={feePriceSub} tone="neutral"/>
@@ -4670,18 +4701,8 @@ const ProtocolPage = ({ go }: any) => {
           sub={indexerHeight !== null ? "reported height" : "disabled or not reporting"}
           tone="neutral"
         />
-        <StatCounter label="Encryption epoch" value={key ? `${Number(key.epoch).toLocaleString()}` : "—"} sub={key?.algo ?? "encryption key unavailable"} tone="neutral"/>
         </div>
       </section>
-      {key && (
-        <Card title="Live encryption key">
-          <div className="tx-kv">
-            <KV label="Algorithm" value={key.algo}/>
-            <KV label="Epoch" value={Number(key.epoch).toLocaleString()} mono/>
-            <KV label="Encapsulation key" value={fmtHashShort(key.encapsulationKey, 28, 6)} mono/>
-          </div>
-        </Card>
-      )}
       <NativeAgentActionsCard capabilities={capabilities.data}/>
       <section className="tx-split">
         <Card title="Operator surfaces">

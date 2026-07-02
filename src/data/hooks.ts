@@ -42,7 +42,7 @@ import {
   type AddressFlowResponse,
   type AddressProfileResponse,
   type AgentReputationResponse,
-  type BlsCertificateResponse as RoundCertificateResponse,
+  type RoundCertificateResponse,
   type BlockHeader,
   type CapabilitiesResponse,
   type ChainStatsResponse,
@@ -65,7 +65,6 @@ import {
   type DelegationCapResponse,
   type DelegationsResponse,
   type EntityRatchetResponse,
-  type EncryptionKeyResponse,
   type FeeHistoryResponse,
   type GapRecordsResponse,
   type IndexerStatus,
@@ -78,7 +77,6 @@ import {
   type NativeEventsResponse,
   type NoEvmArchiveSignatureVerification,
   type NoEvmArchiveTrustedSigner,
-  type NoEvmBlsFinalityVerification,
   type NoEvmReceiptTrustPolicy,
   type NativeMarketOrderBookStreamPayload,
   type NativeReceiptResponse,
@@ -839,7 +837,12 @@ export const NO_EVM_COMPACT_INCLUSION_PROOF_SCHEMA = "mono.no_evm_receipt_compac
 export const NO_EVM_COMPACT_INCLUSION_TREE_ALGORITHM = "binary-keccak-receipt-tree";
 export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SCHEMA = CoreSdk.NO_EVM_ARCHIVE_PROOF_SCHEMA;
 export const NO_EVM_RECEIPT_ARCHIVE_BINDING_SOURCE = "indexerReceiptArchiveContentDigest";
-export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA = CoreSdk.NO_EVM_FINALITY_EVIDENCE_SCHEMA;
+// core-sdk >= 0.5 dropped the client-side BLS finality-evidence surface
+// (`NO_EVM_FINALITY_EVIDENCE_SCHEMA` + `verifyNoEvmFinalityEvidenceThreshold`)
+// when the chain moved round finality to per-operator ML-DSA-65 round
+// certificates. The receipt transcript still carries the round-certificate
+// evidence under this schema, so keep the canonical string as a local literal.
+export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SCHEMA = "mono.no_evm_receipt_finality.v1";
 export const NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE = "roundCertificate";
 const NO_EVM_RECEIPT_LEGACY_FINALITY_EVIDENCE_SOURCE = "blsRoundCertificate";
 
@@ -969,11 +972,26 @@ export interface NoEvmReceiptProofConsistency {
 
 export type NoEvmFinalityVerificationState = "verified" | "unverified" | "mismatch";
 
-export interface NoEvmFinalityVerificationTrustOptions {
-  chainId: number | bigint | string;
-  clusterPublicKey: string | Uint8Array | readonly number[];
-  committeeSize: number | bigint | string;
-  threshold: number | bigint | string;
+/**
+ * Result of cross-checking a receipt transcript's embedded round-certificate
+ * evidence against the authoritative ML-DSA-65 round certificate the node
+ * returns from `lyth_getRoundCertificate`. This is the post-BLS receipt-trust
+ * model: rather than locally re-aggregating a cluster BLS signature (the SDK
+ * dropped that primitive), we confirm the receipt's finality claim matches the
+ * round seal the node reports for that round.
+ */
+export interface NoEvmRoundCertificateCrossCheck {
+  /** Round the receipt's finality evidence claims to be sealed at. */
+  evidenceRound: number;
+  /** Round reported by the authoritative round certificate. */
+  authoritativeRound: number;
+  /** Number of signing operators in the authoritative certificate. */
+  authoritativeSignerCount: number;
+  roundMatches: boolean;
+  signatureMatches: boolean;
+  signerCountMatches: boolean;
+  signerBitmapMatches: boolean;
+  signerIndicesMatch: boolean;
 }
 
 export type NoEvmArchiveVerificationKeyInput = string | Uint8Array | readonly number[];
@@ -985,7 +1003,7 @@ export interface NoEvmArchiveVerificationTrustOptions {
 
 export interface NoEvmReceiptFinalityVerification {
   state: NoEvmFinalityVerificationState;
-  result: NoEvmBlsFinalityVerification | null;
+  result: NoEvmRoundCertificateCrossCheck | null;
   reason: string | null;
 }
 
@@ -2147,22 +2165,10 @@ function bytesToHex(bytes: Uint8Array): string {
     .join("")}`;
 }
 
-interface NormalizedNoEvmFinalityTrustOptions {
-  chainId: number | bigint;
-  clusterPublicKey: Uint8Array;
-  committeeSize: number;
-  threshold: number;
-}
-
 interface NormalizedNoEvmArchiveTrustOptions {
   trustedSigners: NoEvmArchiveTrustedSigner[];
   threshold: number;
 }
-
-type NoEvmFinalityTrustResolution =
-  | { kind: "configured"; options: NormalizedNoEvmFinalityTrustOptions }
-  | { kind: "unconfigured"; reason: string }
-  | { kind: "invalid"; reason: string };
 
 type NoEvmArchiveTrustResolution =
   | { kind: "configured"; options: NormalizedNoEvmArchiveTrustOptions }
@@ -2170,28 +2176,6 @@ type NoEvmArchiveTrustResolution =
   | { kind: "invalid"; reason: string };
 
 const NO_EVM_RECEIPT_TRUST_REGISTRY_NETWORK = "testnet-69420";
-
-const NO_EVM_FINALITY_TRUST_ENV = {
-  chainId: ["VITE_MONOSCAN_CHAIN_ID", "VITE_MONO_CHAIN_ID"],
-  clusterPublicKey: [
-    "VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_CLUSTER_PUBKEY",
-    "VITE_MONO_TRUSTED_ROUND_FINALITY_CLUSTER_PUBKEY",
-    "VITE_MONOSCAN_TRUSTED_BLS_CLUSTER_PUBKEY",
-    "VITE_MONO_TRUSTED_BLS_CLUSTER_PUBKEY",
-  ],
-  committeeSize: [
-    "VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_COMMITTEE_SIZE",
-    "VITE_MONO_TRUSTED_ROUND_FINALITY_COMMITTEE_SIZE",
-    "VITE_MONOSCAN_TRUSTED_BLS_COMMITTEE_SIZE",
-    "VITE_MONO_TRUSTED_BLS_COMMITTEE_SIZE",
-  ],
-  threshold: [
-    "VITE_MONOSCAN_TRUSTED_ROUND_FINALITY_THRESHOLD",
-    "VITE_MONO_TRUSTED_ROUND_FINALITY_THRESHOLD",
-    "VITE_MONOSCAN_TRUSTED_BLS_THRESHOLD",
-    "VITE_MONO_TRUSTED_BLS_THRESHOLD",
-  ],
-} as const;
 
 const NO_EVM_ARCHIVE_TRUST_ENV = {
   publicKeys: [
@@ -2211,28 +2195,6 @@ function viteEnvString(keys: readonly string[]): string | null {
     if (typeof value === "string" && value.trim() !== "") return value.trim();
   }
   return null;
-}
-
-function parseNonNegativeU64Input(
-  value: number | bigint | string,
-  label: string,
-  errors: string[],
-): number | bigint | null {
-  try {
-    const parsed = typeof value === "bigint"
-      ? value
-      : typeof value === "number"
-        ? BigInt(value)
-        : BigInt(value.trim());
-    if (parsed < 0n) {
-      errors.push(`${label} must be a non-negative integer`);
-      return null;
-    }
-    return parsed <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(parsed) : parsed;
-  } catch {
-    errors.push(`${label} must be a non-negative integer`);
-    return null;
-  }
 }
 
 function parsePositiveSafeIntegerInput(
@@ -2283,56 +2245,6 @@ function normalizeArchivePublicKey(
     return null;
   }
   return bytes;
-}
-
-function normalizeFinalityClusterPublicKey(
-  value: string | Uint8Array | readonly number[],
-  errors: string[],
-): Uint8Array | null {
-  const bytes = typeof value === "string"
-    ? hexBytesToUint8Array(value)
-    : new Uint8Array(value);
-  if (!bytes || bytes.length !== 48) {
-    errors.push("trusted round-finality cluster public key must be 48 bytes");
-    return null;
-  }
-  return bytes;
-}
-
-function normalizeNoEvmFinalityTrustOptions(
-  options: NoEvmFinalityVerificationTrustOptions,
-): NoEvmFinalityTrustResolution {
-  const errors: string[] = [];
-  const chainId = parseNonNegativeU64Input(options.chainId, "trusted round-finality chain id", errors);
-  const clusterPublicKey = normalizeFinalityClusterPublicKey(options.clusterPublicKey, errors);
-  const committeeSize = parsePositiveSafeIntegerInput(
-    options.committeeSize,
-    "trusted round-finality committee size",
-    errors,
-  );
-  const threshold = parsePositiveSafeIntegerInput(
-    options.threshold,
-    "trusted round-finality threshold",
-    errors,
-  );
-
-  if (committeeSize !== null && threshold !== null && threshold > committeeSize) {
-    errors.push("trusted round-finality threshold cannot exceed committee size");
-  }
-
-  if (errors.length > 0 || chainId === null || clusterPublicKey === null || committeeSize === null || threshold === null) {
-    return { kind: "invalid", reason: `trusted round-finality config invalid: ${errors.join("; ")}` };
-  }
-
-  return {
-    kind: "configured",
-    options: {
-      chainId,
-      clusterPublicKey,
-      committeeSize,
-      threshold,
-    },
-  };
 }
 
 function normalizeNoEvmArchiveTrustOptions(
@@ -2387,120 +2299,6 @@ function isWithinOptionalTrustBounds(
   if (validFrom != null && checked < BigInt(validFrom)) return false;
   if (validTo != null && checked > BigInt(validTo)) return false;
   return true;
-}
-
-function noEvmFinalityTrustOptionsFromEnv(): NoEvmFinalityTrustResolution {
-  const chainId = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.chainId);
-  const clusterPublicKey = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.clusterPublicKey);
-  const committeeSize = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.committeeSize);
-  const threshold = viteEnvString(NO_EVM_FINALITY_TRUST_ENV.threshold);
-  const values = [chainId, clusterPublicKey, committeeSize, threshold];
-
-  if (values.every((value) => value === null)) {
-    return {
-      kind: "unconfigured",
-      reason: "trusted round-finality key not configured",
-    };
-  }
-
-  const missing: string[] = [];
-  if (chainId === null) missing.push(NO_EVM_FINALITY_TRUST_ENV.chainId[0]);
-  if (clusterPublicKey === null) missing.push(NO_EVM_FINALITY_TRUST_ENV.clusterPublicKey[0]);
-  if (committeeSize === null) missing.push(NO_EVM_FINALITY_TRUST_ENV.committeeSize[0]);
-  if (threshold === null) missing.push(NO_EVM_FINALITY_TRUST_ENV.threshold[0]);
-  if (missing.length > 0) {
-    return {
-      kind: "invalid",
-      reason: `trusted round-finality config incomplete: missing ${missing.join(", ")}`,
-    };
-  }
-
-  return normalizeNoEvmFinalityTrustOptions({
-    chainId: chainId as string,
-    clusterPublicKey: clusterPublicKey as string,
-    committeeSize: committeeSize as string,
-    threshold: threshold as string,
-  });
-}
-
-function noEvmFinalityTrustOptionsFromRegistry(
-  transcript: NoEvmReceiptProofMaterial,
-): NoEvmFinalityTrustResolution {
-  let policy: NoEvmReceiptTrustPolicy | null;
-  try {
-    policy = noEvmReceiptTrustPolicyFromBundledRegistry();
-  } catch (error) {
-    return {
-      kind: "invalid",
-      reason: error instanceof Error
-        ? `registry round-finality trust policy invalid: ${error.message}`
-        : "registry round-finality trust policy invalid",
-    };
-  }
-
-  const finalityPolicy = policy?.finality ?? null;
-  if (finalityPolicy === null) {
-    return {
-      kind: "unconfigured",
-      reason: "trusted round-finality key not configured",
-    };
-  }
-  if (finalityPolicy.mode !== "cluster") {
-    return {
-      kind: "invalid",
-      reason: "registry round-finality trust policy mode multisig is not supported by Monoscan threshold-cluster verification",
-    };
-  }
-
-  const finalityEvidence = transcript.finalityEvidence ?? null;
-  if (
-    finalityEvidence
-    && !isWithinOptionalTrustBounds(
-      finalityEvidence.round,
-      finalityPolicy.validFromRound,
-      finalityPolicy.validToRound,
-    )
-  ) {
-    return {
-      kind: "invalid",
-      reason: `registry round-finality trust policy is not valid at round ${finalityEvidence.round}`,
-    };
-  }
-
-  const chainId = finalityPolicy.chainId ?? policy?.chainId;
-  if (chainId == null) {
-    return {
-      kind: "invalid",
-      reason: "registry round-finality trust policy requires a chain id",
-    };
-  }
-
-  return normalizeNoEvmFinalityTrustOptions({
-    chainId,
-    clusterPublicKey: finalityPolicy.clusterPublicKey,
-    committeeSize: finalityPolicy.committeeSize,
-    threshold: finalityPolicy.threshold,
-  });
-}
-
-function resolveNoEvmFinalityTrustOptions(
-  transcript: NoEvmReceiptProofMaterial,
-  trustOptions?: NoEvmFinalityVerificationTrustOptions | null,
-): NoEvmFinalityTrustResolution {
-  if (trustOptions === null) {
-    return {
-      kind: "unconfigured",
-      reason: "trusted round-finality key not configured",
-    };
-  }
-  if (trustOptions !== undefined) {
-    return normalizeNoEvmFinalityTrustOptions(trustOptions);
-  }
-
-  const envResolution = noEvmFinalityTrustOptionsFromEnv();
-  return envResolution.kind === "unconfigured"
-    ? noEvmFinalityTrustOptionsFromRegistry(transcript)
-    : envResolution;
 }
 
 function noEvmArchiveTrustOptionsFromEnv(): NoEvmArchiveTrustResolution {
@@ -2592,29 +2390,28 @@ function resolveNoEvmArchiveTrustOptions(
     : envResolution;
 }
 
-function noEvmFinalityMismatchReason(result: NoEvmBlsFinalityVerification): string {
+function noEvmRoundCertificateCrossCheckReason(
+  crossCheck: NoEvmRoundCertificateCrossCheck,
+): string {
   const issues: string[] = [];
-  if (!result.signerCountMatches) issues.push("signer count mismatch");
-  if (!result.signerBitmapMatchesIndices) issues.push("signer bitmap/index mismatch");
-  if (!result.signerIndicesInRange) issues.push("signer index outside configured committee");
-  if (!result.allSignersTrusted) issues.push("untrusted signer index");
-  if (!result.thresholdMet) issues.push("threshold not met");
-  if (!result.signatureValid) issues.push("round-certificate signature invalid");
-  return issues.join("; ") || "round-finality evidence did not satisfy configured trust policy";
+  if (!crossCheck.roundMatches) issues.push("round mismatch");
+  if (!crossCheck.signatureMatches) issues.push("round-certificate digest mismatch");
+  if (!crossCheck.signerCountMatches) issues.push("signer count mismatch");
+  if (!crossCheck.signerBitmapMatches) issues.push("signer bitmap mismatch");
+  if (!crossCheck.signerIndicesMatch) issues.push("signer index set mismatch");
+  return issues.join("; ")
+    || "round-certificate evidence did not match the authoritative round certificate";
 }
 
-function finalityEvidenceForCurrentSdk(
-  finalityEvidence: NoEvmReceiptFinalityEvidence,
-): Parameters<typeof CoreSdk.verifyNoEvmFinalityEvidenceThreshold>[0] {
-  // core-sdk >= 0.4.x finished the BLS → round-certificate rename and only
-  // accepts `source: "roundCertificate"` (the legacy `"blsRoundCertificate"`
-  // string is rejected as unsupported). Our canonical source is already
-  // `NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE === "roundCertificate"`, so pass
-  // the evidence through unchanged.
-  return {
-    ...finalityEvidence,
-    source: NO_EVM_RECEIPT_FINALITY_EVIDENCE_SOURCE,
-  } as Parameters<typeof CoreSdk.verifyNoEvmFinalityEvidenceThreshold>[0];
+function eqHexIgnoreCase(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+function eqNumberSet(a: readonly number[], b: readonly number[]): boolean {
+  if (a.length !== b.length) return false;
+  const left = [...a].sort((x, y) => x - y);
+  const right = [...b].sort((x, y) => x - y);
+  return left.every((value, index) => value === right[index]);
 }
 
 function noEvmArchiveSignatureSource(
@@ -2648,49 +2445,63 @@ function archiveProofForSignatureVerification(
   };
 }
 
+/**
+ * Cross-check a receipt transcript's embedded round-certificate finality
+ * evidence against the authoritative ML-DSA-65 round certificate the node
+ * returns from `lyth_getRoundCertificate`.
+ *
+ * The chain retired the BLS finality-evidence path (core-sdk dropped
+ * `verifyNoEvmFinalityEvidenceThreshold` + the registry `finality` trust
+ * policy). Round finality is now sealed by per-operator ML-DSA-65 round
+ * certificates, so the receipt-trust intent is preserved by confirming the
+ * receipt's finality claim matches the node's authoritative round seal for
+ * that round rather than by re-aggregating a cluster signature client-side.
+ *
+ * When no authoritative round certificate is supplied the evidence is left
+ * `unverified` (parsed only) — Monoscan never fabricates a finality assertion.
+ */
 export function verifyNoEvmReceiptFinalityEvidence(
   transcript: NoEvmReceiptProofMaterial,
-  trustOptions?: NoEvmFinalityVerificationTrustOptions | null,
+  roundCertificate?: RoundCertificateResponse | null,
 ): NoEvmReceiptFinalityVerification | null {
   const finalityEvidence = transcript.finalityEvidence ?? null;
   if (!finalityEvidence) return null;
 
-  const trustResolution = resolveNoEvmFinalityTrustOptions(transcript, trustOptions);
-
-  if (trustResolution.kind === "unconfigured") {
+  if (roundCertificate === undefined || roundCertificate === null) {
     return {
       state: "unverified",
       result: null,
-      reason: trustResolution.reason,
-    };
-  }
-  if (trustResolution.kind === "invalid") {
-    return {
-      state: "mismatch",
-      result: null,
-      reason: trustResolution.reason,
+      reason: "authoritative round certificate not available for cross-check",
     };
   }
 
-  try {
-    const result = CoreSdk.verifyNoEvmFinalityEvidenceThreshold(
-      finalityEvidenceForCurrentSdk(finalityEvidence),
-      trustResolution.options,
-    );
-    return {
-      state: result.verified ? "verified" : "mismatch",
-      result,
-      reason: result.verified ? null : noEvmFinalityMismatchReason(result),
-    };
-  } catch (error) {
-    return {
-      state: "mismatch",
-      result: null,
-      reason: error instanceof Error
-        ? error.message
-        : "round-finality evidence verification failed",
-    };
-  }
+  const certificate = finalityEvidence.certificate;
+  const authoritativeRound = Number(roundCertificate.round);
+  const crossCheck: NoEvmRoundCertificateCrossCheck = {
+    evidenceRound: finalityEvidence.round,
+    authoritativeRound,
+    authoritativeSignerCount: roundCertificate.signer_count,
+    roundMatches:
+      authoritativeRound === finalityEvidence.round
+      && authoritativeRound === certificate.round,
+    signatureMatches: eqHexIgnoreCase(roundCertificate.signature, certificate.signature),
+    signerCountMatches: roundCertificate.signer_count === certificate.signerCount,
+    signerBitmapMatches: eqHexIgnoreCase(roundCertificate.signers_bitmap, certificate.signersBitmap),
+    signerIndicesMatch: eqNumberSet(roundCertificate.signer_indices, certificate.signerIndices),
+  };
+
+  const verified =
+    crossCheck.roundMatches
+    && crossCheck.signatureMatches
+    && crossCheck.signerCountMatches
+    && crossCheck.signerBitmapMatches
+    && crossCheck.signerIndicesMatch;
+
+  return {
+    state: verified ? "verified" : "mismatch",
+    result: crossCheck,
+    reason: verified ? null : noEvmRoundCertificateCrossCheckReason(crossCheck),
+  };
 }
 
 export function verifyNoEvmReceiptArchiveProofSignatures(
@@ -3187,7 +2998,7 @@ function proofEvidenceBlockerLabel(proofKind: NoEvmReceiptProofKind | null): str
 function noEvmReceiptProofEvidence(
   source: string,
   value: unknown,
-  finalityTrustOptions?: NoEvmFinalityVerificationTrustOptions | null,
+  roundCertificate?: RoundCertificateResponse | null,
   archiveTrustOptions?: NoEvmArchiveVerificationTrustOptions | null,
 ): MrvNativeProofEvidence {
   const { transcript, errors } = validateNoEvmReceiptProofTranscript(value);
@@ -3197,7 +3008,7 @@ function noEvmReceiptProofEvidence(
     ? verifyNoEvmReceiptArchiveProofSignatures(transcript, archiveTrustOptions)
     : null;
   const finalityVerification = transcript
-    ? verifyNoEvmReceiptFinalityEvidence(transcript, finalityTrustOptions)
+    ? verifyNoEvmReceiptFinalityEvidence(transcript, roundCertificate)
     : null;
   return {
     source,
@@ -3249,7 +3060,7 @@ function pqCheckpointSummary(decoded: unknown): string | null {
 export function mrvNativeTransactionEvidence(
   decoded: DecodeTxResponse | Record<string, unknown> | null | undefined,
   nativeReceipt: NativeReceiptResponse<unknown> | Record<string, unknown> | null | undefined,
-  finalityTrustOptions?: NoEvmFinalityVerificationTrustOptions | null,
+  roundCertificate?: RoundCertificateResponse | null,
   archiveTrustOptions?: NoEvmArchiveVerificationTrustOptions | null,
 ): MrvNativeTransactionEvidence | null {
   const extension = findMrvNativeExtension(decoded);
@@ -3270,7 +3081,7 @@ export function mrvNativeTransactionEvidence(
     ?? readNumberField(nativeReceipt, ["blockHeight", "blockNumber", "block_height", "block_number"]);
   const proofField = readNativeNoEvmProofField(nativeReceipt);
   const proof = proofField.state === "present"
-    ? noEvmReceiptProofEvidence(proofField.source, proofField.value, finalityTrustOptions, archiveTrustOptions)
+    ? noEvmReceiptProofEvidence(proofField.source, proofField.value, roundCertificate, archiveTrustOptions)
     : null;
   const submittedState: MrvNativeEvidenceState = extension
     ? (extension.validMrvV1 ? "present" : "invalid")
@@ -4633,6 +4444,48 @@ const CLUSTER_HISTORY_TOPICS = Object.fromEntries(
     keccak256(new TextEncoder().encode(sig)),
   ]),
 ) as Record<keyof typeof CLUSTER_HISTORY_EVENT_SIGS, string>;
+
+/* -------------------------------------------------------------------------- */
+/* Open-seat marketplace (L6) transaction + event labels.                      */
+/*                                                                             */
+/* Seat operations are node-registry (0x1005) calls and logs. Map the calldata */
+/* selectors and event topic0 hashes to human-readable action names so seat    */
+/* marketplace transactions render as named actions instead of bare selectors  */
+/* in the tx and address views.                                                */
+/* -------------------------------------------------------------------------- */
+
+const SEAT_CALLDATA_ACTION_LABELS: Record<string, string> = {
+  [CoreSdk.NODE_REGISTRY_SELECTORS.advertiseSeat.toLowerCase()]: "advertise seat",
+  [CoreSdk.NODE_REGISTRY_SELECTORS.applyForSeat.toLowerCase()]: "apply for seat",
+  [CoreSdk.NODE_REGISTRY_SELECTORS.voteSeatAdmit.toLowerCase()]: "vote seat admit",
+  [CoreSdk.NODE_REGISTRY_SELECTORS.withdrawSeatApplication.toLowerCase()]: "withdraw seat application",
+  [CoreSdk.NODE_REGISTRY_SELECTORS.closeSeat.toLowerCase()]: "close seat",
+};
+
+/**
+ * Human-readable action name for an open-seat marketplace calldata selector.
+ * Accepts either a bare 10-char selector (`0x` + 4 bytes) or full calldata
+ * (the leading selector is used). Returns null for non-seat selectors.
+ */
+export function seatMarketplaceActionLabel(selectorOrCalldata: string | null | undefined): string | null {
+  if (!selectorOrCalldata) return null;
+  const trimmed = selectorOrCalldata.trim().toLowerCase();
+  const selector = trimmed.length > 10 ? trimmed.slice(0, 10) : trimmed;
+  return SEAT_CALLDATA_ACTION_LABELS[selector] ?? null;
+}
+
+const SEAT_EVENT_TOPIC_LABELS: Record<string, string> = {
+  [keccak256(new TextEncoder().encode(CoreSdk.SEAT_ADVERTISED_EVENT_SIG))]: "seat advertised",
+  [keccak256(new TextEncoder().encode(CoreSdk.SEAT_APPLIED_EVENT_SIG))]: "seat applied",
+  [keccak256(new TextEncoder().encode(CoreSdk.SEAT_FILLED_EVENT_SIG))]: "seat filled",
+  [keccak256(new TextEncoder().encode(CoreSdk.SEAT_CLOSED_EVENT_SIG))]: "seat closed",
+};
+
+/** Human-readable label for an open-seat marketplace event log topic0, or null. */
+export function seatMarketplaceEventLabel(topic0: string | null | undefined): string | null {
+  if (!topic0) return null;
+  return SEAT_EVENT_TOPIC_LABELS[topic0.trim().toLowerCase()] ?? null;
+}
 
 export interface EthLogRow {
   address: string;
@@ -6081,14 +5934,7 @@ export function useRoundCertificate(round: number | undefined) {
     enabled: round !== undefined && Number.isFinite(round) && isRpcConfigured(),
     queryFn: async () => {
       try {
-        const rpc = getRpcClient() as ReturnType<typeof getRpcClient> & {
-          lythGetRoundCertificate?: (round: number) => Promise<RoundCertificateResponse>;
-          lythGetBlsRoundCertificate?: (round: number) => Promise<RoundCertificateResponse>;
-        };
-        if (typeof rpc.lythGetRoundCertificate === "function") {
-          return await rpc.lythGetRoundCertificate(round as number);
-        }
-        return await rpc.lythGetBlsRoundCertificate?.(round as number) ?? null;
+        return await getRpcClient().lythGetRoundCertificate(round as number) ?? null;
       } catch {
         return null;
       }
@@ -6129,21 +5975,6 @@ export function useGapRecords(fromBlock: number | undefined, toBlock: number | u
       }
     },
     staleTime: 30_000,
-  });
-}
-
-export function useEncryptionKey() {
-  return useQuery<EncryptionKeyResponse | null>({
-    queryKey: QK.encryptionKey(),
-    queryFn: async () => {
-      if (!isRpcConfigured()) return null;
-      try {
-        return await getRpcClient().lythGetEncryptionKey();
-      } catch {
-        return null;
-      }
-    },
-    staleTime: 60_000,
   });
 }
 
